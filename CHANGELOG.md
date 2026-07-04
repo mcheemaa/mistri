@@ -5,6 +5,11 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+- transform_context: an Agent option that reshapes what the model sees each
+  turn (reminders, redaction, windowing) while the stored transcript stays
+  untouched. The lambda receives the replay messages and returns the messages
+  to send; it must keep tool calls paired with their results.
+
 - Steering: Session#steer queues a user message from any process while a run
   is live. The loop folds pending steers into the transcript at the next turn
   boundary, and one that arrives as the model finishes cleanly extends the

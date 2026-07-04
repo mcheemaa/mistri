@@ -15,7 +15,7 @@ module Mistri
   # the loop runs; it folds into the transcript at the next turn boundary.
   class Agent
     def initialize(provider:, session: nil, system: nil, tools: [], budget: nil,
-                   max_concurrency: 4)
+                   max_concurrency: 4, transform_context: nil)
       @provider = provider
       @session = session || Session.new(store: Stores::Memory.new)
       @system = system
@@ -25,6 +25,7 @@ module Mistri
 
       @budget = budget || Budget.new
       @max_concurrency = max_concurrency
+      @transform_context = transform_context
     end
 
     attr_reader :session
@@ -104,8 +105,15 @@ module Mistri
       end
     end
 
+    # transform_context reshapes what the model sees each turn (reminders,
+    # redaction, windowing) without touching what the session stores. The
+    # lambda gets the replay messages and returns the messages to send; it
+    # must keep every tool call paired with its result or providers reject
+    # the request.
     def run_turn(signal, &)
-      message = @provider.stream(messages: @session.messages, system: @system,
+      history = @session.messages
+      history = @transform_context.call(history) if @transform_context
+      message = @provider.stream(messages: history, system: @system,
                                  tools: @tools.map(&:spec), signal: signal, &)
       @session.append_message(message)
       message
