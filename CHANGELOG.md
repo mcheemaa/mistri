@@ -16,6 +16,11 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - `Mistri::Transport`: a persistent per-provider streaming connection with
   status-mapped errors and hard abort of hung streams.
 - `Mistri::PartialJson`: best-effort parsing of in-flight tool arguments.
+- `Mistri::Models`: a capability catalog with graceful passthrough, so unknown
+  models work the day they ship.
+- `Mistri::Providers::Anthropic`: the Messages API streamed, with adaptive
+  thinking, prompt caching, signature round-trips, and eager tool-input
+  streaming.
 
 ## [0.0.3] - 2026-07-04
 
