@@ -25,6 +25,14 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   encrypted reasoning replay and thinking summaries.
 - `Mistri::Providers::Gemini`: generateContent streamed, with unconstrained
   thinking by default and verbatim thought-signature replay.
+- `Mistri::Agent`: the streaming tool-calling loop, persisting each turn as it
+  completes so aborts and crashes resume without repair.
+- `Mistri::Tool` and `Mistri::Schema`: define tools with a raw JSON Schema or a
+  Ruby schema block; results may be text, JSON, or content blocks.
+- `Mistri::Session` with pluggable stores (`Memory`, `JSONL`, and an optional
+  `ActiveRecord` adapter for the host's own database).
+- `Mistri::Budget`: opt-in ceilings on turns, tokens, cost, and wall-clock;
+  nothing is enforced unless the host sets it.
 
 ## [0.0.3] - 2026-07-04
 
