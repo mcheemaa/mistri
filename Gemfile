@@ -9,6 +9,14 @@ group :development do
   gem "rake"
 end
 
+# Only the install-generator tests need Rails; the gem itself has zero
+# runtime dependencies. The test skips itself when these are absent, so the
+# matrix stays green if a Ruby outpaces Rails support.
+group :rails_test do
+  gem "activerecord", require: false
+  gem "railties", require: false
+end
+
 # Lint tools run on one Ruby in CI; their dependencies drop old rubies faster
 # than the gem does, so the test matrix must not install them.
 group :lint do

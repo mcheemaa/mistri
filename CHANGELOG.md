@@ -5,6 +5,14 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+- Rails integration: `rails generate mistri:install YourModel` creates a
+  host-named entry model and its migration for Stores::ActiveRecord
+  (MEDIUMTEXT payload on MySQL-family adapters). Streaming sinks under
+  Mistri::Sinks — ActionCable (lazy server, injectable), SSE (outbound
+  frames to any IO), and Coalesced (merges delta bursts to UI speed) — all
+  pure Ruby, usable as `agent.run(input, &sink)`. No Railtie: generators
+  auto-discover and everything else duck-types.
+
 - Retry policy: transient turn failures (429/5xx/529, timeouts, dropped or
   truncated streams) retry with jittered backoff, honoring retry-after. On
   by default (retries: on the Agent; false disables, or pass a tuned
