@@ -5,6 +5,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+- `Mistri::Edit`: pure fuzzy text replacement with a uniqueness guarantee,
+  so an edit never silently changes the wrong region; the string core for a
+  workspace-backed edit tool that works against a database as well as a file.
+
 - `Mistri.agent` and `Mistri.provider`: build an agent or provider from a model
   id, inferring the provider and reading its key from the environment.
 

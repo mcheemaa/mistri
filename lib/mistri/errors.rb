@@ -56,4 +56,7 @@ module Mistri
 
   # A run stopped by its turn, token, cost, or wall-clock budget.
   class BudgetError < Error; end
+
+  # A text edit that did not match uniquely, or overlapped another edit.
+  class EditError < Error; end
 end
