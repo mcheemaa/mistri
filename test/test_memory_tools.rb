@@ -26,11 +26,8 @@ class TestMemoryTools < Minitest::Test
   end
 
   def test_an_agent_can_carry_knowledge_across_sessions
-    provider = Mistri::Providers::Fake.new(turns: [
-                                             { tool_calls: [{ name: "update_memory",
-                                                              arguments: { "content" => "Learned: X" } }] },
-                                             { text: "noted" }
-                                           ])
+    turn = { tool_calls: [{ name: "update_memory", arguments: { "content" => "Learned: X" } }] }
+    provider = Mistri::Providers::Fake.new(turns: [turn, { text: "noted" }])
     agent = Mistri::Agent.new(provider:, tools: Mistri::Tools.memory(
       Mistri::Memory.new(read: -> { @record[:memory] },
                          write: ->(text) { @record[:memory] = text })
