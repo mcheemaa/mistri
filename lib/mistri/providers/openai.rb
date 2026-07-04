@@ -21,6 +21,8 @@ module Mistri
         @transport = Transport.new(origin: origin, **transport_options)
       end
 
+      attr_reader :model
+
       def stream(messages:, system: nil, tools: [], signal: nil, **overrides, &emit)
         model = overrides.fetch(:model, @model)
         assembler = OpenAI::Assembler.new(model: model)

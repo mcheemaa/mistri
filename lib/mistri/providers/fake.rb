@@ -22,6 +22,8 @@ module Mistri
       # agent actually sent.
       attr_reader :requests
 
+      def model = MODEL
+
       def initialize(turns: [], chunk_size: 12)
         @turns = turns.map { |turn| turn.transform_keys(&:to_sym) }
         @chunk_size = [chunk_size, 1].max

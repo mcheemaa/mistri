@@ -12,8 +12,9 @@ module Mistri
   class Event < Data.define(:type, :content_index, :delta, :content, :tool_call,
                             :reason, :message, :error_message, :partial)
     # The stream types come from a provider mid-turn; the loop adds
-    # :tool_result after it runs each tool and :approval_needed when a gated
-    # call parks for a human, so one subscription sees the whole exchange.
+    # :tool_result after it runs each tool, :approval_needed when a gated
+    # call parks for a human, and :compacting/:compaction around a context
+    # compaction, so one subscription sees the whole exchange.
     TYPES = %i[
       start
       text_start text_delta text_end
@@ -21,6 +22,7 @@ module Mistri
       toolcall_start toolcall_delta toolcall_end
       done error
       tool_result approval_needed
+      compacting compaction
     ].freeze
 
     def initialize(type:, content_index: nil, delta: nil, content: nil, tool_call: nil,

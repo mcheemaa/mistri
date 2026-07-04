@@ -14,8 +14,11 @@ module Mistri
   # carries on. Session#steer queues a user message from any process while
   # the loop runs; it folds into the transcript at the next turn boundary.
   class Agent
+    # compaction defaults on so long sessions survive their context window;
+    # pass false to disable, or a tuned Compaction. It only ever triggers
+    # when the model's window is known (catalog or Compaction#window).
     def initialize(provider:, session: nil, system: nil, tools: [], budget: nil,
-                   max_concurrency: 4, transform_context: nil)
+                   max_concurrency: 4, transform_context: nil, compaction: Compaction.new)
       @provider = provider
       @session = session || Session.new(store: Stores::Memory.new)
       @system = system
@@ -26,6 +29,7 @@ module Mistri
       @budget = budget || Budget.new
       @max_concurrency = max_concurrency
       @transform_context = transform_context
+      @compaction = compaction || nil
     end
 
     attr_reader :session
@@ -62,6 +66,23 @@ module Mistri
       loop_turns(signal, &emit)
     end
 
+    # How full the context is: {tokens:, window:, fraction:}. Hosts render
+    # meters and near-limit warnings from this; window is nil for models the
+    # catalog does not know unless Compaction#window supplies one.
+    def context_usage
+      tokens = Compaction.context_tokens(@session.messages)
+      window = context_window
+      { tokens: tokens, window: window,
+        fraction: window && (tokens.to_f / window).round(3) }
+    end
+
+    # Compact now (a UI button, a pre-flight trim before a big task). Returns
+    # the Compactor result, or nil when there is nothing worth compacting.
+    def compact(&)
+      Compactor.call(session: @session, provider: @provider,
+                     settings: @compaction || Compaction.new, &)
+    end
+
     private
 
     def loop_turns(signal, &emit)
@@ -73,6 +94,8 @@ module Mistri
         return stop_for_budget(reason, &emit) if reason
 
         fold_steers
+        compacted = auto_compact(&emit)
+        usage += compacted[:usage] if compacted&.dig(:usage)
         last = run_turn(signal, &emit)
         turns += 1
         usage += last.usage if last.usage
@@ -93,6 +116,24 @@ module Mistri
       return true if signal&.aborted? || last.stop_reason != StopReason::STOP
 
       @session.pending_steers.empty?
+    end
+
+    # Compact when the context has grown into the reserve. A failed
+    # summarization skips quietly here: if the context genuinely no longer
+    # fits, the next turn surfaces the real provider error.
+    def auto_compact(&)
+      return nil unless @compaction
+
+      tokens = Compaction.context_tokens(@session.messages)
+      return nil unless @compaction.needed?(tokens, context_window)
+
+      Compactor.call(session: @session, provider: @provider, settings: @compaction, &)
+    rescue CompactionError
+      nil
+    end
+
+    def context_window
+      @compaction&.window || Models.find(@provider.model)&.context_window
     end
 
     # Materialize queued steers into the transcript in arrival order. The

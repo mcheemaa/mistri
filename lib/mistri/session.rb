@@ -38,10 +38,23 @@ module Mistri
     def entries = @store.load(@id)
 
     # The conversation as the model replays it.
-    def messages
-      entries.filter_map do |entry|
-        Message.from_h(entry["message"]) if entry["type"] == "message"
+    def messages = replay.map(&:first)
+
+    # Replay messages paired with the entry index each came from, starting at
+    # the latest compaction boundary. The synthetic summary message carries a
+    # nil index. Compaction places its cuts by these indexes; the full entry
+    # log stays in the store for transcript views.
+    def replay
+      compaction = last_compaction
+      from = compaction ? compaction["kept_from"] : 0
+      pairs = entries.each_with_index.filter_map do |entry, index|
+        [Message.from_h(entry["message"]), index] if index >= from && entry["type"] == "message"
       end
+      compaction ? [[summary_message(compaction["summary"]), nil], *pairs] : pairs
+    end
+
+    def last_compaction
+      entries.reverse_each.find { |entry| entry["type"] == "compaction" }
     end
 
     # Queue a message for a running exchange from any process. The loop folds
@@ -88,6 +101,10 @@ module Mistri
     end
 
     private
+
+    def summary_message(summary)
+      Message.user("#{Compaction::SUMMARY_PREFACE}\n\n#{summary}")
+    end
 
     def decide(call_id, approved:, note:)
       unless open_approvals.any? { |open| open[:call].id == call_id }

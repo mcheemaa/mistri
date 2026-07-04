@@ -68,4 +68,7 @@ module Mistri
 
   # A text edit that did not match uniquely, or overlapped another edit.
   class EditError < Error; end
+
+  # Compaction could not produce a usable summary.
+  class CompactionError < Error; end
 end

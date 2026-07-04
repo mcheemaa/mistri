@@ -5,6 +5,16 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+- Context compaction: sessions compact automatically when the context grows
+  into the reserve headroom (compaction: on the Agent, on by default when the
+  model's window is known; pass false to disable). The provider writes a
+  visible structured summary; a compaction entry redirects replay to summary
+  plus kept tail while the full history stays in the store. Cuts land only on
+  user messages so tool pairs never split, parked approvals stay resumable,
+  and second compactions update the first summary. Agent#compact is the
+  manual button, Agent#context_usage the {tokens, window, fraction} gauge,
+  and :compacting/:compaction the events.
+
 - transform_context: an Agent option that reshapes what the model sees each
   turn (reminders, redaction, windowing) while the stored transcript stays
   untouched. The lambda receives the replay messages and returns the messages
