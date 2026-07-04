@@ -21,6 +21,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - `Mistri::Providers::Anthropic`: the Messages API streamed, with adaptive
   thinking, prompt caching, signature round-trips, and eager tool-input
   streaming.
+- `Mistri::Providers::OpenAI`: the Responses API streamed and stateless, with
+  encrypted reasoning replay and thinking summaries.
 
 ## [0.0.3] - 2026-07-04
 

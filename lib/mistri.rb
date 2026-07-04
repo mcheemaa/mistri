@@ -15,6 +15,7 @@ require_relative "mistri/partial_json"
 require_relative "mistri/transport"
 require_relative "mistri/providers/fake"
 require_relative "mistri/providers/anthropic"
+require_relative "mistri/providers/openai"
 
 # Mistri (مستری): the fixer. An agent harness for Ruby applications.
 module Mistri

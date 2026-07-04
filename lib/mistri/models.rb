@@ -15,15 +15,18 @@ module Mistri
       ["claude-opus-4-6", :anthropic, 128_000, 200_000],
       ["claude-sonnet-5", :anthropic, 128_000, 200_000],
       ["claude-sonnet-4-6", :anthropic, 128_000, 200_000],
-      ["claude-haiku-4-5", :anthropic, 64_000, 200_000]
+      ["claude-haiku-4-5", :anthropic, 64_000, 200_000],
+      ["gpt-5.5", :openai, 128_000, 400_000],
+      ["gpt-5.4", :openai, 128_000, 400_000],
+      ["gpt-5-nano", :openai, 128_000, 400_000]
     ].to_h do |id, provider, max_output, context_window|
       [id, Model.new(id:, provider:, max_output:, context_window:)]
     end.freeze
 
-    # Dated aliases resolve to their base entry: claude-opus-4-8-20260115
-    # matches claude-opus-4-8.
+    # Dated aliases resolve to their base entry: claude-opus-4-8-20260115 and
+    # gpt-5.4-2025-04-14 both match their base ids.
     def self.find(id)
-      CATALOG[id] || CATALOG[id.to_s.sub(/-\d{8}\z/, "")]
+      CATALOG[id] || CATALOG[id.to_s.sub(/-\d{8}\z/, "").sub(/-\d{4}-\d{2}-\d{2}\z/, "")]
     end
 
     def self.max_output(id) = find(id)&.max_output
