@@ -15,6 +15,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - `Mistri::SSE`: an incremental server-sent-events decoder.
 - `Mistri::Transport`: a persistent per-provider streaming connection with
   status-mapped errors and hard abort of hung streams.
+- `Mistri::PartialJson`: best-effort parsing of in-flight tool arguments.
 
 ## [0.0.3] - 2026-07-04
 

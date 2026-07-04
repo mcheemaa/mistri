@@ -10,6 +10,7 @@ require_relative "mistri/message"
 require_relative "mistri/event"
 require_relative "mistri/abort_signal"
 require_relative "mistri/sse"
+require_relative "mistri/partial_json"
 require_relative "mistri/transport"
 require_relative "mistri/providers/fake"
 
