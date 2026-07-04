@@ -18,12 +18,17 @@ module Mistri
     #               schema: -> { string :city, "City name", required: true }) do |args|
     #     Weather.for(args["city"])
     #   end
+    # A no-argument tool still needs a valid object schema; providers reject a
+    # bare empty hash.
+    EMPTY_SCHEMA = { type: "object", properties: {} }.freeze
+
     def self.define(name, description, input_schema: nil, schema: nil, **, &handler)
-      input_schema ||= schema ? Schema.build(&schema) : {}
+      input_schema ||= schema ? Schema.build(&schema) : EMPTY_SCHEMA
       new(name: name, description: description, input_schema: input_schema, **, &handler)
     end
 
-    def initialize(name:, description:, input_schema: {}, eager_input_streaming: false, &handler)
+    def initialize(name:, description:, input_schema: EMPTY_SCHEMA, eager_input_streaming: false,
+                   &handler)
       raise ArgumentError, "tool #{name.inspect} needs a handler block" unless handler
 
       @name = name.to_s

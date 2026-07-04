@@ -43,6 +43,12 @@ class TestTool < Minitest::Test
     assert_raises(ArgumentError) { Mistri::Tool.define("bad", "no block") }
   end
 
+  def test_a_no_argument_tool_gets_a_valid_object_schema
+    tool = Mistri::Tool.define("now", "Current time.") { Time.now.to_s }
+
+    assert_equal({ type: "object", properties: {} }, tool.spec[:input_schema])
+  end
+
   def test_eager_streaming_shows_up_in_the_spec
     tool = Mistri::Tool.define("write", "Writes.", eager_input_streaming: true) { "ok" }
 
