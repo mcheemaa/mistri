@@ -12,6 +12,8 @@ jobs:
       fail-fast: false
       matrix:
         ruby: ["3.2", "3.3", "3.4", "head"]
+    env:
+      BUNDLE_WITHOUT: lint
     steps:
       - uses: actions/checkout@v4
       - uses: ruby/setup-ruby@v1

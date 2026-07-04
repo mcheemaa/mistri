@@ -3,4 +3,5 @@
 /coverage/
 .env
 .env*.local
+Gemfile.lock
 .DS_Store

@@ -7,6 +7,11 @@ gemspec
 group :development do
   gem "minitest"
   gem "rake"
+end
+
+# Lint tools run on one Ruby in CI; their dependencies drop old rubies faster
+# than the gem does, so the test matrix must not install them.
+group :lint do
   gem "rubocop"
   gem "rubocop-minitest"
   gem "rubocop-rake"
