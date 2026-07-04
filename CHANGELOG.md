@@ -11,6 +11,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - The streaming event union: twelve event types, each carrying an immutable
   partial-message snapshot.
 - `Mistri::Providers::Fake`: a scriptable provider for hermetic host tests.
+- `Mistri::AbortSignal`: a thread-safe cancel latch with abort callbacks.
 
 ## [0.0.3] - 2026-07-04
 
