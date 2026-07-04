@@ -17,6 +17,10 @@ module Mistri
        find_in_file(workspace), list_files(workspace)]
     end
 
+    def memory(store)
+      [read_memory(store), update_memory(store)]
+    end
+
     def with_document(workspace, args)
       content = workspace.read(args["path"])
       return "No document at #{args["path"].inspect}. Use list_files to see paths." if content.nil?
@@ -42,3 +46,5 @@ require_relative "tools/write_file"
 require_relative "tools/edit_file"
 require_relative "tools/find_in_file"
 require_relative "tools/list_files"
+require_relative "tools/read_memory"
+require_relative "tools/update_memory"

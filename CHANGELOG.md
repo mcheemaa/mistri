@@ -5,6 +5,9 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+- `Mistri::Memory` and `Mistri::Tools.memory`: durable knowledge across
+  sessions, read and rewritten whole, living wherever the host points it.
+
 - `Mistri::Workspace`: the document store agents work in, with memory,
   directory, ActiveRecord, and single-document backends, so editing a
   database column works exactly like editing a file.
