@@ -23,6 +23,7 @@ module Mistri
       done error
       tool_result approval_needed
       compacting compaction
+      retry
     ].freeze
 
     def initialize(type:, content_index: nil, delta: nil, content: nil, tool_call: nil,

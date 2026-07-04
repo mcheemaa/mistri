@@ -88,8 +88,10 @@ module Mistri
       end
 
       def finish_error(turn, blocks, emit)
+        error = { "type" => turn.fetch(:error_type, "Error") }
+        error["status"] = turn[:status] if turn[:status]
         message = assemble(blocks, usage: Usage.zero, stop_reason: StopReason::ERROR,
-                                   error_message: turn[:error])
+                                   error_message: turn[:error], error: error)
         emit&.call(Event.new(type: :error, reason: StopReason::ERROR, message:,
                              error_message: turn[:error]))
         message

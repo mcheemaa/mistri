@@ -5,6 +5,16 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+- Retry policy: transient turn failures (429/5xx/529, timeouts, dropped or
+  truncated streams) retry with jittered backoff, honoring retry-after. On
+  by default (retries: on the Agent; false disables, or pass a tuned
+  RetryPolicy). Failed attempts record as retry entries and emit :retry
+  events but never become messages, so retries stay invisible to the model.
+- Errored messages now carry a machine-readable error field ({type, status,
+  retry_after}) alongside error_message; in-stream provider errors keep
+  their wire classification (Anthropic overloaded, OpenAI rate limits,
+  Gemini status codes) instead of folding into prose.
+
 - Two-channel tool results: a handler may return Mistri::ToolResult with
   content for the model and ui for the host. The ui payload rides the tool
   message and its :tool_result event, persists with the session for

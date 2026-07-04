@@ -71,7 +71,8 @@ class TestAnthropicAssembler < Minitest::Test
                     ])
 
     assert_equal :error, message.stop_reason
-    assert_equal "Overloaded", message.error_message
+    assert_equal "Mistri::OverloadedError: Overloaded", message.error_message
+    assert_equal "OverloadedError", message.error["type"], "overloaded classifies as retryable"
     assert_predicate events.last, :error?
   end
 

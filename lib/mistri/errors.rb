@@ -71,4 +71,24 @@ module Mistri
 
   # Compaction could not produce a usable summary.
   class CompactionError < Error; end
+
+  # The machine-readable shape of a stream failure, carried on errored
+  # assistant messages so retry policies and hosts can classify without
+  # parsing prose. Strings are the assemblers' synthesized truncation
+  # reasons.
+  module ErrorData
+    module_function
+
+    def for(reason)
+      case reason
+      when RateLimitError
+        { "type" => "RateLimitError", "status" => reason.status,
+          "retry_after" => reason.retry_after }.compact
+      when ProviderError
+        { "type" => reason.class.name.split("::").last, "status" => reason.status }.compact
+      when Exception then { "type" => reason.class.name }
+      else { "type" => "TruncatedStream" }
+      end
+    end
+  end
 end

@@ -60,7 +60,8 @@ class TestGeminiAssembler < Minitest::Test
     failed = drive([], [{ "error" => { "code" => 500, "message" => "internal" } }])
 
     assert_equal :error, failed.stop_reason
-    assert_equal "internal", failed.error_message
+    assert_equal "Mistri::ProviderError: internal | status 500", failed.error_message
+    assert_equal 500, failed.error["status"], "the wire code rides as a status"
   end
 
   def test_a_stream_that_ends_without_a_finish_reason_is_an_error

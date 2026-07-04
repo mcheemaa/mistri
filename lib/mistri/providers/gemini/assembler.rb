@@ -23,7 +23,8 @@ module Mistri
 
         def feed(record, &)
           if (error = record["error"])
-            @error = error["message"] || "provider error"
+            @error = ProviderError.new(error["message"] || "provider error",
+                                       status: error["code"])
             return
           end
 
@@ -57,7 +58,7 @@ module Mistri
                  when Exception then "#{reason.class}: #{reason.message}"
                  else reason.to_s
                  end
-          terminal(StopReason::ERROR, text, &)
+          terminal(StopReason::ERROR, text, error: ErrorData.for(reason), &)
         end
 
         def message = @message ||= finish
@@ -130,8 +131,8 @@ module Mistri
           StopReason::STOP
         end
 
-        def terminal(reason, text, &emit)
-          @message = assemble(stop_reason: reason, error_message: text)
+        def terminal(reason, text, error: nil, &emit)
+          @message = assemble(stop_reason: reason, error_message: text, error: error)
           emit&.call(Event.new(type: :error, reason: reason, message: @message,
                                error_message: text))
           @message

@@ -18,7 +18,8 @@ module Mistri
     # pass false to disable, or a tuned Compaction. It only ever triggers
     # when the model's window is known (catalog or Compaction#window).
     def initialize(provider:, session: nil, system: nil, tools: [], budget: nil,
-                   max_concurrency: 4, transform_context: nil, compaction: Compaction.new)
+                   max_concurrency: 4, transform_context: nil, compaction: Compaction.new,
+                   retries: RetryPolicy.new)
       @provider = provider
       @session = session || Session.new(store: Stores::Memory.new)
       @system = system
@@ -30,6 +31,7 @@ module Mistri
       @max_concurrency = max_concurrency
       @transform_context = transform_context
       @compaction = compaction || nil
+      @retries = retries || nil
     end
 
     attr_reader :session
@@ -151,13 +153,49 @@ module Mistri
     # lambda gets the replay messages and returns the messages to send; it
     # must keep every tool call paired with its result or providers reject
     # the request.
-    def run_turn(signal, &)
+    #
+    # A transient failure retries the same request with backoff; the failed
+    # attempt is recorded as a retry entry, never as a message, so retries
+    # stay invisible to the model. Only the final outcome persists.
+    def run_turn(signal, &emit)
       history = @session.messages
       history = @transform_context.call(history) if @transform_context
-      message = @provider.stream(messages: history, system: @system,
-                                 tools: @tools.map(&:spec), signal: signal, &)
-      @session.append_message(message)
-      message
+      attempt = 0
+      loop do
+        message = @provider.stream(messages: history, system: @system,
+                                   tools: @tools.map(&:spec), signal: signal, &emit)
+        attempt += 1
+        if retry_turn?(message, attempt, signal)
+          pause = @retries.delay(attempt, message.error&.dig("retry_after"))
+          record_retry(message, attempt, pause, &emit)
+          wait(pause, signal)
+          next unless signal&.aborted?
+        end
+        @session.append_message(message)
+        return message
+      end
+    end
+
+    def retry_turn?(message, attempt, signal)
+      return false unless @retries && message.stop_reason == StopReason::ERROR
+      return false if signal&.aborted?
+
+      @retries.retry?(message.error, attempt)
+    end
+
+    def record_retry(message, attempt, pause, &emit)
+      @session.append("retry", "attempt" => attempt, "error" => message.error,
+                               "delay" => pause.round(2))
+      note = format("attempt %<attempt>d failed; retrying in %<pause>.1fs",
+                    attempt: attempt, pause: pause)
+      emit&.call(Event.new(type: :retry, content: note, reason: StopReason::ERROR,
+                           message: message))
+    end
+
+    # Backoff that an abort can cut short.
+    def wait(seconds, signal)
+      deadline = monotonic_now + seconds
+      sleep(0.1) while monotonic_now < deadline && !signal&.aborted?
     end
 
     # Answer or park the assistant's tool calls. Ungated calls execute (only

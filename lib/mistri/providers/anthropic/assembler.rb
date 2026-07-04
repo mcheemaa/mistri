@@ -28,7 +28,7 @@ module Mistri
           when "content_block_stop" then stop_block(record, &)
           when "message_delta" then message_delta(record)
           when "message_stop" then @done = true
-          when "error" then @error = record.dig("error", "message") || "provider error"
+          when "error" then @error = wire_error(record["error"])
           end
         end
 
@@ -53,6 +53,14 @@ module Mistri
           @message
         end
 
+        # In-stream failures carry a wire type; overloaded ones must classify
+        # as retryable, not fold into prose.
+        def wire_error(payload)
+          message = payload&.dig("message") || "provider error"
+          klass = payload&.dig("type").to_s.include?("overloaded") ? OverloadedError : ProviderError
+          klass.new(message)
+        end
+
         def fail_stream(reason, &emit)
           finalize_current
           text = case reason
@@ -60,7 +68,8 @@ module Mistri
                  when Exception then "#{reason.class}: #{reason.message}"
                  else reason.to_s
                  end
-          @message = assemble(stop_reason: StopReason::ERROR, error_message: text)
+          @message = assemble(stop_reason: StopReason::ERROR, error_message: text,
+                              error: ErrorData.for(reason))
           emit&.call(Event.new(type: :error, reason: StopReason::ERROR, message: @message,
                                error_message: text))
           @message

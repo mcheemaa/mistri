@@ -30,7 +30,7 @@ module Mistri
           when "response.output_item.done" then finish_item(record["item"], &)
           when "response.completed", "response.incomplete", "response.failed"
             finish_response(record["response"] || {})
-          when "error" then @error = record["message"] || "provider error"
+          when "error" then @error = wire_error(record)
           end
         end
 
@@ -49,13 +49,25 @@ module Mistri
           terminal(StopReason::ABORTED, "aborted", &)
         end
 
+        # In-stream failures carry a code; rate limits and server errors must
+        # classify as retryable, not fold into prose.
+        def wire_error(record)
+          message = record["message"] || "provider error"
+          code = record["code"].to_s
+          klass = if code.include?("rate_limit") then RateLimitError
+                  elsif code.include?("server") then ServerError
+                  else ProviderError
+                  end
+          klass.new(message)
+        end
+
         def fail_stream(reason, &)
           text = case reason
                  when ProviderError then "#{reason.class}: #{reason.describe}"
                  when Exception then "#{reason.class}: #{reason.message}"
                  else reason.to_s
                  end
-          terminal(StopReason::ERROR, text, &)
+          terminal(StopReason::ERROR, text, error: ErrorData.for(reason), &)
         end
 
         def message = @message ||= finish
@@ -150,8 +162,8 @@ module Mistri
           StopReason::STOP
         end
 
-        def terminal(reason, text, &emit)
-          @message = assemble(stop_reason: reason, error_message: text)
+        def terminal(reason, text, error: nil, &emit)
+          @message = assemble(stop_reason: reason, error_message: text, error: error)
           emit&.call(Event.new(type: :error, reason: reason, message: @message,
                                error_message: text))
           @message
