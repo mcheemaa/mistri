@@ -1,4 +1,6 @@
 *.gem
 /.bundle/
 /coverage/
+.env
+.env*.local
 .DS_Store
