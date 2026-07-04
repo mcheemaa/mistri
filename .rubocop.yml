@@ -1,0 +1,54 @@
+plugins:
+  - rubocop-minitest
+  - rubocop-rake
+
+AllCops:
+  TargetRubyVersion: 3.2
+  NewCops: enable
+
+Style/StringLiterals:
+  EnforcedStyle: double_quotes
+
+Style/StringLiteralsInInterpolation:
+  EnforcedStyle: double_quotes
+
+Style/Documentation:
+  Enabled: false
+
+# Enable at launch, once MFA is turned on for the publishing account.
+Gemspec/RequireMFA:
+  Enabled: false
+
+Style/EndlessMethod:
+  EnforcedStyle: allow_single_line
+
+Layout/LineLength:
+  Max: 100
+
+Metrics/MethodLength:
+  Max: 40
+  CountAsOne: [array, hash, heredoc]
+
+Metrics/ClassLength:
+  Max: 250
+  CountAsOne: [array, hash, heredoc]
+
+Metrics/ModuleLength:
+  Max: 250
+  CountAsOne: [array, hash, heredoc]
+
+Metrics/AbcSize:
+  Max: 48
+
+Metrics/CyclomaticComplexity:
+  Max: 12
+
+Metrics/PerceivedComplexity:
+  Max: 12
+
+Metrics/ParameterLists:
+  CountKeywordArgs: false
+
+Metrics/BlockLength:
+  Exclude:
+    - "test/**/*"

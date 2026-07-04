@@ -1,3 +1,5 @@
+# frozen_string_literal: true
+
 require_relative "lib/mistri/version"
 
 Gem::Specification.new do |spec|
@@ -7,11 +9,13 @@ Gem::Specification.new do |spec|
   spec.summary = "Mistri: an agent harness for Ruby applications."
   spec.description = "Mistri (مستری) is the fixer: an agent harness for Ruby applications. " \
                      "First release coming soon."
-  spec.homepage = "https://github.com/ghostwright/mistri"
+  spec.homepage = "https://github.com/mcheemaa/mistri"
   spec.license = "MIT"
-  spec.metadata["source_code_uri"] = "https://github.com/ghostwright/mistri"
   spec.required_ruby_version = ">= 3.2"
 
-  spec.files = Dir["lib/**/*.rb", "README.md", "LICENSE"]
+  spec.metadata["source_code_uri"] = "https://github.com/mcheemaa/mistri"
+  spec.metadata["changelog_uri"] = "https://github.com/mcheemaa/mistri/blob/main/CHANGELOG.md"
+
+  spec.files = Dir["lib/**/*.rb", "README.md", "LICENSE", "NOTICE", "CHANGELOG.md"]
   spec.require_paths = ["lib"]
 end
