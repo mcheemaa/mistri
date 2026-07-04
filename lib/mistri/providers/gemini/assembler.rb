@@ -33,9 +33,11 @@ module Mistri
           @usage = parse_usage(record["usageMetadata"]) if record["usageMetadata"]
         end
 
+        # A stream that ended without a finishReason was truncated, not
+        # cancelled: fail it so the loop can treat it as retryable.
         def finish(&emit)
           return fail_stream(@error, &emit) if @error
-          return abort(&emit) unless @finish_reason
+          return fail_stream("stream ended without a finish reason", &emit) unless @finish_reason
 
           close_current(&emit)
           @message = assemble(stop_reason: stop_reason)
@@ -50,7 +52,11 @@ module Mistri
 
         def fail_stream(reason, &)
           close_current
-          text = reason.is_a?(Exception) ? "#{reason.class}: #{reason.message}" : reason.to_s
+          text = case reason
+                 when ProviderError then "#{reason.class}: #{reason.describe}"
+                 when Exception then "#{reason.class}: #{reason.message}"
+                 else reason.to_s
+                 end
           terminal(StopReason::ERROR, text, &)
         end
 

@@ -36,9 +36,10 @@ module Mistri
     def loop_turns(signal, &emit)
       turns = 0
       usage = Usage.zero
+      started = monotonic_now
       last = nil
       loop do
-        reason = @budget.exceeded(turns: turns, usage: usage)
+        reason = @budget.exceeded(turns: turns, usage: usage, elapsed: monotonic_now - started)
         return stop_for_budget(reason, &emit) if reason
 
         last = run_turn(signal, &emit)
@@ -59,18 +60,26 @@ module Mistri
       message
     end
 
-    # Execute the assistant's tool calls and append their results as one paired
-    # batch. When the signal is tripped, un-run calls still get interrupted
-    # results, so the assistant turn is never left with a dangling tool_use.
+    # Answer the assistant's tool calls and append the results as one paired
+    # batch. Tools only EXECUTE on a genuine tool_use turn with no abort; an
+    # errored, truncated, or aborted turn pairs its calls with interrupted
+    # results instead, so a partial call never dispatches for real and the
+    # transcript still replays.
     def run_tools(assistant, signal, &emit)
-      results = ToolExecutor.call(assistant.tool_calls, @tools_by_name,
-                                  signal: signal, max_concurrency: @max_concurrency)
+      results = if assistant.stop_reason == StopReason::TOOL_USE && !signal&.aborted?
+                  ToolExecutor.call(assistant.tool_calls, @tools_by_name,
+                                    signal: signal, max_concurrency: @max_concurrency)
+                else
+                  assistant.tool_calls.map { |call| [call, ToolExecutor::INTERRUPTED] }
+                end
       results.each do |call, result|
         message = Message.tool(content: result, tool_call_id: call.id, tool_name: call.name)
         @session.append_message(message)
         emit&.call(Event.new(type: :tool_result, tool_call: call, content: result_text(result)))
       end
     end
+
+    def monotonic_now = Process.clock_gettime(Process::CLOCK_MONOTONIC)
 
     def stop_for_budget(reason, &emit)
       message = Message.assistant(content: "Run stopped: #{reason} budget reached.",

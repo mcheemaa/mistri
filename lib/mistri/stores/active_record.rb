@@ -18,6 +18,11 @@ module Mistri
     #     t.text :payload, size: :medium, null: false
     #     t.timestamps
     #   end
+    #   add_index :mistri_entries, [:session_id, :position], unique: true
+    #
+    # The unique index is load-bearing: one session has one writer at a time
+    # (the loop is serial), and if a host ever runs two agents on one session,
+    # a colliding append raises instead of silently corrupting entry order.
     #
     # Reads select only (position, payload) and sort in Ruby: ORDER BY over
     # rows carrying multi-megabyte payloads exhausts MySQL's sort buffer.

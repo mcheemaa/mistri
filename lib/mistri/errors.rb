@@ -22,6 +22,15 @@ module Mistri
       super(message || self.class.default_message)
     end
 
+    # The full story for logs and error turns: the response names the fix far
+    # more often than the status line does.
+    def describe
+      parts = [message]
+      parts << "status #{status}" if status
+      parts << body.to_s[0, 300] if body && !body.to_s.strip.empty?
+      parts.join(" | ")
+    end
+
     def self.default_message = "provider request failed"
   end
 

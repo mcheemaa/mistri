@@ -34,9 +34,11 @@ module Mistri
           end
         end
 
+        # A stream that ended without a terminal response event was truncated,
+        # not cancelled: fail it so the loop can treat it as retryable.
         def finish(&emit)
           return fail_stream(@error, &emit) if @error
-          return abort(&emit) unless @status
+          return fail_stream("stream ended without a terminal event", &emit) unless @status
 
           @message = assemble(stop_reason: stop_reason)
           emit&.call(Event.new(type: :done, reason: @message.stop_reason, message: @message))
@@ -48,7 +50,11 @@ module Mistri
         end
 
         def fail_stream(reason, &)
-          text = reason.is_a?(Exception) ? "#{reason.class}: #{reason.message}" : reason.to_s
+          text = case reason
+                 when ProviderError then "#{reason.class}: #{reason.describe}"
+                 when Exception then "#{reason.class}: #{reason.message}"
+                 else reason.to_s
+                 end
           terminal(StopReason::ERROR, text, &)
         end
 

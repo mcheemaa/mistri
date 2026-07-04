@@ -41,11 +41,25 @@ module Mistri
           { role: msg.assistant? ? "model" : "user", parts: parts }
         end
 
+        # Gemini pairs a functionResponse to its call by NAME; a wrong name
+        # silently mismatches, so a missing one fails loudly instead.
         def tool_turn(group)
           { role: "user", parts: group.map do |msg|
-            { functionResponse: { name: msg.tool_name || msg.tool_call_id,
-                                  response: { "result" => msg.text.to_s } } }
+            unless msg.tool_name
+              raise SchemaError, "Gemini tool results need tool_name to pair with their call"
+            end
+
+            { functionResponse: { name: msg.tool_name,
+                                  response: { "result" => result_text(msg) } } }
           end }
+        end
+
+        # Non-text blocks in a tool result have no functionResponse encoding;
+        # note the omission rather than dropping it silently.
+        def result_text(msg)
+          omitted = msg.content.count { |block| !block.is_a?(Content::Text) }
+          text = msg.text.to_s
+          omitted.positive? ? "#{text}\n[#{omitted} non-text block(s) omitted]".strip : text
         end
 
         def user_parts(msg)

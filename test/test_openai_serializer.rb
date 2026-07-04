@@ -31,6 +31,14 @@ class TestOpenAISerializer < Minitest::Test
                  items[4])
   end
 
+  def test_a_reasoning_item_missing_encrypted_content_is_dropped
+    bare = { "type" => "reasoning", "id" => "rs_1", "summary" => [] }
+    thinking = Mistri::Content::Thinking.new(thinking: "", signature: JSON.generate(bare))
+    items = SERIALIZER.input_items([Mistri::Message.assistant(content: [thinking])])
+
+    assert_empty items
+  end
+
   def test_foreign_thinking_without_a_responses_payload_is_dropped
     anthropic_thinking = Mistri::Content::Thinking.new(thinking: "why", signature: "sig_abc")
     items = SERIALIZER.input_items([Mistri::Message.assistant(content: [anthropic_thinking])])

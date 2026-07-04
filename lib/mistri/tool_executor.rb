@@ -15,10 +15,12 @@ module Mistri
     module_function
 
     def call(calls, tools_by_name, signal: nil, max_concurrency: 4)
+      return [] if calls.empty?
+
       results = Array.new(calls.length)
       queue = Queue.new
       calls.each_with_index { |call, index| queue << [call, index] }
-      workers = [calls.length, max_concurrency].min.clamp(0, calls.length)
+      workers = max_concurrency.clamp(1, calls.length)
       Array.new(workers) { worker(queue, results, tools_by_name, signal) }.each(&:join)
       calls.zip(results).map { |call, result| [call, result || INTERRUPTED] }
     end

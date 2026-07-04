@@ -91,6 +91,13 @@ class TestOpenAIAssembler < Minitest::Test
     assert_equal "server exploded", failed.error_message
   end
 
+  def test_a_stream_that_ends_without_a_terminal_event_is_an_error
+    message = drive([], [{ "type" => "response.output_text.delta", "delta" => "cut off" }])
+
+    assert_equal :error, message.stop_reason
+    assert_match(/terminal event/, message.error_message)
+  end
+
   private
 
   def drive(events, records)

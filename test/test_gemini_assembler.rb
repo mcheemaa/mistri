@@ -63,6 +63,15 @@ class TestGeminiAssembler < Minitest::Test
     assert_equal "internal", failed.error_message
   end
 
+  def test_a_stream_that_ends_without_a_finish_reason_is_an_error
+    message = drive([], [
+                      { "candidates" => [{ "content" => { "parts" => [{ "text" => "cut" }] } }] }
+                    ])
+
+    assert_equal :error, message.stop_reason
+    assert_match(/finish reason/, message.error_message)
+  end
+
   private
 
   def drive(events, records)

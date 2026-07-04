@@ -37,6 +37,12 @@ class TestGeminiSerializer < Minitest::Test
     assert_equal [{ text: "hi" }], parts
   end
 
+  def test_a_tool_result_without_a_tool_name_fails_loudly
+    result = Mistri::Message.tool(content: "found", tool_call_id: "c1")
+
+    assert_raises(Mistri::SchemaError) { SERIALIZER.contents([result]) }
+  end
+
   def test_images_ride_as_inline_data
     image = Mistri::Content::Image.from_bytes("png!", mime_type: "image/png")
     contents = SERIALIZER.contents([Mistri::Message.user(["see", image])])

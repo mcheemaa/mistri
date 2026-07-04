@@ -55,7 +55,11 @@ module Mistri
 
         def fail_stream(reason, &emit)
           finalize_current
-          text = reason.is_a?(Exception) ? "#{reason.class}: #{reason.message}" : reason.to_s
+          text = case reason
+                 when ProviderError then "#{reason.class}: #{reason.describe}"
+                 when Exception then "#{reason.class}: #{reason.message}"
+                 else reason.to_s
+                 end
           @message = assemble(stop_reason: StopReason::ERROR, error_message: text)
           emit&.call(Event.new(type: :error, reason: StopReason::ERROR, message: @message,
                                error_message: text))

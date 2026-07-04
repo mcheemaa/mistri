@@ -88,6 +88,16 @@ class TestAnthropicAssembler < Minitest::Test
     assert_equal "opaque", message.content.first.signature
   end
 
+  def test_a_provider_error_folds_with_its_status_and_body
+    assembler = Mistri::Providers::Anthropic::Assembler.new(model: "claude-opus-4-8")
+    error = Mistri::ServerError.new(status: 503, body: "upstream connect timeout")
+
+    message = assembler.fail_stream(error)
+
+    assert_match(/status 503/, message.error_message)
+    assert_match(/upstream connect timeout/, message.error_message)
+  end
+
   private
 
   def drive(events, records)

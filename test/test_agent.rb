@@ -50,6 +50,21 @@ class TestAgent < Minitest::Test
     assert_match(/Error running tool "boom".*kaboom/, tool_result)
   end
 
+  def test_an_errored_turn_with_tool_calls_pairs_without_executing
+    turn = { tool_calls: [{ name: "danger", arguments: {} }], stop_reason: :error }
+    provider = Mistri::Providers::Fake.new(turns: [turn])
+    danger = Mistri::Tool.define("danger", "Must not run.") { flunk "executed on an errored turn" }
+    agent = Mistri::Agent.new(provider:, tools: [danger])
+
+    message = agent.run("go")
+
+    assert_equal :error, message.stop_reason
+    tool_result = agent.session.messages.last
+
+    assert_predicate tool_result, :tool?
+    assert_equal Mistri::ToolExecutor::INTERRUPTED, tool_result.text
+  end
+
   def test_a_budget_stops_the_run_between_turns
     provider = Mistri::Providers::Fake.new(turns: Array.new(5) do
       { tool_calls: [{ name: "loop", arguments: {} }] }

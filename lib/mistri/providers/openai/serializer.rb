@@ -52,8 +52,13 @@ module Mistri
           end
         end
 
+        # Non-text blocks in a tool result have no function_call_output
+        # encoding; note the omission rather than dropping it silently.
         def tool_result_item(msg)
-          { type: "function_call_output", call_id: msg.tool_call_id, output: msg.text.to_s }
+          omitted = msg.content.count { |block| !block.is_a?(Content::Text) }
+          text = msg.text.to_s
+          text = "#{text}\n[#{omitted} non-text block(s) omitted]".strip if omitted.positive?
+          { type: "function_call_output", call_id: msg.tool_call_id, output: text }
         end
 
         def assistant_items(msg)
@@ -68,12 +73,14 @@ module Mistri
           end
         end
 
-        # The reasoning item replays exactly as it arrived or not at all: a
-        # reasoning block from another provider has no Responses payload.
+        # The reasoning item replays exactly as it arrived or not at all. An
+        # item without encrypted_content triggers a server-side id lookup that
+        # cannot succeed under store: false, so it drops rather than 404s.
         def reasoning_item(block)
           return nil unless block.signature
 
-          JSON.parse(block.signature)
+          item = JSON.parse(block.signature)
+          item.is_a?(Hash) && item["encrypted_content"] ? item : nil
         rescue JSON::ParserError
           nil
         end

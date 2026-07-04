@@ -5,6 +5,11 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+- Truncated streams now fail as retryable errors on every provider instead of
+  reading as user cancellations, and their tool calls pair without executing.
+- Provider error turns carry the HTTP status and response body.
+- Budgets measure every ceiling per run, including wall clock.
+
 - `Mistri::Edit`: pure fuzzy text replacement with a uniqueness guarantee,
   so an edit never silently changes the wrong region; the string core for a
   workspace-backed edit tool that works against a database as well as a file.
