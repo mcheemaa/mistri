@@ -18,7 +18,11 @@ module Mistri
       ["claude-haiku-4-5", :anthropic, 64_000, 200_000],
       ["gpt-5.5", :openai, 128_000, 400_000],
       ["gpt-5.4", :openai, 128_000, 400_000],
-      ["gpt-5-nano", :openai, 128_000, 400_000]
+      ["gpt-5-nano", :openai, 128_000, 400_000],
+      ["gemini-3.5-flash", :gemini, 65_536, 1_048_576],
+      ["gemini-3.1-pro-preview", :gemini, 65_536, 1_048_576],
+      ["gemini-2.5-pro", :gemini, 65_536, 1_048_576],
+      ["gemini-2.5-flash", :gemini, 65_536, 1_048_576]
     ].to_h do |id, provider, max_output, context_window|
       [id, Model.new(id:, provider:, max_output:, context_window:)]
     end.freeze

@@ -1,0 +1,74 @@
+# frozen_string_literal: true
+
+require_relative "test_helper"
+
+class TestGeminiAssembler < Minitest::Test
+  def test_folds_thought_and_text_parts_into_separate_blocks
+    events = []
+    message = drive(events, [
+                      { "candidates" => [{ "content" => { "parts" => [
+                        { "text" => "Considering.", "thought" => true }
+                      ] } }] },
+                      { "candidates" => [{ "content" => { "parts" => [{ "text" => "Hel" }] } }] },
+                      { "candidates" => [{ "content" => { "parts" => [{ "text" => "lo" }] } }],
+                        "usageMetadata" => { "promptTokenCount" => 30,
+                                             "cachedContentTokenCount" => 10,
+                                             "candidatesTokenCount" => 5,
+                                             "thoughtsTokenCount" => 7 } },
+                      { "candidates" => [{ "finishReason" => "STOP" }] }
+                    ])
+
+    assert_equal "Hello", message.text
+    assert_equal :stop, message.stop_reason
+    assert_equal %i[thinking text], message.content.map(&:type)
+    assert_equal 20, message.usage.input
+    assert_equal 12, message.usage.output
+    assert_equal 7, message.usage.reasoning
+    assert_equal %i[thinking_start thinking_delta thinking_end],
+                 events.select { |e| e.type.start_with?("thinking") }.map(&:type)
+  end
+
+  def test_a_function_call_arrives_whole_with_its_thought_signature
+    events = []
+    message = drive(events, [
+                      { "candidates" => [{ "content" => { "parts" => [
+                        { "functionCall" => { "name" => "search", "args" => { "q" => "ruby" } },
+                          "thoughtSignature" => "tsig123" }
+                      ] } }] },
+                      { "candidates" => [{ "finishReason" => "STOP" }] }
+                    ])
+
+    call = message.tool_calls.first
+
+    assert_equal :tool_use, message.stop_reason
+    assert_equal "search", call.name
+    assert_equal({ "q" => "ruby" }, call.arguments)
+    assert_equal "tsig123", call.signature
+    assert_equal %i[toolcall_start toolcall_delta toolcall_end],
+                 events.select { |e| e.type.start_with?("toolcall") }.map(&:type)
+  end
+
+  def test_max_tokens_and_error_records_map_cleanly
+    long = drive([], [
+                   { "candidates" => [{ "content" => { "parts" => [{ "text" => "partial" }] },
+                                        "finishReason" => "MAX_TOKENS" }] }
+                 ])
+
+    assert_equal :length, long.stop_reason
+    assert_equal "partial", long.text
+
+    failed = drive([], [{ "error" => { "code" => 500, "message" => "internal" } }])
+
+    assert_equal :error, failed.stop_reason
+    assert_equal "internal", failed.error_message
+  end
+
+  private
+
+  def drive(events, records)
+    assembler = Mistri::Providers::Gemini::Assembler.new(model: "gemini-2.5-flash")
+    emit = ->(event) { events << event }
+    records.each { |record| assembler.feed(record, &emit) }
+    assembler.finish(&emit)
+  end
+end

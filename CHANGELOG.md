@@ -23,6 +23,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   streaming.
 - `Mistri::Providers::OpenAI`: the Responses API streamed and stateless, with
   encrypted reasoning replay and thinking summaries.
+- `Mistri::Providers::Gemini`: generateContent streamed, with unconstrained
+  thinking by default and verbatim thought-signature replay.
 
 ## [0.0.3] - 2026-07-04
 
