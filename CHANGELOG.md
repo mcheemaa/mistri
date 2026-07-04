@@ -5,6 +5,17 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+- Human-in-the-loop approval: a tool marked needs_approval (true or a
+  predicate on its arguments) suspends the run instead of executing. Runs
+  return a Result immediately; decisions are recorded on the session from any
+  process (approve/deny), and resume settles them and continues. No thread
+  ever waits on a human.
+- Every run now returns a Mistri::Result (completed, awaiting_approval,
+  aborted, budget, or error) that delegates text and stop_reason to its final
+  message.
+- Session entries are normalized to one canonical JSON shape across all
+  stores.
+
 - Budget stops report stop_reason :budget, distinct from a user abort.
 - Tool results that are arrays of data serialize as JSON; empty input and
   duplicate tool names fail loudly at the boundary.

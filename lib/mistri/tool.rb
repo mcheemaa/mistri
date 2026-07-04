@@ -28,18 +28,26 @@ module Mistri
     end
 
     def initialize(name:, description:, input_schema: EMPTY_SCHEMA, eager_input_streaming: false,
-                   &handler)
+                   needs_approval: false, &handler)
       raise ArgumentError, "tool #{name.inspect} needs a handler block" unless handler
 
       @name = name.to_s
       @description = description
       @input_schema = input_schema
       @eager_input_streaming = eager_input_streaming
+      @needs_approval = needs_approval
       @handler = handler
     end
 
     def call(arguments)
       serialize_result(@handler.call(arguments || {}))
+    end
+
+    # Whether this call should pause for a human. true/false, or a callable
+    # given the parsed arguments so a tool can gate only the risky calls
+    # (needs_approval: ->(args) { args["amount"].to_i > 100 }).
+    def needs_approval?(arguments)
+      @needs_approval.respond_to?(:call) ? @needs_approval.call(arguments) : @needs_approval
     end
 
     # The provider-facing definition; every serializer accepts this shape.
