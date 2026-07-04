@@ -17,15 +17,19 @@ module Mistri
     # compaction defaults on so long sessions survive their context window;
     # pass false to disable, or a tuned Compaction. It only ever triggers
     # when the model's window is known (catalog or Compaction#window).
+    # skills: an array of Skill (or a directory path for Skills.load). Their
+    # descriptions join the system prompt and a read_skill tool serves full
+    # bodies on demand.
     def initialize(provider:, session: nil, system: nil, tools: [], budget: nil,
                    max_concurrency: 4, transform_context: nil, compaction: Compaction.new,
-                   retries: RetryPolicy.new)
+                   retries: RetryPolicy.new, skills: [])
       @provider = provider
       @session = session || Session.new(store: Stores::Memory.new)
-      @system = system
-      @tools = tools
-      @tools_by_name = tools.to_h { |tool| [tool.name, tool] }
-      raise ConfigurationError, "duplicate tool names" if @tools_by_name.length != tools.length
+      skills = skills.is_a?(String) ? Skills.load(skills) : Array(skills)
+      @system = Skills.amend(system, skills)
+      @tools = skills.empty? ? tools : tools + [Skills.reader(skills)]
+      @tools_by_name = @tools.to_h { |tool| [tool.name, tool] }
+      raise ConfigurationError, "duplicate tool names" if @tools_by_name.length != @tools.length
 
       @budget = budget || Budget.new
       @max_concurrency = max_concurrency

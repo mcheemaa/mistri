@@ -5,6 +5,13 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+- Skills: Mistri::Skill and Skills.load (a directory of SKILL.md folders or
+  flat .md files, flat-frontmatter name/description). Pass skills: to the
+  Agent (array or path): descriptions join the system prompt and a
+  read_skill tool serves full bodies on demand, so a skill library costs
+  one line each until used. Hosts with skills in a database construct
+  Skill objects directly.
+
 - Rails integration: `rails generate mistri:install YourModel` creates a
   host-named entry model and its migration for Stores::ActiveRecord
   (MEDIUMTEXT payload on MySQL-family adapters). Streaming sinks under
