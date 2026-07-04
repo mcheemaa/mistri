@@ -5,6 +5,12 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+- Steering: Session#steer queues a user message from any process while a run
+  is live. The loop folds pending steers into the transcript at the next turn
+  boundary, and one that arrives as the model finishes cleanly extends the
+  run so it gets answered instead of dangling. Steers compose with approval
+  suspensions: queue a thought, approve, resume.
+
 - Human-in-the-loop approval: a tool marked needs_approval (true or a
   predicate on its arguments) suspends the run instead of executing. Runs
   return a Result immediately; decisions are recorded on the session from any

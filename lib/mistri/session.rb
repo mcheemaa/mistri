@@ -44,6 +44,22 @@ module Mistri
       end
     end
 
+    # Queue a message for a running exchange from any process. The loop folds
+    # pending steers into the transcript at the next turn boundary, so the
+    # model sees them mid-run; one that arrives as the model finishes cleanly
+    # extends the run another turn so it is answered, not left dangling.
+    def steer(text)
+      append("steer", "id" => SecureRandom.uuid, "message" => Message.user(text).to_h)
+    end
+
+    # Steers not yet folded into the transcript, oldest first. The folding
+    # message entry carries the steer id, so consumption is derived from the
+    # log alone and reads the same from every process.
+    def pending_steers
+      folded = entries.filter_map { |entry| entry["steer_id"] }
+      entries.select { |entry| entry["type"] == "steer" && !folded.include?(entry["id"]) }
+    end
+
     # Record a human's decision on a parked tool call. Decisions are session
     # entries, so they can be written from any process, days later, with no
     # agent constructed; the next resume settles them.

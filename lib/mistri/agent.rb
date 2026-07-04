@@ -11,7 +11,8 @@ module Mistri
   # marked needs_approval suspends the run instead of executing: the run
   # returns at once (no thread ever waits on a human), the decision arrives
   # later as a session entry from any process, and resume settles it and
-  # carries on.
+  # carries on. Session#steer queues a user message from any process while
+  # the loop runs; it folds into the transcript at the next turn boundary.
   class Agent
     def initialize(provider:, session: nil, system: nil, tools: [], budget: nil,
                    max_concurrency: 4)
@@ -39,6 +40,7 @@ module Mistri
         raise ArgumentError, "run needs input text or images"
       end
 
+      fold_steers # steers queued while idle arrived first; keep that order
       @session.append_message(Message.user_with_images(input, images))
       loop_turns(signal, &emit)
     end
@@ -69,6 +71,7 @@ module Mistri
         reason = @budget.exceeded(turns: turns, usage: usage, elapsed: monotonic_now - started)
         return stop_for_budget(reason, &emit) if reason
 
+        fold_steers
         last = run_turn(signal, &emit)
         turns += 1
         usage += last.usage if last.usage
@@ -77,7 +80,27 @@ module Mistri
         # transcript is unpairable and replay fails.
         parked = last.tool_calls? ? run_tools(last, signal, &emit) : []
         return suspended(last, parked) if parked.any?
-        return finished(last) if last.stop_reason != StopReason::TOOL_USE || signal&.aborted?
+        return finished(last) if done?(last, signal)
+      end
+    end
+
+    # A steer that lands while the model finishes cleanly extends the run one
+    # more turn so it gets answered. Aborts, errors, and length stops always
+    # end the run; the steer stays pending for the next one.
+    def done?(last, signal)
+      return false if last.stop_reason == StopReason::TOOL_USE && !signal&.aborted?
+      return true if signal&.aborted? || last.stop_reason != StopReason::STOP
+
+      @session.pending_steers.empty?
+    end
+
+    # Materialize queued steers into the transcript in arrival order. The
+    # folded message entry carries the steer id, which is what marks the steer
+    # consumed: one append is both the fold and the marker, so a crash between
+    # steers never double-delivers.
+    def fold_steers
+      @session.pending_steers.each do |steer|
+        @session.append("message", "message" => steer["message"], "steer_id" => steer["id"])
       end
     end
 

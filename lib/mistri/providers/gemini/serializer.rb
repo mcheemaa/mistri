@@ -15,8 +15,21 @@ module Mistri
         module_function
 
         def contents(history)
-          turns = history.reject(&:system?).chunk_while { |a, b| a.tool? && b.tool? }
-          turns.filter_map { |group| group.first.tool? ? tool_turn(group) : turn(group.first) }
+          groups = history.reject(&:system?).chunk_while { |a, b| a.tool? && b.tool? }
+          turns = groups.filter_map do |group|
+            group.first.tool? ? tool_turn(group) : turn(group.first)
+          end
+          merge_user_runs(turns)
+        end
+
+        # A steered run puts a user message right behind tool results, and
+        # both serialize as user turns. Gemini expects turns to alternate, so
+        # consecutive user turns merge into one.
+        def merge_user_runs(turns)
+          turns.chunk_while { |a, b| a[:role] == "user" && b[:role] == "user" }
+               .map do |run|
+            run.length == 1 ? run.first : { role: "user", parts: run.flat_map { |t| t[:parts] } }
+          end
         end
 
         def system_instruction(system)

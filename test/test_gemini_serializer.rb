@@ -49,4 +49,20 @@ class TestGeminiSerializer < Minitest::Test
 
     assert_equal "image/png", contents.first[:parts].last[:inlineData][:mimeType]
   end
+
+  def test_a_steer_behind_tool_results_merges_into_one_user_turn
+    call = Mistri::ToolCall.new(id: "c1", name: "paint", arguments: {})
+    history = [Mistri::Message.user("go"),
+               Mistri::Message.assistant(content: [call], provider: :gemini),
+               Mistri::Message.tool(content: "painted", tool_call_id: "c1", tool_name: "paint"),
+               Mistri::Message.user("make it blue")]
+
+    contents = SERIALIZER.contents(history)
+
+    assert_equal(%w[user model user], contents.map { |turn| turn[:role] })
+    merged = contents.last[:parts]
+
+    assert(merged.any? { |part| part[:functionResponse] })
+    assert_equal "make it blue", merged.last[:text]
+  end
 end
