@@ -29,4 +29,29 @@ class TestAgentLive < Minitest::Test
   ensure
     provider&.close
   end
+
+  # Proves the blocker fixes against the real API: stop mid-run, then replay
+  # the aborted transcript into a live request that must not 400.
+  def test_an_aborted_turn_replays_into_a_live_request_without_an_error
+    provider = Mistri::Providers::Anthropic.new(api_key: ENV.fetch("ANTHROPIC_API_KEY"))
+    signal = Mistri::AbortSignal.new
+    tool = Mistri::Tool.define("slow", "Trips the abort.") do
+      signal.abort!(:stop)
+      "done"
+    end
+    session = Mistri::Session.new(store: Mistri::Stores::Memory.new)
+    agent = Mistri::Agent.new(provider:, tools: [tool], session:)
+    agent.run("Call the slow tool.", signal:)
+
+    # Fresh signal: the resume must complete against the real API, which it
+    # only can if the aborted transcript is wire-legal.
+    resumed = Mistri::Agent.new(provider:, tools: [tool], session:)
+    message = resumed.run("Now just say done.")
+
+    refute_equal :error, message.stop_reason,
+                 "aborted transcript 400d on replay: #{message.error_message}"
+    assert_equal :stop, message.stop_reason
+  ensure
+    provider&.close
+  end
 end

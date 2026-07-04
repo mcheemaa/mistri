@@ -5,6 +5,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+- Aborted and truncated turns now replay without provider errors: unusable
+  thinking degrades to text, empty blocks are dropped, every tool call is
+  paired, and budget-only models skip adaptive thinking.
+
 - The error hierarchy: every Mistri failure rescues as `Mistri::Error`.
 - The message protocol: immutable content blocks (text, thinking, image, tool call),
   messages with provider identity, usage accounting with cost math, stop reasons.
