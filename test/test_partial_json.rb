@@ -49,6 +49,20 @@ class TestPartialJson < Minitest::Test
     assert_equal [1, 2, { "x" => [3] }], Mistri::PartialJson.parse('[1, 2, {"x": [3')
   end
 
+  def test_overflow_and_infinity_never_raise_or_poison_json
+    deep = Mistri::PartialJson.parse("[" * 10_000)
+
+    assert_kind_of Array, deep
+    infinite = Mistri::PartialJson.parse('{"x": 1e999}')
+
+    assert_empty infinite
+    assert(JSON.generate(Mistri::PartialJson.parse('{"y": 1e999, "z": 2}')))
+  end
+
+  def test_a_complete_trailing_backslash_survives_mid_stream_salvage
+    assert_equal({ "s" => "a\\" }, Mistri::PartialJson.parse('{"s": "a\\\\'))
+  end
+
   def test_hopeless_input_returns_an_empty_hash
     ["", "   ", "garbage", "[}"].each do |input|
       result = Mistri::PartialJson.parse(input)

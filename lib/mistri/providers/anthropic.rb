@@ -13,6 +13,14 @@ module Mistri
       VERSION_HEADER = "2023-06-01"
       DEFAULT_THINKING = { type: "adaptive", display: "summarized" }.freeze
 
+      # Messages API parameters passed through verbatim from a stream override.
+      PASSTHROUGH = %i[temperature top_p top_k stop_sequences metadata
+                       tool_choice service_tier].freeze
+      # The ceiling for an uncatalogued model: high enough for headroom, low
+      # enough that every current model accepts it. Catalog a model to unlock
+      # its real output limit.
+      UNKNOWN_MODEL_MAX_TOKENS = 64_000
+
       def initialize(api_key:, model: "claude-opus-4-8", origin: "https://api.anthropic.com",
                      max_tokens: nil, thinking: DEFAULT_THINKING, cache: true,
                      **transport_options)
@@ -53,17 +61,32 @@ module Mistri
         system_blocks = Serializer.system_blocks(system, cache: @cache)
         body[:system] = system_blocks if system_blocks
         body[:tools] = Serializer.tools(tools) if tools.any?
-        thinking = overrides.fetch(:thinking, @thinking)
+        thinking = thinking_for(model, overrides)
         body[:thinking] = thinking if thinking
-        body
+        body.merge(PASSTHROUGH.each_with_object({}) do |key, params|
+          params[key] = overrides[key] if overrides.key?(key)
+        end)
       end
 
-      # The API requires max_tokens and bills only actual output, so the right
-      # default is the model's own ceiling: full headroom, no silent
-      # truncation. An unknown model falls back high on purpose; the loud 400
-      # from an older model beats quietly cutting a long answer short.
+      # Adaptive thinking 400s on budget-only models like Haiku 4.5, so the
+      # adaptive default is dropped for a model the catalog marks :budget; a
+      # host that wants thinking there passes an explicit budget config. An
+      # unknown model keeps the default, since new models are adaptive.
+      def thinking_for(model, overrides)
+        thinking = overrides.fetch(:thinking, @thinking)
+        return thinking unless thinking && thinking[:type] == "adaptive"
+        return nil if Models.thinking(model) == :budget
+
+        thinking
+      end
+
+      # The API requires max_tokens and bills only actual output, so the
+      # default is the model's own catalogued ceiling: full headroom, no
+      # silent truncation. An uncatalogued model falls back safely.
       def max_tokens_for(model, overrides)
-        overrides.fetch(:max_tokens) { @max_tokens || Models.max_output(model) || 32_000 }
+        overrides.fetch(:max_tokens) do
+          @max_tokens || Models.max_output(model) || UNKNOWN_MODEL_MAX_TOKENS
+        end
       end
 
       def headers

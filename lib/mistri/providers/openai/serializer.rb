@@ -48,7 +48,7 @@ module Mistri
           when Content::Image
             { type: "input_image", image_url: "data:#{block.mime_type};base64,#{block.data}" }
           else
-            raise ArgumentError, "cannot serialize #{block.class} for OpenAI user input"
+            raise SchemaError, "cannot serialize #{block.class} for OpenAI user input"
           end
         end
 

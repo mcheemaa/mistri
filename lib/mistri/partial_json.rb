@@ -14,7 +14,7 @@ module Mistri
 
       value = Parser.new(s).parse
       value.equal?(Parser::NOTHING) ? {} : value
-    rescue StandardError
+    rescue StandardError, SystemStackError
       {}
     end
 
@@ -24,11 +24,17 @@ module Mistri
       NOTHING = Object.new
       LITERALS = { "true" => true, "false" => false, "null" => nil }.freeze
 
+      # Nesting past this is treated as truncated: a model's real tool
+      # arguments never nest this deep, and the cap keeps a pathological input
+      # from overflowing the stack.
+      MAX_DEPTH = 256
+
       def initialize(source)
         @s = source
         @n = source.length
         @i = 0
         @partial = false
+        @depth = 0
       end
 
       def parse = value
@@ -41,9 +47,20 @@ module Mistri
 
         case @s[@i]
         when '"' then string
-        when "{" then object
-        when "[" then array
+        when "{" then nested { object }
+        when "[" then nested { array }
         else scalar
+        end
+      end
+
+      def nested
+        return truncated if @depth >= MAX_DEPTH
+
+        @depth += 1
+        begin
+          yield
+        ensure
+          @depth -= 1
         end
       end
 
@@ -112,10 +129,14 @@ module Mistri
         salvage_string(@s[start..])
       end
 
-      # Close an unterminated string, first shedding a half-written escape
-      # (a lone backslash or a partial \uXXXX).
+      # Close an unterminated string, first shedding a half-written escape: a
+      # partial \uXXXX, or a lone trailing backslash. A backslash is only
+      # dangling when the trailing run of them is odd; an even run is complete
+      # escaped backslashes and must be kept.
       def salvage_string(fragment)
-        candidate = fragment.sub(/\\u[0-9a-fA-F]{0,3}\z/, "").sub(/\\\z/, "")
+        candidate = fragment.sub(/\\u[0-9a-fA-F]{0,3}\z/, "")
+        trailing = candidate[/\\+\z/]
+        candidate = candidate[0..-2] if trailing&.length&.odd?
         decode(%(#{candidate}"))
       end
 
@@ -145,7 +166,7 @@ module Mistri
         Integer(token)
       rescue ArgumentError
         begin
-          Float(token)
+          finite(Float(token))
         rescue ArgumentError
           trimmed_number(token)
         end
@@ -157,9 +178,15 @@ module Mistri
         trimmed = token.sub(/[eE][+-]?\z/, "").sub(/\.\z/, "")
         return NOTHING if trimmed.empty? || trimmed == "-"
 
-        Float(trimmed)
+        finite(Float(trimmed))
       rescue ArgumentError
         NOTHING
+      end
+
+      # A model that emits 1e999 yields Float::INFINITY, which JSON cannot
+      # generate, so it would crash replay and persistence. Drop it.
+      def finite(number)
+        number.finite? ? number : NOTHING
       end
 
       def decode(json_string)

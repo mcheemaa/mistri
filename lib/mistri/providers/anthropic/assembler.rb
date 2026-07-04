@@ -32,10 +32,13 @@ module Mistri
           end
         end
 
-        # Close the stream: the terminal event reflects how it ended.
+        # Close the stream: the terminal event reflects how it ended. A stream
+        # that ended without message_stop was truncated (a dropped proxy, say),
+        # not user-aborted, so it fails for the loop to retry rather than
+        # reading as a cancellation.
         def finish(&emit)
           return fail_stream(@error, &emit) if @error
-          return abort(&emit) unless @done
+          return fail_stream("stream ended without message_stop", &emit) unless @done
 
           @message = assemble(stop_reason: @stop_reason || StopReason::STOP)
           emit&.call(Event.new(type: :done, reason: @message.stop_reason, message: @message))
@@ -166,10 +169,12 @@ module Mistri
                             usage: @usage, **meta)
         end
 
+        # pause_turn (a server tool paused a long turn) maps to tool_use so the
+        # loop continues the turn rather than ending it.
         def map_stop_reason(reason)
           { "end_turn" => StopReason::STOP, "stop_sequence" => StopReason::STOP,
-            "max_tokens" => StopReason::LENGTH,
-            "tool_use" => StopReason::TOOL_USE }.fetch(reason, StopReason::STOP)
+            "max_tokens" => StopReason::LENGTH, "tool_use" => StopReason::TOOL_USE,
+            "pause_turn" => StopReason::TOOL_USE }.fetch(reason, StopReason::STOP)
         end
 
         def parse_usage(raw)

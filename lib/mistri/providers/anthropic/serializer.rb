@@ -42,19 +42,24 @@ module Mistri
         end
 
         def message(msg)
-          { role: msg.role.to_s, content: msg.content.map { |block| block(block) } }
+          { role: msg.role.to_s, content: msg.content.filter_map { |block| block(block) } }
         end
 
         def tool_results(group)
           { role: "user", content: group.map do |msg|
-            { type: "tool_result", tool_use_id: msg.tool_call_id,
-              content: msg.content.map { |block| block(block) } }
+            blocks = msg.content.filter_map { |block| block(block) }
+            # The API rejects an empty tool_result; a space stands in for a
+            # tool that returned nothing.
+            blocks = [{ type: "text", text: " " }] if blocks.empty?
+            { type: "tool_result", tool_use_id: msg.tool_call_id, content: blocks }
           end }
         end
 
+        # Returns nil for a block the API would reject (empty text, unusable
+        # thinking), so callers filter_map it out.
         def block(block)
           case block
-          when Content::Text then { type: "text", text: block.text }
+          when Content::Text then text_block(block)
           when Content::Thinking then thinking_block(block)
           when Content::Image
             { type: "image",
@@ -62,16 +67,27 @@ module Mistri
           when ToolCall
             { type: "tool_use", id: block.id, name: block.name, input: block.arguments }
           else
-            raise ArgumentError, "cannot serialize #{block.class} for Anthropic"
+            raise SchemaError, "cannot serialize #{block.class} for Anthropic"
           end
         end
 
+        # The API rejects empty text content blocks.
+        def text_block(block)
+          block.text.empty? ? nil : { type: "text", text: block.text }
+        end
+
+        # Thinking replays only with its signature. Redacted thinking carries
+        # its opaque payload; a normal thinking block missing its signature
+        # (an aborted turn cut before signature_delta) cannot replay, so it
+        # degrades to its text, or drops when even that is empty.
         def thinking_block(block)
-          if block.redacted?
-            { type: "redacted_thinking", data: block.signature }
-          else
-            { type: "thinking", thinking: block.thinking, signature: block.signature }
+          return { type: "redacted_thinking", data: block.signature } if block.redacted?
+          if block.signature
+            return { type: "thinking", thinking: block.thinking,
+                     signature: block.signature }
           end
+
+          block.thinking.empty? ? nil : { type: "text", text: block.thinking }
         end
 
         def mark_last_user_turn(wire)

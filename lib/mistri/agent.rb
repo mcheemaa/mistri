@@ -44,11 +44,12 @@ module Mistri
         last = run_turn(signal, &emit)
         turns += 1
         usage += last.usage if last.usage
-        return last if last.stop_reason != StopReason::TOOL_USE
 
-        break if run_tools(last, signal, &emit) == :aborted
+        # Any tool call the turn made must be answered, even on an aborted or
+        # truncated turn, or the transcript is unpairable and replay 400s.
+        run_tools(last, signal, &emit) if last.tool_calls?
+        return last if last.stop_reason != StopReason::TOOL_USE || signal&.aborted?
       end
-      last
     end
 
     def run_turn(signal, &)
@@ -69,7 +70,6 @@ module Mistri
         @session.append_message(message)
         emit&.call(Event.new(type: :tool_result, tool_call: call, content: result_text(result)))
       end
-      signal&.aborted? ? :aborted : :continue
     end
 
     def stop_for_budget(reason, &emit)

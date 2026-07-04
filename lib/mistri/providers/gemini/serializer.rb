@@ -55,7 +55,7 @@ module Mistri
             when Content::Image
               { inlineData: { mimeType: block.mime_type, data: block.data } }
             else
-              raise ArgumentError, "cannot serialize #{block.class} for Gemini user input"
+              raise SchemaError, "cannot serialize #{block.class} for Gemini user input"
             end
           end
         end
