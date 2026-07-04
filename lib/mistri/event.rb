@@ -11,12 +11,16 @@ module Mistri
   # message's content list.
   class Event < Data.define(:type, :content_index, :delta, :content, :tool_call,
                             :reason, :message, :error_message, :partial)
+    # The stream types come from a provider mid-turn; the loop adds
+    # :tool_result after it runs each tool, so one subscription sees the
+    # whole exchange.
     TYPES = %i[
       start
       text_start text_delta text_end
       thinking_start thinking_delta thinking_end
       toolcall_start toolcall_delta toolcall_end
       done error
+      tool_result
     ].freeze
 
     def initialize(type:, content_index: nil, delta: nil, content: nil, tool_call: nil,

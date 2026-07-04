@@ -73,4 +73,21 @@ class TestAgent < Minitest::Test
     assert_includes types, :text_delta
     assert_equal :done, types.last
   end
+
+  def test_streaming_a_tool_turn_emits_tool_results_between_turns
+    provider = Mistri::Providers::Fake.new(turns: [
+                                             { tool_calls: [{ name: "ping", arguments: {} }] },
+                                             { text: "done" }
+                                           ])
+    ping = Mistri::Tool.define("ping", "Ping.") { "pong" }
+    events = []
+
+    Mistri::Agent.new(provider:, tools: [ping]).run("go") { |event| events << event }
+
+    result = events.find { |e| e.type == :tool_result }
+
+    assert_equal "ping", result.tool_call.name
+    assert_equal "pong", result.content
+    assert_equal :done, events.last.type
+  end
 end

@@ -56,9 +56,8 @@ module Mistri
   #   agent = Mistri.agent("claude-opus-4-8", tools: [weather], system: "Be brief.")
   #   agent.run("Weather in Lahore?") { |event| ... }
   def agent(model, api_key: nil, provider_options: {}, **agent_options)
-    provider(model, api_key: api_key, **provider_options).then do |built|
-      Agent.new(provider: built, **agent_options)
-    end
+    built = provider(model, api_key: api_key, **provider_options)
+    Agent.new(provider: built, **agent_options)
   end
 
   # Catalogued models infer directly; unknown ids fall back to the id prefix,
