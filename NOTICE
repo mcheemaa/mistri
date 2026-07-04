@@ -1,0 +1,9 @@
+Mistri
+Copyright (c) 2026 Muhammad Ahmed Cheema
+
+Mistri's architecture is informed by pi (https://github.com/badlogic/pi-mono),
+the agent harness by Mario Zechner, MIT licensed:
+Copyright (c) 2025 Mario Zechner
+
+Mistri also draws on lessons from truffle-rb, an earlier Ruby port of pi by the
+same author as Mistri.
