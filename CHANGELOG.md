@@ -5,6 +5,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+- Budget stops report stop_reason :budget, distinct from a user abort.
+- Tool results that are arrays of data serialize as JSON; empty input and
+  duplicate tool names fail loudly at the boundary.
+
 - `Mistri::Memory` and `Mistri::Tools.memory`: durable knowledge across
   sessions, read and rewritten whole, living wherever the host points it.
 

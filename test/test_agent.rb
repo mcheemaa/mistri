@@ -74,8 +74,18 @@ class TestAgent < Minitest::Test
 
     message = agent.run("go")
 
-    assert_equal :aborted, message.stop_reason
+    assert_equal :budget, message.stop_reason
     assert_equal "budget_turns", message.error_message
+  end
+
+  def test_empty_input_and_duplicate_tools_fail_loudly
+    provider = Mistri::Providers::Fake.new
+    ping = Mistri::Tool.define("ping", "Ping.") { "pong" }
+
+    assert_raises(ArgumentError) { Mistri::Agent.new(provider:).run("") }
+    assert_raises(Mistri::ConfigurationError) do
+      Mistri::Agent.new(provider:, tools: [ping, ping])
+    end
   end
 
   def test_events_stream_through_to_the_caller

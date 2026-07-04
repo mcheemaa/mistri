@@ -9,6 +9,10 @@ module Mistri
   # (serialized as JSON), or content blocks, so a tool can hand back images as
   # naturally as text.
   class Tool
+    # A no-argument tool still needs a valid object schema; providers reject a
+    # bare empty hash.
+    EMPTY_SCHEMA = { type: "object", properties: {} }.freeze
+
     attr_reader :name, :description, :input_schema
 
     # Define a tool. Give the argument shape as a raw JSON Schema hash via
@@ -18,10 +22,6 @@ module Mistri
     #               schema: -> { string :city, "City name", required: true }) do |args|
     #     Weather.for(args["city"])
     #   end
-    # A no-argument tool still needs a valid object schema; providers reject a
-    # bare empty hash.
-    EMPTY_SCHEMA = { type: "object", properties: {} }.freeze
-
     def self.define(name, description, input_schema: nil, schema: nil, **, &handler)
       input_schema ||= schema ? Schema.build(&schema) : EMPTY_SCHEMA
       new(name: name, description: description, input_schema: input_schema, **, &handler)
@@ -44,17 +44,23 @@ module Mistri
 
     # The provider-facing definition; every serializer accepts this shape.
     def spec
-      spec = { name: @name, description: @description, input_schema: @input_schema }
-      spec[:eager_input_streaming] = true if @eager_input_streaming
-      spec
+      definition = { name: @name, description: @description, input_schema: @input_schema }
+      definition[:eager_input_streaming] = true if @eager_input_streaming
+      definition
     end
 
     private
 
+    # Content blocks pass through so tools can return images; everything else
+    # the model reads as text, with structured data as JSON, never as Ruby
+    # inspect output.
     def serialize_result(result)
       case result
-      when String, Array then result
+      when String then result
       when nil then ""
+      when Array
+        content = result.all? { |element| element.respond_to?(:type) || element.is_a?(String) }
+        content ? result : JSON.generate(result)
       else result.respond_to?(:type) ? result : JSON.generate(result)
       end
     end

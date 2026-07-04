@@ -17,6 +17,8 @@ module Mistri
       @system = system
       @tools = tools
       @tools_by_name = tools.to_h { |tool| [tool.name, tool] }
+      raise ConfigurationError, "duplicate tool names" if @tools_by_name.length != tools.length
+
       @budget = budget || Budget.new
       @max_concurrency = max_concurrency
     end
@@ -27,6 +29,10 @@ module Mistri
     # model answers without tools, the run aborts, or a budget stops it.
     # Returns the final assistant message.
     def run(input, images: [], signal: nil, &emit)
+      if input.to_s.empty? && Array(images).empty?
+        raise ArgumentError, "run needs input text or images"
+      end
+
       @session.append_message(Message.user_with_images(input, images))
       loop_turns(signal, &emit)
     end
@@ -83,10 +89,10 @@ module Mistri
 
     def stop_for_budget(reason, &emit)
       message = Message.assistant(content: "Run stopped: #{reason} budget reached.",
-                                  stop_reason: StopReason::ABORTED,
+                                  stop_reason: StopReason::BUDGET,
                                   error_message: "budget_#{reason}")
       @session.append_message(message)
-      emit&.call(Event.new(type: :error, reason: StopReason::ABORTED, message: message,
+      emit&.call(Event.new(type: :error, reason: StopReason::BUDGET, message: message,
                            error_message: "budget_#{reason}"))
       message
     end

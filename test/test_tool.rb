@@ -39,6 +39,20 @@ class TestTool < Minitest::Test
     assert_instance_of Mistri::Content::Image, image_tool.call({})
   end
 
+  def test_an_array_of_data_returns_as_json_not_inspect_output
+    rows_tool = Mistri::Tool.define("rows", "d") { [{ "sku" => "A1" }, { "sku" => "B2" }] }
+
+    assert_equal [{ "sku" => "A1" }, { "sku" => "B2" }], JSON.parse(rows_tool.call({}))
+
+    blocks_tool = Mistri::Tool.define("blocks", "d") do
+      [Mistri::Content::Image.from_bytes("x", mime_type: "image/png"), "caption"]
+    end
+    result = blocks_tool.call({})
+
+    assert_kind_of Array, result
+    assert_instance_of Mistri::Content::Image, result.first
+  end
+
   def test_a_tool_without_a_handler_is_rejected
     assert_raises(ArgumentError) { Mistri::Tool.define("bad", "no block") }
   end

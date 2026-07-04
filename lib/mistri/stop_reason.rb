@@ -9,14 +9,16 @@ module Mistri
   #   :tool_use - it paused to call one or more tools
   #   :error    - the provider or runtime failed
   #   :aborted  - the host cancelled the turn
+  #   :budget   - a configured ceiling stopped the run
   module StopReason
     STOP = :stop
     LENGTH = :length
     TOOL_USE = :tool_use
     ERROR = :error
     ABORTED = :aborted
+    BUDGET = :budget
 
-    ALL = [STOP, LENGTH, TOOL_USE, ERROR, ABORTED].freeze
+    ALL = [STOP, LENGTH, TOOL_USE, ERROR, ABORTED, BUDGET].freeze
 
     def self.valid?(reason) = ALL.include?(reason)
   end
