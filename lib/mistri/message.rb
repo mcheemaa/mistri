@@ -29,6 +29,16 @@ module Mistri
 
     def self.user(content) = new(role: :user, content:)
 
+    # A user turn carrying images alongside optional text.
+    def self.user_with_images(content, images = [])
+      images = Array(images)
+      return user(content) if images.empty?
+
+      text = content.to_s
+      blocks = text.empty? ? images : [Content::Text.new(text:), *images]
+      new(role: :user, content: blocks)
+    end
+
     def self.assistant(content: nil, tool_calls: [], **meta)
       new(role: :assistant, content: [*Content.wrap(content), *tool_calls], **meta)
     end
