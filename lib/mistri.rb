@@ -8,6 +8,7 @@ require_relative "mistri/tool_call"
 require_relative "mistri/content"
 require_relative "mistri/message"
 require_relative "mistri/event"
+require_relative "mistri/providers/fake"
 
 # Mistri (مستری): the fixer. An agent harness for Ruby applications.
 module Mistri
