@@ -6,6 +6,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 ## [Unreleased]
 
 - The error hierarchy: every Mistri failure rescues as `Mistri::Error`.
+- The message protocol: immutable content blocks (text, thinking, image, tool call),
+  messages with provider identity, usage accounting with cost math, stop reasons.
+- The streaming event union: twelve event types, each carrying an immutable
+  partial-message snapshot.
 
 ## [0.0.3] - 2026-07-04
 

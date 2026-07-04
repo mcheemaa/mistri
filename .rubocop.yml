@@ -19,6 +19,11 @@ Style/Documentation:
 Gemspec/RequireMFA:
   Enabled: false
 
+# Message, Event, and Usage need real class bodies: constants and nested
+# classes assigned inside a Data.define block land in the wrong scope.
+Style/DataInheritance:
+  Enabled: false
+
 Style/EndlessMethod:
   EnforcedStyle: allow_single_line
 

@@ -1,0 +1,41 @@
+# frozen_string_literal: true
+
+module Mistri
+  # One event in a streamed assistant turn. A stream is one :start, then a
+  # start/delta/end trio per content block (text, thinking, or toolcall), then
+  # exactly one terminal event: :done on success or :error on failure, carrying
+  # the complete message and its stop reason.
+  #
+  # `partial` is an immutable snapshot of the assistant message so far, safe to
+  # hold across events. `content_index` is the block's position in that
+  # message's content list.
+  class Event < Data.define(:type, :content_index, :delta, :content, :tool_call,
+                            :reason, :message, :error_message, :partial)
+    TYPES = %i[
+      start
+      text_start text_delta text_end
+      thinking_start thinking_delta thinking_end
+      toolcall_start toolcall_delta toolcall_end
+      done error
+    ].freeze
+
+    def initialize(type:, content_index: nil, delta: nil, content: nil, tool_call: nil,
+                   reason: nil, message: nil, error_message: nil, partial: nil)
+      raise ArgumentError, "unknown event type #{type.inspect}" unless TYPES.include?(type)
+
+      super
+    end
+
+    def done? = type == :done
+
+    def error? = type == :error
+
+    def terminal? = done? || error?
+
+    # Partials are ephemeral streaming state and stay out of serialization.
+    def to_h
+      { type:, content_index:, delta:, content:, tool_call: tool_call&.to_h,
+        reason:, message: message&.to_h, error_message: }.compact
+    end
+  end
+end
