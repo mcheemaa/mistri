@@ -32,7 +32,7 @@ class TestEdit < Minitest::Test
       Mistri::Edit.apply("x = 1\nx = 1\n", [{ old: "x = 1", new: "x = 2" }])
     end
 
-    assert_match(/more than once/, error.message)
+    assert_match(/matched 2 places \(lines 1, 2\)/, error.message)
   end
 
   def test_a_missing_match_raises
@@ -64,5 +64,65 @@ class TestEdit < Minitest::Test
 
   def test_empty_old_text_raises
     assert_raises(Mistri::EditError) { Mistri::Edit.apply("x", [{ old: "", new: "y" }]) }
+  end
+
+  def test_replace_changes_exactly_one_place
+    result = Mistri::Edit.replace("a\nb\na\n", "b", "B")
+
+    assert_equal "a\nB\na\n", result.content
+    assert_equal 1, result.count
+  end
+
+  def test_replace_all_changes_every_occurrence_and_reports_the_count
+    result = Mistri::Edit.replace("x = 1\ny = 1\nz = 1\n", "= 1", "= 2", replace_all: true)
+
+    assert_equal "x = 2\ny = 2\nz = 2\n", result.content
+    assert_equal 3, result.count
+  end
+
+  def test_ambiguity_names_the_lines_and_suggests_replace_all
+    error = assert_raises(Mistri::EditError) do
+      Mistri::Edit.replace("a\nsame\nb\nsame\n", "same", "different")
+    end
+
+    assert_match(/lines 2, 4/, error.message)
+    assert_match(/replace_all/, error.message)
+  end
+
+  def test_a_near_miss_reports_the_closest_region_and_its_delta
+    content = "<div>\n  <h1>Welcome home</h1>\n</div>\n"
+    error = assert_raises(Mistri::EditError) do
+      Mistri::Edit.replace(content, "<div>\n  <h1>Welcome hom</h1>\n</div>", "x")
+    end
+
+    assert_match(/Closest region is lines 1-3/, error.message)
+    assert_match(/differs at line 2/, error.message)
+    assert_match(/Welcome hom/, error.message)
+  end
+
+  def test_a_whitespace_only_near_miss_says_so
+    content = "def run\n\tdo_work\nend\n"
+    error = assert_raises(Mistri::EditError) do
+      # Interior spacing differs, so even the fuzzy tier misses; the message
+      # must point at whitespace.
+      Mistri::Edit.replace(content, "def run\n  do _ work\nend", "x")
+    end
+
+    assert_match(/differs at line 2/, error.message)
+  end
+
+  def test_replacements_adapt_to_the_documents_newline_style
+    crlf = "one\r\ntwo\r\nthree\r\n"
+    result = Mistri::Edit.replace(crlf, "two", "TWO\nTWO-B")
+
+    assert_equal "one\r\nTWO\r\nTWO-B\r\nthree\r\n", result.content
+  end
+
+  def test_a_leading_bom_is_invisible_to_fuzzy_matching
+    content = "﻿<html>\n  <body></body>\n</html>\n"
+    result = Mistri::Edit.replace(content, "<html>\n<body></body>", "<html>\n<body>hi</body>")
+
+    assert result.content.start_with?("﻿")
+    assert_includes result.content, "hi"
   end
 end
