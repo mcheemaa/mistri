@@ -6,8 +6,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 ## [Unreleased]
 
 - `Mistri::Workspace`: the document store agents work in, with memory,
-  directory, and ActiveRecord backends, so editing a database row works
-  exactly like editing a file.
+  directory, ActiveRecord, and single-document backends, so editing a
+  database column works exactly like editing a file.
 - `Mistri::Tools.files`: the built-in document tools (read_file, write_file,
   edit_file, find_in_file, list_files). The edit tool speaks the flat
   old_string/new_string shape models are trained on, tolerates alias keys,

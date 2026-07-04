@@ -20,6 +20,24 @@ class TestWorkspace < Minitest::Test
     end
   end
 
+  def test_a_single_document_workspace_wraps_any_column
+    record = { html: "<h1>Old</h1>" }
+    workspace = Mistri::Workspace::Single.new(
+      path: "page.html",
+      read: -> { record[:html] },
+      write: ->(content) { record[:html] = content }
+    )
+    edit = Mistri::Tools.files(workspace).find { |tool| tool.name == "edit_file" }
+
+    reply = edit.call({ "path" => "page.html", "old_string" => "Old", "new_string" => "New" })
+
+    assert_equal "Replaced 1 occurrence(s) in page.html", reply
+    assert_equal "<h1>New</h1>", record[:html]
+    assert_equal ["page.html"], workspace.list
+    assert_nil workspace.read("other.html")
+    assert_raises(Mistri::SchemaError) { workspace.delete("page.html") }
+  end
+
   def test_the_directory_backend_refuses_path_escapes
     Dir.mktmpdir do |dir|
       workspace = Mistri::Workspace::Directory.new(dir)
