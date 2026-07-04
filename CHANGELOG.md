@@ -5,6 +5,9 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+- `Mistri.agent` and `Mistri.provider`: build an agent or provider from a model
+  id, inferring the provider and reading its key from the environment.
+
 - Aborted and truncated turns now replay without provider errors: unusable
   thinking degrades to text, empty blocks are dropped, every tool call is
   paired, and budget-only models skip adaptive thinking.
