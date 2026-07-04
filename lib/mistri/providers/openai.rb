@@ -54,6 +54,10 @@ module Mistri
         body[:tools] = Serializer.tools(tools) if tools.any?
         reasoning = overrides.fetch(:reasoning, @reasoning)
         body[:reasoning] = reasoning if reasoning
+        if (schema = overrides[:output_schema])
+          body[:text] = { format: { type: "json_schema", name: "output", strict: true,
+                                    schema: Schema.strict(schema, all_required: true) } }
+        end
         body
       end
 

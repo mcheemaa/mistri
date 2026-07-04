@@ -48,8 +48,17 @@ module Mistri
         instruction = Serializer.system_instruction(system)
         body[:systemInstruction] = instruction if instruction
         body[:tools] = Serializer.tools(tools) if tools.any?
+        config = {}
         thinking = overrides.fetch(:thinking, @thinking)
-        body[:generationConfig] = { thinkingConfig: thinking } if thinking
+        config[:thinkingConfig] = thinking if thinking
+        # Constrained decoding combines with tools only on 3-series models
+        # (preview); with tools present the task loop's validate-and-fix
+        # pass carries the guarantee instead.
+        if (schema = overrides[:output_schema]) && tools.empty?
+          config[:responseMimeType] = "application/json"
+          config[:responseJsonSchema] = Schema.strict(schema)
+        end
+        body[:generationConfig] = config unless config.empty?
         body
       end
 

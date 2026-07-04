@@ -1,5 +1,7 @@
 # frozen_string_literal: true
 
+require "json"
+
 module Mistri
   # The agent loop: prompt the provider, run any tools it calls, feed the
   # results back, and repeat until it answers without calling tools. Every
@@ -43,7 +45,10 @@ module Mistri
     # Run one exchange: append the user turn, then loop until the model
     # answers without tools, a gated tool suspends the run, the run aborts,
     # or a budget stops it.
-    def run(input, images: [], signal: nil, &emit)
+    # output_schema constrains every non-tool answer to JSON matching the
+    # schema, natively where the provider supports it. task adds validation
+    # on top; run alone does not validate.
+    def run(input, images: [], signal: nil, output_schema: nil, &emit)
       if @session.open_approvals.any?
         raise ConfigurationError, "session is awaiting approval decisions; call resume"
       end
@@ -53,7 +58,7 @@ module Mistri
 
       fold_steers # steers queued while idle arrived first; keep that order
       @session.append_message(Message.user_with_images(input, images))
-      loop_turns(signal, &emit)
+      loop_turns(signal, output_schema, &emit)
     end
 
     # Continue a suspended run. Undecided approvals return immediately, still
@@ -69,7 +74,31 @@ module Mistri
       end
 
       settle(open, signal, &emit)
-      loop_turns(signal, &emit)
+      loop_turns(signal, nil, &emit)
+    end
+
+    # Run an exchange that must end in a JSON value matching schema. Tools
+    # run as usual; providers constrain the final answer natively where they
+    # can, and the answer is validated here regardless. A violation goes
+    # back to the model (fixes more times), then raises SchemaError. The
+    # Result carries the validated value as output.
+    #
+    # A run that suspends for approval returns as-is: validation applies to
+    # completed runs only, so resume the session and re-ask if that happens
+    # mid-task.
+    def task(input, schema:, images: [], signal: nil, fixes: 1, &emit)
+      result = run(task_input(input, schema), images: images, signal: signal,
+                                              output_schema: schema, &emit)
+      fixes.downto(0) do |remaining|
+        return result unless result.completed?
+
+        value = parse_output(result.text)
+        errors = task_errors(value, schema)
+        return result.with(output: value) if errors.empty?
+        raise SchemaError, "task output failed validation: #{errors.join("; ")}" if remaining.zero?
+
+        result = run(fix_prompt(errors), signal: signal, output_schema: schema, &emit)
+      end
     end
 
     # How full the context is: {tokens:, window:, fraction:}. Hosts render
@@ -91,7 +120,7 @@ module Mistri
 
     private
 
-    def loop_turns(signal, &emit)
+    def loop_turns(signal, output_schema = nil, &emit)
       turns = 0
       usage = Usage.zero
       started = monotonic_now
@@ -102,7 +131,7 @@ module Mistri
         fold_steers
         compacted = auto_compact(&emit)
         usage += compacted[:usage] if compacted&.dig(:usage)
-        last = run_turn(signal, &emit)
+        last = run_turn(signal, output_schema, &emit)
         turns += 1
         usage += last.usage if last.usage
 
@@ -161,13 +190,14 @@ module Mistri
     # A transient failure retries the same request with backoff; the failed
     # attempt is recorded as a retry entry, never as a message, so retries
     # stay invisible to the model. Only the final outcome persists.
-    def run_turn(signal, &emit)
+    def run_turn(signal, output_schema = nil, &emit)
       history = @session.messages
       history = @transform_context.call(history) if @transform_context
       attempt = 0
       loop do
         message = @provider.stream(messages: history, system: @system,
-                                   tools: @tools.map(&:spec), signal: signal, &emit)
+                                   tools: @tools.map(&:spec), signal: signal,
+                                   output_schema: output_schema, &emit)
         attempt += 1
         if retry_turn?(message, attempt, signal)
           pause = @retries.delay(attempt, message.error&.dig("retry_after"))
@@ -273,6 +303,35 @@ module Mistri
       emit&.call(Event.new(type: :error, reason: StopReason::BUDGET, message: message,
                            error_message: "budget_#{reason}"))
       Result.new(message: message, status: :budget)
+    end
+
+    # Distinguishable from a parsed nil: JSON "null" is a valid value.
+    PARSE_FAILED = Object.new.freeze
+    private_constant :PARSE_FAILED
+
+    def task_input(input, schema)
+      "#{input}\n\nAnswer with ONLY a JSON value matching this schema:\n" \
+        "#{JSON.generate(Schema.strict(schema))}"
+    end
+
+    def parse_output(text)
+      body = text.to_s.strip
+      body = body[/\A```(?:json)?\s*(.*?)```\z/m, 1] || body
+      JSON.parse(body)
+    rescue JSON::ParserError
+      PARSE_FAILED
+    end
+
+    def task_errors(value, schema)
+      return ["the answer is not valid JSON"] if value.equal?(PARSE_FAILED)
+
+      Schema.violations(value, schema)
+    end
+
+    def fix_prompt(errors)
+      lines = errors.map { |error| "- #{error}" }.join("\n")
+      "Your answer did not satisfy the required output schema. Problems:\n" \
+        "#{lines}\nReply with ONLY the corrected JSON."
     end
 
     def monotonic_now = Process.clock_gettime(Process::CLOCK_MONOTONIC)

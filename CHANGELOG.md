@@ -5,6 +5,17 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+- Task mode: Agent#task(input, schema:) runs an exchange that must end in
+  JSON matching the schema — tools run as usual, providers constrain the
+  final answer natively where supported (Anthropic output_config, OpenAI
+  text.format strict, Gemini responseJsonSchema when no tools), and the
+  answer validates client-side everywhere. A violation goes back to the
+  model once (fixes:), then raises SchemaError; Result#output carries the
+  validated value. run(output_schema:) exposes raw constrained runs.
+- Schema.violations (a zero-dependency validator for the supported subset,
+  with model-feedable error messages) and Schema.strict (wire preparation:
+  additionalProperties false everywhere, all-required for OpenAI strict).
+
 - Skills: Mistri::Skill and Skills.load (a directory of SKILL.md folders or
   flat .md files, flat-frontmatter name/description). Pass skills: to the
   Agent (array or path): descriptions join the system prompt and a

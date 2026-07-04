@@ -59,5 +59,104 @@ module Mistri
       schema[:required] = @required unless @required.empty?
       schema
     end
+
+    class << self
+      # Violations of a value against the schema subset the harness emits and
+      # providers constrain: types (including type arrays), object properties
+      # with required and additionalProperties: false, array items, enum.
+      # Empty means valid; entries are human-readable, written to be fed back
+      # to a model for one-shot correction.
+      def violations(value, schema, path = "$")
+        spec = schema.transform_keys(&:to_s)
+        mismatch = type_violation(value, spec, path)
+        return [mismatch] if mismatch
+
+        errors = []
+        if (enum = spec["enum"]) && !enum.include?(value)
+          errors << "#{path} must be one of: #{enum.join(", ")}"
+        end
+        case value
+        when Hash then errors.concat(object_violations(value, spec, path))
+        when Array then errors.concat(array_violations(value, spec, path))
+        end
+        errors
+      end
+
+      # Prepares a schema for constrained decoding: every object gains
+      # additionalProperties: false (Anthropic and OpenAI both demand it),
+      # and all_required marks every property required (OpenAI strict mode's
+      # rule). String keys throughout, ready for the wire.
+      def strict(schema, all_required: false)
+        spec = schema.transform_keys(&:to_s)
+        out = spec.dup
+        if spec["type"] == "object" || spec.key?("properties")
+          props = (spec["properties"] || {}).to_h do |key, member|
+            [key.to_s, strict(member, all_required: all_required)]
+          end
+          out["properties"] = props
+          out["additionalProperties"] = false
+          out["required"] = all_required ? props.keys : Array(spec["required"]).map(&:to_s)
+        end
+        if spec["items"].is_a?(Hash)
+          out["items"] =
+            strict(spec["items"], all_required: all_required)
+        end
+        out
+      end
+
+      TYPES = {
+        "object" => ->(v) { v.is_a?(Hash) }, "array" => ->(v) { v.is_a?(Array) },
+        "string" => ->(v) { v.is_a?(String) }, "integer" => ->(v) { v.is_a?(Integer) },
+        "number" => ->(v) { v.is_a?(Numeric) }, "boolean" => ->(v) { [true, false].include?(v) },
+        "null" => lambda(&:nil?)
+      }.freeze
+
+      private
+
+      def type_violation(value, spec, path)
+        names = Array(spec["type"]).map(&:to_s)
+        return nil if names.empty?
+        return nil if names.any? { |name| TYPES.fetch(name, ->(_) { true }).call(value) }
+
+        "#{path} must be #{names.join(" or ")}, got #{json_type(value)}"
+      end
+
+      def object_violations(value, spec, path)
+        props = (spec["properties"] || {}).transform_keys(&:to_s)
+        errors = Array(spec["required"]).map(&:to_s).filter_map do |key|
+          "#{path}.#{key} is required" unless value.key?(key)
+        end
+        value.each do |key, member|
+          if (member_schema = props[key.to_s])
+            errors.concat(violations(member, member_schema, "#{path}.#{key}"))
+          elsif spec["additionalProperties"] == false
+            errors << "#{path}.#{key} is not allowed"
+          end
+        end
+        errors
+      end
+
+      def array_violations(value, spec, path)
+        items = spec["items"]
+        return [] unless items.is_a?(Hash)
+
+        value.each_with_index.flat_map do |member, index|
+          violations(member, items, "#{path}[#{index}]")
+        end
+      end
+
+      def json_type(value)
+        case value
+        when Hash then "object"
+        when Array then "array"
+        when String then "string"
+        when Integer then "integer"
+        when Numeric then "number"
+        when true, false then "boolean"
+        when nil then "null"
+        else value.class.name
+        end
+      end
+    end
   end
 end

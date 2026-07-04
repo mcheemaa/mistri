@@ -9,8 +9,9 @@ module Mistri
   #
   # Reads delegate to the final message, so result.text works whether the run
   # completed or suspended.
-  Result = Data.define(:message, :status, :pending) do
-    def initialize(message:, status:, pending: [])
+  # output is a task's validated value, nil on plain runs.
+  Result = Data.define(:message, :status, :pending, :output) do
+    def initialize(message:, status:, pending: [], output: nil)
       super
     end
 

@@ -65,6 +65,10 @@ module Mistri
         body[:tools] = Serializer.tools(tools) if tools.any?
         thinking = thinking_for(model, overrides)
         body[:thinking] = thinking if thinking
+        if (schema = overrides[:output_schema])
+          body[:output_config] = { format: { type: "json_schema",
+                                             schema: Schema.strict(schema) } }
+        end
         body.merge(PASSTHROUGH.each_with_object({}) do |key, params|
           params[key] = overrides[key] if overrides.key?(key)
         end)
