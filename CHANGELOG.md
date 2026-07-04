@@ -5,6 +5,11 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+- Two-channel tool results: a handler may return Mistri::ToolResult with
+  content for the model and ui for the host. The ui payload rides the tool
+  message and its :tool_result event, persists with the session for
+  transcript re-renders, and never reaches a provider.
+
 - Context compaction: sessions compact automatically when the context grows
   into the reserve headroom (compaction: on the Agent, on by default when the
   model's window is known; pass false to disable). The provider writes a

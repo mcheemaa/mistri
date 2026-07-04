@@ -198,11 +198,14 @@ module Mistri
       results.each { |call, result| answer(call, result, &emit) }
     end
 
+    # The tool message carries both channels; the :tool_result event exposes
+    # it whole so hosts read event.message.ui for their side of the result.
     def answer(call, result, &emit)
-      @session.append_message(Message.tool(content: result, tool_call_id: call.id,
-                                           tool_name: call.name))
-      text = result.is_a?(String) ? result : "[content]"
-      emit&.call(Event.new(type: :tool_result, tool_call: call, content: text))
+      content, ui = result.is_a?(ToolResult) ? [result.content, result.ui] : [result, nil]
+      message = @session.append_message(Message.tool(content: content, tool_call_id: call.id,
+                                                     tool_name: call.name, ui: ui))
+      text = content.is_a?(String) ? content : "[content]"
+      emit&.call(Event.new(type: :tool_result, tool_call: call, content: text, message: message))
     end
 
     def gated?(call)

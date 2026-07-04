@@ -57,3 +57,7 @@ Metrics/ParameterLists:
 Metrics/BlockLength:
   Exclude:
     - "test/**/*"
+
+Naming/MethodParameterName:
+  # The defaults plus ui, the tool result side-channel; as domain-real as id.
+  AllowedNames: [as, at, by, cc, db, id, if, in, io, ip, of, on, os, pp, to, ui]

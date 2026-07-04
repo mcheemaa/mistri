@@ -39,8 +39,15 @@ module Mistri
       @handler = handler
     end
 
+    # A handler may return a ToolResult to speak on two channels; its ui
+    # payload is canonicalized through JSON here so the live event and a
+    # reloaded session read the identical shape.
     def call(arguments)
-      serialize_result(@handler.call(arguments || {}))
+      result = @handler.call(arguments || {})
+      return serialize_result(result) unless result.is_a?(ToolResult)
+
+      result.with(content: serialize_result(result.content),
+                  ui: result.ui && JSON.parse(JSON.generate(result.ui)))
     end
 
     # Whether this call should pause for a human. true/false, or a callable

@@ -9,12 +9,15 @@ module Mistri
   # tool_call_id). Assistant messages carry the model and provider that produced
   # them, which is what lets a later turn replay history across models, plus
   # usage and the stop reason.
+  #
+  # ui is a tool result's host-only channel: it persists with the message and
+  # rides its :tool_result event, but no serializer ever sends it to a model.
   class Message < Data.define(:role, :content, :tool_call_id, :tool_name,
-                              :model, :provider, :usage, :stop_reason, :error_message)
+                              :model, :provider, :usage, :stop_reason, :error_message, :ui)
     ROLES = %i[system user assistant tool].freeze
 
     def initialize(role:, content: nil, tool_call_id: nil, tool_name: nil, model: nil,
-                   provider: nil, usage: nil, stop_reason: nil, error_message: nil)
+                   provider: nil, usage: nil, stop_reason: nil, error_message: nil, ui: nil)
       role = role.to_sym
       raise ArgumentError, "unknown role #{role.inspect}" unless ROLES.include?(role)
       if stop_reason && !StopReason.valid?(stop_reason)
@@ -22,7 +25,7 @@ module Mistri
       end
 
       super(role:, content: Content.wrap(content).freeze, tool_call_id:, tool_name:,
-            model:, provider:, usage:, stop_reason:, error_message:)
+            model:, provider:, usage:, stop_reason:, error_message:, ui:)
     end
 
     def self.system(content) = new(role: :system, content:)
@@ -43,8 +46,8 @@ module Mistri
       new(role: :assistant, content: [*Content.wrap(content), *tool_calls], **meta)
     end
 
-    def self.tool(content:, tool_call_id:, tool_name: nil)
-      new(role: :tool, content:, tool_call_id:, tool_name:)
+    def self.tool(content:, tool_call_id:, tool_name: nil, ui: nil)
+      new(role: :tool, content:, tool_call_id:, tool_name:, ui:)
     end
 
     def self.from_h(hash)
@@ -54,7 +57,8 @@ module Mistri
           tool_call_id: h["tool_call_id"], tool_name: h["tool_name"],
           model: h["model"], provider: h["provider"]&.to_sym,
           usage: h["usage"] && Usage.from_h(h["usage"]),
-          stop_reason: h["stop_reason"]&.to_sym, error_message: h["error_message"])
+          stop_reason: h["stop_reason"]&.to_sym, error_message: h["error_message"],
+          ui: h["ui"])
     end
 
     def system? = role == :system
@@ -76,7 +80,7 @@ module Mistri
     # never with new(**to_h).
     def to_h
       { role:, content: content.map(&:to_h), tool_call_id:, tool_name:, model:,
-        provider:, usage: usage&.to_h, stop_reason:, error_message: }.compact
+        provider:, usage: usage&.to_h, stop_reason:, error_message:, ui: }.compact
     end
   end
 end
