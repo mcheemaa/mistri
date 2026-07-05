@@ -7,6 +7,8 @@
 
 <p align="center"><strong>mistri</strong>, the agent harness for Ruby applications.</p>
 
+<p align="center"><a href="https://mistri.sh">mistri.sh</a> · <a href="https://mistri.sh/docs/getting-started/">docs</a></p>
+
 <p align="center">
   <a href="https://rubygems.org/gems/mistri"><img alt="Gem Version" src="https://img.shields.io/gem/v/mistri"></a>
   <a href="https://github.com/mcheemaa/mistri/actions/workflows/ci.yml"><img alt="CI" src="https://github.com/mcheemaa/mistri/actions/workflows/ci.yml/badge.svg"></a>
@@ -351,18 +353,21 @@ Mistri.agent("claude-opus-4-8", provider_options: { cache: false })
 ## Testing
 
 `rake test` is hermetic and fast. `rake integration` runs every feature end
-to end against real provider APIs, once per model in the matrix. Scenarios
-assert that coined codenames (a ghost of a word like `Wraithowyn` exists in
-no training data) flowed through tool results, summaries, and child agents:
-proof of information flow, not model knowledge.
+to end against real provider APIs, once per model in the matrix: an
+Anthropic, an OpenAI, and a Gemini model by default. Scenarios assert that
+coined codenames (a ghost of a word like `Wraithowyn` exists in no training
+data) flowed through tool results, summaries, and child agents: proof of
+information flow, not model knowledge.
 
 ```console
-$ MISTRI_INTEGRATION_MODELS=claude-opus-4-8,gpt-5.5 bundle exec rake integration
+$ bundle exec rake integration
+$ MISTRI_INTEGRATION_MODELS=claude-opus-4-8 bundle exec rake integration
 ```
 
 ## Roadmap
 
-`0.2.0`: an MCP client bridge, so any MCP server's tools plug into an agent.
+`0.3.0`: strict tool schemas, provider-native MCP passthrough, and the
+hardening that falls out of the first production applications.
 
 ## Credits
 
