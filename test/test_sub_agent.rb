@@ -186,6 +186,30 @@ class TestSubAgent < Minitest::Test
     assert_includes agent.session.messages.select(&:tool?).last.text, "failed"
   end
 
+  def test_child_models_come_only_from_the_host_allowlist
+    spawn = Mistri::SubAgent.spawner(provider: fake({ text: "hi" }),
+                                     models: ["claude-haiku-4-5-20251001"])
+    parent_fake = fake({ tool_calls: [{ name: "spawn_agent",
+                                        arguments: { "task" => "t", "instructions" => "i",
+                                                     "model" => "gpt-5.2-mini" } }] },
+                       { text: "ok" })
+    agent = Mistri::Agent.new(provider: parent_fake, tools: [spawn])
+
+    agent.run("go")
+
+    answer = agent.session.messages.select(&:tool?).last.text
+
+    assert_includes answer, "not allowed"
+    assert_includes answer, "claude-haiku-4-5-20251001"
+  end
+
+  def test_without_an_allowlist_the_spawner_offers_no_model_choice
+    spawn = Mistri::SubAgent.spawner(provider: fake)
+    properties = spawn.spec[:input_schema][:properties]
+
+    refute properties.key?("model"), "no allowlist means no model surface at all"
+  end
+
   def test_strict_lambda_handlers_still_receive_one_argument
     handler = ->(args) { "got #{args["x"]}" }
     tool = Mistri::Tool.new(name: "t", description: "d", &handler)

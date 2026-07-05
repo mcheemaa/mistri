@@ -5,6 +5,18 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+- Live integration harness: `rake integration` runs every feature end to
+  end against real provider APIs, once per model in the matrix
+  (MISTRI_INTEGRATION_MODELS overrides the default trio). Scenarios assert
+  that generated codenames flowed through the machinery, so answers prove
+  information flow rather than model knowledge. The default `rake test`
+  stays hermetic.
+- The spawn tool's child models now come only from a host allowlist
+  (`models:` on SubAgent.spawner); without one no model choice is offered,
+  so a hallucinated model id can never construct a provider. Found by the
+  integration harness on its first run.
+- The skills system-prompt section instructs selection more firmly.
+
 - Sub-agents: delegation with a clean context (#2). Mistri::SubAgent names
   a curated specialist (own provider/system/tools, optional schema: for
   validated JSON answers); SubAgent.spawner is the open spawn_agent tool

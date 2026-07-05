@@ -84,9 +84,11 @@ module Mistri
 
     class << self
       # The open spawn tool over a pool of tools the host allows children to
-      # use. The model may pass a subset by name and a catalogued model id
-      # for the child; omitted, children get the whole pool on provider.
-      def spawner(provider:, tools: [], needs_approval: false, **agent_options)
+      # use. The model may grant a tool subset by name; models: is the
+      # host's allowlist of child model ids — without one, no model choice
+      # is offered at all, so a hallucinated id can never construct a
+      # provider or land children on an expensive model.
+      def spawner(provider:, tools: [], models: [], needs_approval: false, **agent_options)
         forbid_gated!(tools)
         if tools.any? { |tool| tool.name == "spawn_agent" }
           raise ConfigurationError, "the spawn tool never goes in its own pool"
@@ -94,9 +96,8 @@ module Mistri
 
         Tool.define("spawn_agent", SPAWNER_DESCRIPTION,
                     needs_approval: needs_approval,
-                    schema: spawner_schema(tools)) do |args, context|
-          child_provider = args["model"] ? Mistri.provider(args["model"]) : provider
-          run_child(label: "spawn", provider: child_provider,
+                    schema: spawner_schema(tools, models)) do |args, context|
+          run_child(label: "spawn", provider: child_provider(provider, args["model"], models),
                     system: args.fetch("instructions"),
                     tools: pick(tools, args["tools"]),
                     task: args.fetch("task"), context: context, **agent_options)
@@ -172,7 +173,7 @@ module Mistri
         end
       end
 
-      def spawner_schema(pool)
+      def spawner_schema(pool, models)
         tool_names = pool.map(&:name)
         lambda do
           string :task, "The child's complete task", required: true
@@ -181,8 +182,21 @@ module Mistri
             array :tools, "Subset of tools to grant (default: all)",
                   items: { type: "string", enum: tool_names }
           end
-          string :model, "Catalogued model id for the child (default: the configured one)"
+          if models.any?
+            string :model, "Model for the child (default: the configured one)",
+                   enum: models
+          end
         end
+      end
+
+      def child_provider(default, requested, models)
+        return default if requested.nil? || requested.to_s.empty?
+        unless models.include?(requested)
+          raise ArgumentError,
+                "model #{requested.inspect} is not allowed; available: #{models.join(", ")}"
+        end
+
+        Mistri.provider(requested)
       end
 
       # A predicate gate cannot be judged statically; the runtime denial in

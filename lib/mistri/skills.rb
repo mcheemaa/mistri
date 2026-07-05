@@ -37,8 +37,9 @@ module Mistri
       <<~TEXT.strip
         ## Skills
 
-        Expert playbooks. When one matches the task, call read_skill with its
-        name and follow it before acting.
+        Expert playbooks. Before acting, check this list: when a skill
+        matches the task, you MUST call read_skill with its name and follow
+        the playbook.
 
         #{lines.join("\n")}
       TEXT
