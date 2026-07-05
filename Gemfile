@@ -7,6 +7,7 @@ gemspec
 group :development do
   gem "minitest"
   gem "rake"
+  gem "simplecov", require: false
 end
 
 # Only the install-generator tests need Rails; the gem itself has zero

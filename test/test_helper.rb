@@ -1,5 +1,21 @@
 # frozen_string_literal: true
 
+# Coverage is opt-in so everyday runs stay fast; CI turns it on for one
+# matrix entry and fails below the floor. Under the rake task,
+# minitest/autorun loads before this file and its at_exit (running the
+# tests) would fire after SimpleCov's capture; deferring the capture into
+# Minitest.after_run keeps the order right either way.
+if ENV["COVERAGE"] == "1"
+  require "simplecov"
+  SimpleCov.external_at_exit = defined?(Minitest) ? true : false
+  SimpleCov.start do
+    add_filter "/test/"
+    enable_coverage :branch
+    minimum_coverage line: 90
+  end
+  Minitest.after_run { SimpleCov.run_exit_tasks! } if defined?(Minitest)
+end
+
 $LOAD_PATH.unshift File.expand_path("../lib", __dir__)
 
 # Live tests read provider keys from the gitignored env file; CI never has

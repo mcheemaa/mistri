@@ -1,0 +1,16 @@
+name: Feature idea
+description: Something the harness should do
+labels: [idea]
+body:
+  - type: textarea
+    id: problem
+    attributes:
+      label: The problem
+      description: What are you building, and what does the gem make hard today?
+    validations:
+      required: true
+  - type: textarea
+    id: shape
+    attributes:
+      label: A shape that would work for you
+      description: Sketch the API you wish existed. Ideas welcome; the final shape may differ.

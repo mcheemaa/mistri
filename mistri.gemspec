@@ -19,6 +19,8 @@ Gem::Specification.new do |spec|
   spec.metadata["source_code_uri"] = "https://github.com/mcheemaa/mistri"
   spec.metadata["changelog_uri"] = "https://github.com/mcheemaa/mistri/blob/main/CHANGELOG.md"
   spec.metadata["rubygems_mfa_required"] = "true"
+  spec.metadata["documentation_uri"] = "https://rubydoc.info/gems/mistri"
+  spec.metadata["bug_tracker_uri"] = "https://github.com/mcheemaa/mistri/issues"
 
   # The .tt generator templates must ship, or rails g mistri:install breaks.
   spec.files = Dir["lib/**/*.{rb,tt}", "README.md", "LICENSE", "NOTICE", "CHANGELOG.md"]

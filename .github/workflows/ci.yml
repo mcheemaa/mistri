@@ -14,6 +14,8 @@ jobs:
         ruby: ["3.2", "3.3", "3.4", "head"]
     env:
       BUNDLE_WITHOUT: lint
+      # One entry measures coverage and enforces the floor.
+      COVERAGE: ${{ matrix.ruby == '3.4' && '1' || '0' }}
     steps:
       - uses: actions/checkout@v4
       - uses: ruby/setup-ruby@v1

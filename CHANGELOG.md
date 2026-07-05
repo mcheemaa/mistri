@@ -5,6 +5,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+- Repository hygiene: coverage floor enforced in CI (simplecov, 90% line),
+  contributing/security/conduct docs, issue and PR templates, Dependabot,
+  and rubygems documentation and bug tracker links.
+
 - Per-tool timeouts: Tool.define(..., timeout: 30) answers in band when a
   handler stalls, so one hung tool cannot stall the run.
 - :tool_result events carry duration (seconds) for executed tools, feeding
