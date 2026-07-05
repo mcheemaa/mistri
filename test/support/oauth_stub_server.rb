@@ -13,10 +13,14 @@ module Mistri
     class OauthStubServer
       attr_reader :registrations, :token_requests
 
-      def initialize(challenge_header: true, registration: true, openid_only: false)
+      def initialize(challenge_header: true, registration: true, openid_only: false,
+                     resource_scopes: [], as_scopes: [], basic_token_auth: false)
         @challenge_header = challenge_header
         @registration = registration
         @openid_only = openid_only
+        @resource_scopes = resource_scopes
+        @as_scopes = as_scopes
+        @basic_token_auth = basic_token_auth
         @registrations = []
         @token_requests = []
         @stub = StubServer.new { |socket, request| route(socket, request) }
@@ -53,7 +57,9 @@ module Mistri
       end
 
       def resource_metadata(socket)
-        @stub.respond_json(socket, { "resource" => url, "authorization_servers" => [origin] })
+        document = { "resource" => url, "authorization_servers" => [origin] }
+        document["scopes_supported"] = @resource_scopes if @resource_scopes.any?
+        @stub.respond_json(socket, document)
       end
 
       def server_metadata(socket, openid:)
@@ -64,19 +70,22 @@ module Mistri
         metadata = { "issuer" => origin,
                      "authorization_endpoint" => "#{origin}/authorize",
                      "token_endpoint" => "#{origin}/token" }
+        metadata["scopes_supported"] = @as_scopes if @as_scopes.any?
         metadata["registration_endpoint"] = "#{origin}/register" if @registration
         @stub.respond_json(socket, metadata)
       end
 
       def register(socket, request)
         @registrations << JSON.parse(request[:body])
-        @stub.respond_json(socket, { "client_id" => "app-123", "client_secret" => "shh" },
+        method = @basic_token_auth ? "client_secret_basic" : "client_secret_post"
+        @stub.respond_json(socket, { "client_id" => "app-123", "client_secret" => "shh",
+                                     "token_endpoint_auth_method" => method },
                            status: 201)
       end
 
       def token(socket, request)
         form = URI.decode_www_form(request[:body]).to_h
-        @token_requests << form
+        @token_requests << form.merge("_authorization" => request[:headers]["authorization"])
         case form["grant_type"]
         when "authorization_code"
           if form["code"] == "good-code" && !form["code_verifier"].to_s.empty?

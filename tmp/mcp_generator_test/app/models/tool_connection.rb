@@ -1,7 +1,7 @@
 # One MCP server connection: its own OAuth flow state, its tokens, and the
 # bridge into agent tools. Rows with a manually supplied access_token (API
 # key servers) work the same way without the OAuth columns.
-class McpConnection < ApplicationRecord
+class ToolConnection < ApplicationRecord
   encrypts :access_token, :refresh_token, :client_secret
 
   # Begin the OAuth flow: persists a pending connection and returns it with
@@ -13,6 +13,7 @@ class McpConnection < ApplicationRecord
                          state: flow["state"], code_verifier: flow["code_verifier"],
                          client_id: flow["client_id"], client_secret: flow["client_secret"],
                          token_endpoint: flow["token_endpoint"],
+                         token_auth_method: flow["token_auth_method"],
                          redirect_uri: flow["redirect_uri"])
     [connection, flow["authorize_url"]]
   end
@@ -25,6 +26,7 @@ class McpConnection < ApplicationRecord
                                          client_id: connection.client_id,
                                          client_secret: connection.client_secret,
                                          token_endpoint: connection.token_endpoint,
+                                         token_auth_method: connection.token_auth_method,
                                          resource: connection.url,
                                          redirect_uri: connection.redirect_uri)
     connection.update!(status: "connected", state: nil, code_verifier: nil,
@@ -52,7 +54,8 @@ class McpConnection < ApplicationRecord
   def refresh!
     tokens = Mistri::MCP::OAuth.refresh(refresh_token: refresh_token,
                                         client_id: client_id, client_secret: client_secret,
-                                        token_endpoint: token_endpoint, resource: url)
+                                        token_endpoint: token_endpoint,
+                                        token_auth_method: token_auth_method, resource: url)
     update!(access_token: tokens["access_token"],
             refresh_token: tokens["refresh_token"] || refresh_token,
             expires_at: tokens["expires_at"], scope: tokens["scope"] || scope)

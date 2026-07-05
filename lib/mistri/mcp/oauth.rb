@@ -31,22 +31,31 @@ module Mistri
       # Discover the server's authorization setup, register the application,
       # and build the authorize URL. Returns everything the callback and
       # refresh need: authorize_url, state, code_verifier, client_id,
-      # client_secret, token_endpoint, resource, redirect_uri.
+      # client_secret, token_auth_method, token_endpoint, resource,
+      # redirect_uri.
+      #
+      # With no scope given, the server's advertised scopes_supported are
+      # requested, and offline_access rides along when the authorization
+      # server supports it, which is what earns a refresh token from
+      # providers that require it.
       def start(url:, client_name:, redirect_uri:, scope: nil,
                 client_id: nil, client_secret: nil)
         resource = canonical(url)
-        authority = authorization_server_for(url)
-        metadata = server_metadata(authority)
-        client_id, client_secret = register(metadata, client_name, redirect_uri,
-                                            client_id, client_secret)
+        resource_metadata = resource_metadata_for(url)
+        metadata = server_metadata(Array(resource_metadata["authorization_servers"]).first)
+        validate_endpoints(metadata)
+        registration = register(metadata, client_name, redirect_uri, client_id, client_secret)
         verifier = SecureRandom.urlsafe_base64(48)
-        state = SecureRandom.urlsafe_base64(24)
-        grant = { client_id: client_id, redirect_uri: redirect_uri, verifier: verifier,
-                  state: state, resource: resource, scope: scope }
+        state = SecureRandom.urlsafe_base64(32)
+        grant = { client_id: registration["client_id"], redirect_uri: redirect_uri,
+                  verifier: verifier, state: state, resource: resource,
+                  scope: resolve_scope(scope, resource_metadata, metadata) }
         {
           "authorize_url" => authorize_url(metadata, grant),
           "state" => state, "code_verifier" => verifier,
-          "client_id" => client_id, "client_secret" => client_secret,
+          "client_id" => registration["client_id"],
+          "client_secret" => registration["client_secret"],
+          "token_auth_method" => registration["token_endpoint_auth_method"],
           "token_endpoint" => metadata.fetch("token_endpoint"),
           "resource" => resource, "redirect_uri" => redirect_uri
         }
@@ -54,33 +63,34 @@ module Mistri
 
       # Exchange the callback's code for tokens.
       def complete(code:, code_verifier:, client_id:, token_endpoint:, resource:,
-                   redirect_uri:, client_secret: nil, **)
+                   redirect_uri:, client_secret: nil, token_auth_method: nil, **)
         form = { "grant_type" => "authorization_code", "code" => code,
                  "code_verifier" => code_verifier, "client_id" => client_id,
                  "redirect_uri" => redirect_uri, "resource" => resource }
-        token_request(token_endpoint, form, client_secret)
+        token_request(token_endpoint, form, client_secret, token_auth_method)
       end
 
       # Trade a refresh token for a fresh set; OAuth 2.1 rotates refresh
       # tokens, so persist the returned one.
       def refresh(refresh_token:, client_id:, token_endpoint:, resource:,
-                  client_secret: nil, **)
+                  client_secret: nil, token_auth_method: nil, **)
         form = { "grant_type" => "refresh_token", "refresh_token" => refresh_token,
                  "client_id" => client_id, "resource" => resource }
-        token_request(token_endpoint, form, client_secret)
+        token_request(token_endpoint, form, client_secret, token_auth_method)
       end
 
       # -- discovery ---------------------------------------------------------
 
       # RFC 9728: a 401's WWW-Authenticate names the resource metadata URL;
       # servers that skip the header serve the well-known path.
-      def authorization_server_for(url)
+      def resource_metadata_for(url)
         metadata_url = challenge_metadata_url(url) || well_known_resource_url(url)
         document = get_json(metadata_url)
-        servers = Array(document["authorization_servers"])
-        raise Error, "#{metadata_url} names no authorization servers" if servers.empty?
+        if Array(document["authorization_servers"]).empty?
+          raise Error, "#{metadata_url} names no authorization servers"
+        end
 
-        servers.first
+        document
       end
 
       def challenge_metadata_url(url)
@@ -93,7 +103,7 @@ module Mistri
           connection.request(request)
         end
         challenge = response["WWW-Authenticate"].to_s
-        challenge[/resource_metadata="([^"]+)"/, 1]
+        challenge[/resource_metadata="([^"]+)"/i, 1]
       end
 
       def well_known_resource_url(url)
@@ -119,9 +129,11 @@ module Mistri
       end
 
       # RFC 7591 dynamic registration, as the application. Servers without a
-      # registration endpoint require a pre-registered client id.
+      # registration endpoint require a pre-registered client id. The
+      # returned hash keeps the token endpoint auth method the server
+      # granted, so token requests authenticate the way it expects.
       def register(metadata, client_name, redirect_uri, client_id, client_secret)
-        return [client_id, client_secret] if client_id
+        return { "client_id" => client_id, "client_secret" => client_secret } if client_id
 
         endpoint = metadata["registration_endpoint"]
         unless endpoint
@@ -133,9 +145,47 @@ module Mistri
                                    "client_name" => client_name,
                                    "redirect_uris" => [redirect_uri],
                                    "grant_types" => %w[authorization_code refresh_token],
-                                   "response_types" => ["code"]
+                                   "response_types" => ["code"],
+                                   "token_endpoint_auth_method" => "client_secret_post"
                                  })
-        [registration.fetch("client_id"), registration["client_secret"]]
+        {
+          "client_id" => presence(registration["client_id"]) ||
+            raise(Error, "registration returned no client_id"),
+          "client_secret" => presence(registration["client_secret"]),
+          "token_endpoint_auth_method" => presence(registration["token_endpoint_auth_method"])
+        }
+      end
+
+      # No scope given: request what the resource advertises, and add
+      # offline_access when the authorization server supports it (that is
+      # what earns a refresh token from providers that require it). An
+      # unsupported offline_access is stripped rather than sent blind.
+      def resolve_scope(scope, resource_metadata, metadata)
+        scopes = scope.to_s.split
+        scopes = Array(resource_metadata["scopes_supported"]) if scopes.empty?
+        supported = Array(metadata["scopes_supported"])
+        if supported.include?("offline_access")
+          scopes |= ["offline_access"]
+        else
+          scopes -= ["offline_access"]
+        end
+        scopes.empty? ? nil : scopes.join(" ")
+      end
+
+      # The spec requires authorization server endpoints over HTTPS;
+      # loopback stays allowed for development.
+      def validate_endpoints(metadata)
+        %w[authorization_endpoint token_endpoint registration_endpoint].each do |key|
+          value = metadata[key] or next
+          uri = URI(value)
+          next if uri.scheme == "https" || %w[localhost 127.0.0.1 ::1].include?(uri.host)
+
+          raise Error, "#{key} #{value} is not HTTPS"
+        end
+      end
+
+      def presence(value)
+        value.to_s.strip.empty? ? nil : value
       end
 
       def authorize_url(metadata, grant)
@@ -152,15 +202,20 @@ module Mistri
 
       # -- plumbing ----------------------------------------------------------
 
+      # RFC 8707 canonical form: lowercase scheme and host, no fragment.
       def canonical(url)
         uri = URI(url)
         uri.fragment = nil
+        uri.scheme = uri.scheme.downcase
+        uri.host = uri.host.downcase if uri.host
         uri.to_s
       end
 
-      def token_request(endpoint, form, client_secret)
-        form = form.merge("client_secret" => client_secret) if client_secret
-        payload = post_form(endpoint, form)
+      def token_request(endpoint, form, client_secret, auth_method = nil)
+        basic = client_secret && auth_method == "client_secret_basic"
+        form = form.merge("client_secret" => client_secret) if client_secret && !basic
+        credentials = basic ? [form["client_id"], client_secret] : nil
+        payload = post_form(endpoint, form, basic_auth: credentials)
         expires_in = payload["expires_in"]
         {
           "access_token" => payload.fetch("access_token"),
@@ -199,12 +254,13 @@ module Mistri
         JSON.parse(response.body)
       end
 
-      def post_form(url, form)
+      def post_form(url, form, basic_auth: nil)
         uri = URI(url)
         response = http(uri) do |connection|
           request = Net::HTTP::Post.new(uri)
           request["Content-Type"] = "application/x-www-form-urlencoded"
           request["Accept"] = "application/json"
+          request.basic_auth(*basic_auth) if basic_auth
           request.body = URI.encode_www_form(form)
           connection.request(request)
         end

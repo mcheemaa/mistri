@@ -110,6 +110,49 @@ class TestMcpOauth < Minitest::Test
     end
   end
 
+  def test_scopes_default_from_the_resource_and_offline_access_rides_support
+    with_server(resource_scopes: ["tools:read"],
+                as_scopes: %w[tools:read offline_access]) do |server|
+      flow = start_flow(server)
+      query = URI.decode_www_form(URI(flow["authorize_url"]).query).to_h
+
+      assert_equal "tools:read offline_access", query["scope"]
+    end
+  end
+
+  def test_unsupported_offline_access_is_stripped_from_an_explicit_scope
+    with_server do |server|
+      flow = start_flow(server, scope: "tools offline_access")
+      query = URI.decode_www_form(URI(flow["authorize_url"]).query).to_h
+
+      assert_equal "tools", query["scope"]
+    end
+  end
+
+  def test_client_secret_basic_authenticates_the_token_request
+    with_server(basic_token_auth: true) do |server|
+      flow = start_flow(server)
+      Mistri::MCP::OAuth.complete(code: "good-code", **flow.transform_keys(&:to_sym))
+
+      exchange = server.token_requests.first
+
+      assert_nil exchange["client_secret"], "the secret never rides the form in basic mode"
+      expected = "Basic #{["app-123:shh"].pack("m0")}"
+
+      assert_equal expected, exchange["_authorization"]
+    end
+  end
+
+  def test_authorization_server_endpoints_must_be_https
+    metadata = { "authorization_endpoint" => "http://evil.example/authorize",
+                 "token_endpoint" => "https://as.example/token" }
+    error = assert_raises(Mistri::MCP::Error) do
+      Mistri::MCP::OAuth.validate_endpoints(metadata)
+    end
+
+    assert_match(/not HTTPS/, error.message)
+  end
+
   def test_a_bad_code_surfaces_the_servers_reason
     with_server do |server|
       flow = start_flow(server)
