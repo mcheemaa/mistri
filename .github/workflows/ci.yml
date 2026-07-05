@@ -23,6 +23,11 @@ jobs:
           ruby-version: ${{ matrix.ruby }}
           bundler-cache: true
       - run: bundle exec rake test
+      - uses: codecov/codecov-action@v5
+        if: matrix.ruby == '3.4'
+        with:
+          token: ${{ secrets.CODECOV_TOKEN }}
+          files: coverage/coverage.xml
 
   lint:
     runs-on: ubuntu-latest

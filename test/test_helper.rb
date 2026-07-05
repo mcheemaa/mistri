@@ -7,6 +7,10 @@
 # Minitest.after_run keeps the order right either way.
 if ENV["COVERAGE"] == "1"
   require "simplecov"
+  if ENV["CI"]
+    require "simplecov-cobertura"
+    SimpleCov.formatter = SimpleCov::Formatter::CoberturaFormatter
+  end
   SimpleCov.external_at_exit = defined?(Minitest) ? true : false
   SimpleCov.start do
     add_filter "/test/"
