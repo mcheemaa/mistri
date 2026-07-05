@@ -42,8 +42,11 @@ module Mistri
     # A handler may return a ToolResult to speak on two channels; its ui
     # payload is canonicalized through JSON here so the live event and a
     # reloaded session read the identical shape.
-    def call(arguments)
-      result = @handler.call(arguments || {})
+    #
+    # Handlers receive (arguments, context). A proc that declares one
+    # parameter ignores the context invisibly; a lambda opts in by arity.
+    def call(arguments, context = ToolContext.new)
+      result = invoke(arguments || {}, context)
       return serialize_result(result) unless result.is_a?(ToolResult)
 
       result.with(content: serialize_result(result.content),
@@ -65,6 +68,14 @@ module Mistri
     end
 
     private
+
+    def invoke(arguments, context)
+      if @handler.lambda? && @handler.arity.between?(0, 1)
+        @handler.arity.zero? ? @handler.call : @handler.call(arguments)
+      else
+        @handler.call(arguments, context)
+      end
+    end
 
     # Content blocks pass through so tools can return images; everything else
     # the model reads as text, with structured data as JSON, never as Ruby

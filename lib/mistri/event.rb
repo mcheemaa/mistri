@@ -9,8 +9,10 @@ module Mistri
   # `partial` is an immutable snapshot of the assistant message so far, safe to
   # hold across events. `content_index` is the block's position in that
   # message's content list.
+  # origin names the sub-agent an event came from: nil for this agent's own
+  # turns, and nesting joins names left to right ("researcher>writer").
   class Event < Data.define(:type, :content_index, :delta, :content, :tool_call,
-                            :reason, :message, :error_message, :partial)
+                            :reason, :message, :error_message, :partial, :origin)
     # The stream types come from a provider mid-turn; the loop adds
     # :tool_result after it runs each tool, :approval_needed when a gated
     # call parks for a human, and :compacting/:compaction around a context
@@ -27,7 +29,7 @@ module Mistri
     ].freeze
 
     def initialize(type:, content_index: nil, delta: nil, content: nil, tool_call: nil,
-                   reason: nil, message: nil, error_message: nil, partial: nil)
+                   reason: nil, message: nil, error_message: nil, partial: nil, origin: nil)
       raise ArgumentError, "unknown event type #{type.inspect}" unless TYPES.include?(type)
 
       super
@@ -42,7 +44,7 @@ module Mistri
     # Partials are ephemeral streaming state and stay out of serialization.
     def to_h
       { type:, content_index:, delta:, content:, tool_call: tool_call&.to_h,
-        reason:, message: message&.to_h, error_message: }.compact
+        reason:, message: message&.to_h, error_message:, origin: }.compact
     end
   end
 end

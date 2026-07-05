@@ -14,18 +14,19 @@ module Mistri
 
     module_function
 
-    def call(calls, tools_by_name, signal: nil, max_concurrency: 4)
+    def call(calls, tools_by_name, signal: nil, max_concurrency: 4, session: nil, emit: nil)
       return [] if calls.empty?
 
+      context = ToolContext.new(session: session, signal: signal, emit: thread_safe(emit))
       results = Array.new(calls.length)
       queue = Queue.new
       calls.each_with_index { |call, index| queue << [call, index] }
       workers = max_concurrency.clamp(1, calls.length)
-      Array.new(workers) { worker(queue, results, tools_by_name, signal) }.each(&:join)
+      Array.new(workers) { worker(queue, results, tools_by_name, context) }.each(&:join)
       calls.zip(results).map { |call, result| [call, result || INTERRUPTED] }
     end
 
-    def worker(queue, results, tools_by_name, signal)
+    def worker(queue, results, tools_by_name, context)
       Thread.new do
         loop do
           call, index = begin
@@ -33,18 +34,28 @@ module Mistri
           rescue ThreadError
             break
           end
-          results[index] = signal&.aborted? ? INTERRUPTED : run_one(call, tools_by_name)
+          interrupted = context.signal&.aborted?
+          results[index] = interrupted ? INTERRUPTED : run_one(call, tools_by_name, context)
         end
       end
     end
 
-    def run_one(call, tools_by_name)
+    def run_one(call, tools_by_name, context)
       tool = tools_by_name[call.name]
       return "Error: unknown tool #{call.name.inspect}" unless tool
 
-      with_rails_executor { tool.call(call.arguments) }
+      with_rails_executor { tool.call(call.arguments, context) }
     rescue StandardError => e
       "Error running tool #{call.name.inspect}: #{e.class}: #{e.message}"
+    end
+
+    # Concurrent tools share the caller's sink; sinks are not required to be
+    # thread-safe, so forwarded events serialize here.
+    def thread_safe(emit)
+      return nil unless emit
+
+      mutex = Mutex.new
+      ->(event) { mutex.synchronize { emit.call(event) } }
     end
 
     def with_rails_executor(&)

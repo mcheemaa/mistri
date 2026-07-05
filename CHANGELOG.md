@@ -5,6 +5,19 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+- Sub-agents: delegation with a clean context (#2). Mistri::SubAgent names
+  a curated specialist (own provider/system/tools, optional schema: for
+  validated JSON answers); SubAgent.spawner is the open spawn_agent tool
+  where the model writes the child's instructions, grants a tool subset,
+  and may pick a model. Children run fresh sessions on the caller's store,
+  linked in its transcript and on the tool result's ui channel; their
+  events stream into the parent tagged with origin. Parallel spawn calls
+  fan out on the executor pool. Approval-gated tools are refused inside
+  children; gate the delegation itself instead.
+- Tool handlers now receive an optional second argument, ToolContext
+  (session, signal, emit); procs ignore it invisibly and strict lambdas
+  keep their old arity. Events gained an origin field.
+
 - Task mode: Agent#task(input, schema:) runs an exchange that must end in
   JSON matching the schema — tools run as usual, providers constrain the
   final answer natively where supported (Anthropic output_config, OpenAI

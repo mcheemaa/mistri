@@ -265,8 +265,9 @@ module Mistri
     def execute(calls, signal, &emit)
       return if calls.empty?
 
-      results = ToolExecutor.call(calls, @tools_by_name,
-                                  signal: signal, max_concurrency: @max_concurrency)
+      results = ToolExecutor.call(calls, @tools_by_name, signal: signal,
+                                                         max_concurrency: @max_concurrency,
+                                                         session: @session, emit: emit)
       results.each { |call, result| answer(call, result, &emit) }
     end
 
