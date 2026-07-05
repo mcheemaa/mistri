@@ -70,7 +70,8 @@ module Mistri
       pending = open.select { |approval| approval[:decision].nil? }
       if pending.any?
         return Result.new(message: nil, status: :awaiting_approval,
-                          pending: pending.map { |approval| approval[:call] })
+                          pending: pending.map { |approval| approval[:call] },
+                          usage: Usage.zero)
       end
 
       settle(open, signal, &emit)
@@ -89,7 +90,9 @@ module Mistri
     def task(input, schema:, images: [], signal: nil, fixes: 1, &emit)
       result = run(task_input(input, schema), images: images, signal: signal,
                                               output_schema: schema, &emit)
+      spent = result.usage
       fixes.downto(0) do |remaining|
+        result = result.with(usage: spent)
         return result unless result.completed?
 
         value = parse_output(result.text)
@@ -98,6 +101,7 @@ module Mistri
         raise SchemaError, "task output failed validation: #{errors.join("; ")}" if remaining.zero?
 
         result = run(fix_prompt(errors), signal: signal, output_schema: schema, &emit)
+        spent += result.usage
       end
     end
 
@@ -126,7 +130,7 @@ module Mistri
       started = monotonic_now
       loop do
         reason = @budget.exceeded(turns: turns, usage: usage, elapsed: monotonic_now - started)
-        return stop_for_budget(reason, &emit) if reason
+        return stop_for_budget(reason, usage, &emit) if reason
 
         fold_steers
         compacted = auto_compact(&emit)
@@ -138,8 +142,8 @@ module Mistri
         # Any tool call the turn made must be answered or parked, or the
         # transcript is unpairable and replay fails.
         parked = last.tool_calls? ? run_tools(last, signal, &emit) : []
-        return suspended(last, parked) if parked.any?
-        return finished(last) if done?(last, signal)
+        return suspended(last, parked, usage) if parked.any?
+        return finished(last, usage) if done?(last, signal)
       end
     end
 
@@ -286,24 +290,24 @@ module Mistri
       tool ? tool.needs_approval?(call.arguments) : false
     end
 
-    def finished(message)
+    def finished(message, usage)
       status = { StopReason::ABORTED => :aborted, StopReason::BUDGET => :budget,
                  StopReason::ERROR => :error }.fetch(message.stop_reason, :completed)
-      Result.new(message: message, status: status)
+      Result.new(message: message, status: status, usage: usage)
     end
 
-    def suspended(message, parked)
-      Result.new(message: message, status: :awaiting_approval, pending: parked)
+    def suspended(message, parked, usage)
+      Result.new(message: message, status: :awaiting_approval, pending: parked, usage: usage)
     end
 
-    def stop_for_budget(reason, &emit)
+    def stop_for_budget(reason, usage, &emit)
       message = Message.assistant(content: "Run stopped: #{reason} budget reached.",
                                   stop_reason: StopReason::BUDGET,
                                   error_message: "budget_#{reason}")
       @session.append_message(message)
       emit&.call(Event.new(type: :error, reason: StopReason::BUDGET, message: message,
                            error_message: "budget_#{reason}"))
-      Result.new(message: message, status: :budget)
+      Result.new(message: message, status: :budget, usage: usage)
     end
 
     # Distinguishable from a parsed nil: JSON "null" is a valid value.

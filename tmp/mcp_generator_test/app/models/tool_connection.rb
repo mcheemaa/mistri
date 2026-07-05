@@ -1,7 +1,7 @@
 # One MCP server connection: its own OAuth flow state, its tokens, and the
 # bridge into agent tools. Rows with a manually supplied access_token (API
 # key servers) work the same way without the OAuth columns.
-class McpConnection < ApplicationRecord
+class ToolConnection < ApplicationRecord
   encrypts :access_token, :refresh_token, :client_secret
 
   # Begin the OAuth flow: persists a pending connection and returns it with

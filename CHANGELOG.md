@@ -5,6 +5,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+- Result#usage: every run reports its own token and cost accounting,
+  summing persisted turns and compaction calls; task sums across its fix
+  passes. Hosts meter a run without walking the session.
+
 - MCP stdio wire: Client.new(command: [...], env: {...}) spawns a local
   server as a child process speaking line-delimited JSON-RPC, credentials
   in its environment per spec. Dying servers and non-protocol stdout fail

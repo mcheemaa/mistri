@@ -115,4 +115,33 @@ class TestAgent < Minitest::Test
     assert_equal "pong", result.content
     assert_equal :done, events.last.type
   end
+
+  def test_a_result_reports_the_runs_usage
+    turn_usage = Mistri::Usage.new(input: 100, output: 20)
+    provider = Mistri::Providers::Fake.new(turns: [
+                                             { tool_calls: [{ name: "noop", arguments: {} }],
+                                               usage: turn_usage },
+                                             { text: "done", usage: turn_usage }
+                                           ])
+    noop = Mistri::Tool.define("noop", "N.") { "ok" }
+
+    result = Mistri::Agent.new(provider:, tools: [noop]).run("go")
+
+    assert_equal 200, result.usage.input
+    assert_equal 40, result.usage.output
+  end
+
+  def test_a_task_sums_usage_across_fix_passes
+    turn_usage = Mistri::Usage.new(input: 50, output: 5)
+    provider = Mistri::Providers::Fake.new(turns: [
+                                             { text: "not json", usage: turn_usage },
+                                             { text: '{"x":1}', usage: turn_usage }
+                                           ])
+    schema = { type: "object", properties: { "x" => { type: "integer" } }, required: ["x"] }
+
+    result = Mistri::Agent.new(provider:).task("go", schema: schema)
+
+    assert_equal 1, result.output["x"]
+    assert_equal 100, result.usage.input, "both passes count"
+  end
 end
