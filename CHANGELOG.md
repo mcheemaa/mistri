@@ -5,6 +5,16 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+- MCP bridge: Mistri::MCP::Client speaks Streamable HTTP (initialize
+  handshake, tools/list with pagination, tools/call, sessions with
+  transparent expiry recovery, JSON or SSE responses) with zero new
+  dependencies. Auth is a headers hash or a token string-or-lambda; a
+  lambda re-resolves once on 401, so host refresh logic lives in one place.
+  Mistri::MCP.tools bridges any server (or any duck-typed client, the
+  official mcp gem included) into Mistri tools with allow/deny lists, name
+  prefixing, and per-tool approval gates, so a third-party write tool can
+  ride the human-approval arc.
+
 ## [0.1.0] - 2026-07-05
 
 - Live integration harness: `rake integration` runs every feature end to

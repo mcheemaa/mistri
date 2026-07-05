@@ -1,0 +1,133 @@
+# frozen_string_literal: true
+
+require "json"
+require_relative "stub_server"
+
+module Mistri
+  module Test
+    # An in-process MCP server speaking Streamable HTTP: enough protocol to
+    # test the client and bridge hermetically. Tools are lambdas returning a
+    # String (wrapped as text content) or a raw result hash. Toggles cover
+    # the interesting server behaviors: SSE or plain JSON replies, session
+    # ids, list pagination, bearer auth, and one session expiry.
+    class McpStubServer
+      attr_reader :calls, :initializes
+
+      def initialize(tools: {}, sse: true, session: nil, page_size: nil,
+                     require_token: nil, expire_after: nil, protocol: "2025-06-18")
+        @tools = tools
+        @sse = sse
+        @session = session
+        @page_size = page_size
+        @require_token = require_token
+        @expire_after = expire_after
+        @protocol = protocol
+        @calls = []
+        @initializes = 0
+        @served = 0
+        @expired = false
+        @stub = StubServer.new { |socket, request| route(socket, request) }
+      end
+
+      def url = "#{@stub.origin}/mcp"
+      def requests = @stub.requests
+      def stop = @stub.stop
+
+      def bodies
+        requests.filter_map { |r| JSON.parse(r[:body]) unless r[:body].to_s.empty? }
+      end
+
+      private
+
+      def route(socket, request)
+        message = JSON.parse(request[:body])
+        return unauthorized(socket) if @require_token && !authorized?(request)
+        return expire(socket) if expire?(request)
+
+        @served += 1
+        return @stub.respond_json(socket, "", status: 202) unless message["id"]
+
+        respond(socket, message["id"], result_for(message), headers: session_headers(message))
+        nil
+      end
+
+      def result_for(message)
+        case message["method"]
+        when "initialize"
+          @initializes += 1
+          { "protocolVersion" => @protocol, "capabilities" => { "tools" => {} },
+            "serverInfo" => { "name" => "stub", "version" => "1.0" } }
+        when "tools/list" then page(message.dig("params", "cursor"))
+        when "tools/call" then call(message["params"])
+        else {}
+        end
+      end
+
+      def call(params)
+        @calls << params
+        handler = @tools.fetch(params["name"]).fetch(:handler)
+        outcome = handler.call(params["arguments"] || {})
+        return outcome if outcome.is_a?(Hash)
+
+        { "content" => [{ "type" => "text", "text" => outcome.to_s }] }
+      end
+
+      def page(cursor)
+        specs = @tools.map do |name, spec|
+          { "name" => name, "description" => spec[:description].to_s,
+            "inputSchema" => spec[:schema] || { "type" => "object", "properties" => {} } }
+        end
+        return { "tools" => specs } unless @page_size
+
+        start = cursor.to_i
+        slice = specs[start, @page_size] || []
+        result = { "tools" => slice }
+        result["nextCursor"] = (start + @page_size).to_s if start + @page_size < specs.length
+        result
+      end
+
+      def respond(socket, id, result, headers: {})
+        payload = { "jsonrpc" => "2.0", "id" => id, "result" => result }
+        return @stub.respond_json(socket, payload, headers: headers) unless @sse
+
+        head = ["HTTP/1.1 200 OK", "Content-Type: text/event-stream",
+                "Transfer-Encoding: chunked", *headers.map { |k, v| "#{k}: #{v}" }]
+        socket.write("#{head.join("\r\n")}\r\n\r\n")
+        @stub.chunk(socket, "data: #{JSON.generate(payload)}\n\n")
+        @stub.finish_sse(socket)
+      end
+
+      def session_headers(message)
+        return {} unless @session && message["method"] == "initialize"
+
+        { "Mcp-Session-Id" => "#{@session}-#{@initializes}" }
+      end
+
+      def authorized?(request)
+        request[:headers]["authorization"] == "Bearer #{@require_token}"
+      end
+
+      def unauthorized(socket)
+        challenge = { "WWW-Authenticate" => 'Bearer resource_metadata="stub"' }
+        @stub.respond_json(socket, { "error" => "unauthorized" },
+                           status: 401, headers: challenge)
+        nil
+      end
+
+      # One simulated expiry: a session-carrying request 404s once, then the
+      # server accepts a fresh initialize.
+      def expire?(request)
+        return false unless @expire_after && !@expired
+        return false unless request[:headers]["mcp-session-id"]
+        return false if @served < @expire_after
+
+        @expired = true
+      end
+
+      def expire(socket)
+        @stub.respond_json(socket, { "error" => "session not found" }, status: 404)
+        nil
+      end
+    end
+  end
+end

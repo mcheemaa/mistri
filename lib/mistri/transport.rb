@@ -45,11 +45,52 @@ module Mistri
       @mutex.synchronize { stream_locked(path, body, headers, signal, &block) }
     end
 
+    # POST for Streamable-HTTP endpoints (the MCP shape) that answer either
+    # a JSON body or an SSE stream: yields each JSON record either way and
+    # returns the response headers, downcased. Retries only a dead idle
+    # socket that failed before any response started, so a side-effecting
+    # call can never run twice.
+    def post_either(path, body:, headers: {}, &block)
+      @mutex.synchronize do
+        retried = false
+        begin
+          started = false
+          response_headers = nil
+          connection.request(build_request(path, body, headers, streaming: true)) do |response|
+            started = true
+            raise_for_status(response)
+            response_headers = response.to_hash.transform_values(&:first)
+            read_either(response, &block)
+          end
+          response_headers
+        rescue IOError, SocketError, SystemCallError, Timeout::Error => e
+          teardown
+          if started || retried || e.is_a?(Timeout::Error)
+            raise ProviderError, "connection failed: #{e.message}"
+          end
+
+          retried = true
+          retry
+        end
+      end
+    end
+
     def close
       @mutex.synchronize { teardown }
     end
 
     private
+
+    def read_either(response, &block)
+      if response["content-type"].to_s.include?("text/event-stream")
+        sse = SSE.new
+        response.read_body { |chunk| sse.feed(chunk, &block) }
+        sse.finish(&block)
+      else
+        raw = response.read_body
+        block.call(JSON.parse(raw)) unless raw.to_s.strip.empty?
+      end
+    end
 
     def stream_locked(path, body, headers, signal, &block)
       retried = false
