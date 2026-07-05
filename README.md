@@ -348,7 +348,7 @@ Mistri.agent("gpt-5.5", provider_options: { reasoning: { effort: "high" } })
 Mistri.agent("claude-opus-4-8", provider_options: { cache: false })
 ```
 
-## Verified for real
+## Testing
 
 `rake test` is hermetic and fast. `rake integration` runs every feature end
 to end against real provider APIs, once per model in the matrix. Scenarios
