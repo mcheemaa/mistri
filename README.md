@@ -1,6 +1,6 @@
 <h1 align="center">مستری</h1>
 
-<p align="center"><strong>mistri</strong> — the agent harness for Ruby applications.</p>
+<p align="center"><strong>mistri</strong>, the agent harness for Ruby applications.</p>
 
 <p align="center">
   <a href="https://rubygems.org/gems/mistri"><img alt="Gem Version" src="https://img.shields.io/gem/v/mistri"></a>
@@ -10,23 +10,23 @@
   <a href="LICENSE"><img alt="License: MIT" src="https://img.shields.io/badge/license-MIT-blue.svg"></a>
 </p>
 
-<p align="center">
-  A mistri (Urdu: مستری) is the fixer — the skilled tradesperson who actually
-  gets it done. This one lives inside your app, not in a terminal: it runs the
-  model loop, executes tools, streams every event, persists sessions to your
-  own database, and pauses for a human when a tool needs approval — with zero
-  runtime gem dependencies.
-</p>
+A mistri (Urdu: مستری) is the fixer: the skilled tradesperson who actually
+gets it done. This one lives inside your app, not in a terminal. It runs the
+model loop, executes tools, streams every event, persists sessions to your
+own database, and pauses for a human when a tool needs approval, all with
+zero runtime gem dependencies.
 
 ```ruby
 require "mistri"
 
-weather = Mistri::Tool.define("get_weather", "Current weather for a city.",
-                              schema: -> { string :city, "City name", required: true }) do |args|
+weather = Mistri::Tool.define(
+  "get_weather", "Current weather for a city.",
+  schema: -> { string :city, "City name", required: true },
+) do |args|
   Weather.for(args["city"])
 end
 
-agent = Mistri.agent("claude-opus-4-8", tools: [weather])   # reads ANTHROPIC_API_KEY
+agent = Mistri.agent("claude-opus-4-8", tools: [weather]) # reads ANTHROPIC_API_KEY
 
 agent.run("What should I wear in Lahore today?") do |event|
   print event.delta if event.type == :text_delta
@@ -36,13 +36,13 @@ end
 ## Why Mistri
 
 - **Built for applications.** Sessions are durable, append-only records in
-  your own store. Runs stop, resume, steer, and compact — from any process.
+  your own store. Runs stop, resume, steer, and compact from any process.
 - **Fire-and-forget human approval.** A gated tool suspends the run and
   returns immediately. The approval can arrive two days later from a bare
   web request; nothing sleeps waiting.
-- **Three providers, frontier-deep.** Anthropic, OpenAI, and Gemini — each
+- **Three providers, frontier-deep.** Anthropic, OpenAI, and Gemini, each
   streamed natively with thinking, prompt caching, parallel tool calls, and
-  constrained JSON output. One message model across all of them.
+  constrained JSON output. One message model across all three.
 - **Zero runtime dependencies.** Plain Ruby all the way down.
 - **Verified against real APIs.** A live integration harness runs every
   feature end to end on every provider (`rake integration`).
@@ -83,7 +83,7 @@ weather = Mistri::Tool.define("get_weather", "Current weather for a city.", sche
 end
 ```
 
-A tool can speak on two channels — `content` for the model, `ui` for your
+A tool can speak on two channels: `content` for the model, `ui` for your
 interface. The `ui` payload rides the `:tool_result` event and persists with
 the session, but never reaches a provider:
 
@@ -97,7 +97,7 @@ end
 ## Human approval
 
 Mark a tool `needs_approval: true` (or a predicate on its arguments) and the
-run suspends instead of executing it — instantly, with no thread waiting.
+run suspends instead of executing it, instantly, with no thread waiting.
 The decision is a one-line session write from any process, any time later;
 `resume` settles it and carries on.
 
@@ -163,7 +163,7 @@ store = Mistri::Stores::ActiveRecord.new(AgentEntry)
 
 Long sessions survive their context window: when the conversation grows into
 the reserve headroom, the provider writes a visible structured summary and
-replay continues from it — the full history stays in your store for
+replay continues from it. The full history stays in your store for
 transcript views. On by default whenever the model's window is known;
 `compaction: false` disables it.
 
@@ -180,15 +180,17 @@ exactly what the model still remembers.
 A run that must end in JSON matching a schema. Tools run as usual; providers
 constrain the final answer natively where they can, and the answer is
 validated client-side everywhere. A violation goes back to the model once,
-then raises — you get a guaranteed shape or a loud error, never silence.
+then raises. You get a guaranteed shape or a loud error, never silence.
 
 ```ruby
-result = agent.task("Extract the pricing tiers from this page.",
-                    schema: { type: "object",
-                              properties: { "tiers" => { type: "array",
-                                                         items: { type: "string" } } },
-                              required: ["tiers"] })
-result.output   # => { "tiers" => [...] } — parsed and validated
+schema = {
+  type: "object",
+  properties: { "tiers" => { type: "array", items: { type: "string" } } },
+  required: ["tiers"],
+}
+
+result = agent.task("Extract the pricing tiers from this page.", schema: schema)
+result.output # => { "tiers" => [...] }, parsed and validated
 ```
 
 ## Skills
@@ -202,7 +204,7 @@ agent = Mistri.agent("claude-opus-4-8", skills: "app/skills")   # or an array of
 ```
 
 A skill is a `SKILL.md` (or flat `.md`) with `name:`/`description:`
-frontmatter — or built from database rows with
+frontmatter, or built from database rows with
 `Mistri::Skill.new(name:, description:, body:)`.
 
 ## Sub-agents
@@ -221,9 +223,9 @@ researcher = Mistri::SubAgent.new(
 agent = Mistri.agent("claude-opus-4-8", tools: [researcher.tool])
 ```
 
-Or hand the model an open spawn tool and let it compose its own workers —
-instructions, tool subset, and (host-allowlisted) model per child; several
-spawns in one turn fan out in parallel:
+Or hand the model an open spawn tool and let it compose its own workers:
+instructions, a tool subset, and a host-allowlisted model per child.
+Several spawns in one turn fan out in parallel:
 
 ```ruby
 spawn = Mistri::SubAgent.spawner(provider: provider, tools: [fetch_page, search])
@@ -232,7 +234,7 @@ spawn = Mistri::SubAgent.spawner(provider: provider, tools: [fetch_page, search]
 ## Editing documents
 
 The document tools (`read_file`, `edit_file`, `write_file`, `find_in_file`,
-`list_files`) work over a workspace — a directory, memory, ActiveRecord, or
+`list_files`) work over a workspace: a directory, memory, ActiveRecord, or
 a single value anywhere, like one database column holding a page:
 
 ```ruby
@@ -253,27 +255,29 @@ names the closest region so the model's retry is one-shot.
 Sinks bridge the event stream to a transport, and compose as blocks:
 
 ```ruby
-sink = Mistri::Sinks::Coalesced.new(              # merges token bursts to UI speed
-  Mistri::Sinks::ActionCable.new("agent_#{session.id}"),
-)
+cable = Mistri::Sinks::ActionCable.new("agent_#{session.id}")
+sink = Mistri::Sinks::Coalesced.new(cable) # merges token bursts to UI speed
+
 agent.run(input, &sink)
 ```
 
 `Mistri::Sinks::SSE.new(response.stream)` does the same for
-`ActionController::Live`. There is no Railtie and nothing to configure —
+`ActionController::Live`. There is no Railtie and nothing to configure;
 the generator and stores duck-type into any app.
 
 ## Stopping, budgets, reliability
 
 ```ruby
-signal = Mistri::AbortSignal.new                  # trip from anywhere; the partial
-agent.run("Draft a long essay.", signal: signal)  # turn persists, resume is clean
+# Trip the signal from anywhere; the partial turn persists, resume is clean.
+signal = Mistri::AbortSignal.new
+agent.run("Draft a long essay.", signal: signal)
 
-Mistri::Budget.new(turns: 20, cost_usd: 2.00)     # opt-in ceilings, off by default
+# Ceilings are opt-in and off by default.
+budget = Mistri::Budget.new(turns: 20, cost_usd: 2.00)
 
-Mistri::RetryPolicy.new(attempts: 3)              # on by default: 429/5xx/timeouts
-                                                  # retry with backoff, invisibly to
-                                                  # the model; retries: false disables
+# Transient failures (429, 5xx, timeouts) retry with backoff, invisibly to
+# the model. On by default; retries: false disables.
+policy = Mistri::RetryPolicy.new(attempts: 3)
 ```
 
 ## Images and provider options
@@ -291,7 +295,7 @@ Mistri.agent("claude-opus-4-8", provider_options: { cache: false })
 `rake test` is hermetic and fast. `rake integration` runs every feature end
 to end against real provider APIs, once per model in the matrix. Scenarios
 assert that coined codenames (a ghost of a word like `Wraithowyn` exists in
-no training data) flowed through tool results, summaries, and child agents —
+no training data) flowed through tool results, summaries, and child agents:
 proof of information flow, not model knowledge.
 
 ```console
