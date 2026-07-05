@@ -5,6 +5,14 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+- Tool hooks: before_tool(call, context) blocks a call by returning the
+  reason as a String, answered to the model in band; it outranks the
+  approval gate and screens approved calls again at settle time, so an
+  aged approval never beats current policy. after_tool(call, result,
+  context) may replace a result (both channels), nil keeps it. Hooks that
+  raise fail safe: before blocks, after answers in band.
+- transform_context accepts an array of transforms, applied in order.
+
 - Result#usage: every run reports its own token and cost accounting,
   summing persisted turns and compaction calls; task sums across its fix
   passes. Hosts meter a run without walking the session.

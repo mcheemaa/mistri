@@ -22,9 +22,15 @@ module Mistri
     # skills: an array of Skill (or a directory path for Skills.load). Their
     # descriptions join the system prompt and a read_skill tool serves full
     # bodies on demand.
+    # before_tool and after_tool are the programmatic gates around every
+    # execution: before_tool(call, context) blocks a call by returning the
+    # reason as a String, which answers the model in band (and it runs again
+    # when an approved call finally executes, so a decision that aged days
+    # still passes current policy); after_tool(call, result, context) may
+    # return a replacement result, or nil to keep the original.
     def initialize(provider:, session: nil, system: nil, tools: [], budget: nil,
                    max_concurrency: 4, transform_context: nil, compaction: Compaction.new,
-                   retries: RetryPolicy.new, skills: [])
+                   retries: RetryPolicy.new, skills: [], before_tool: nil, after_tool: nil)
       @provider = provider
       @session = session || Session.new(store: Stores::Memory.new)
       skills = skills.is_a?(String) ? Skills.load(skills) : Array(skills)
@@ -35,9 +41,11 @@ module Mistri
 
       @budget = budget || Budget.new
       @max_concurrency = max_concurrency
-      @transform_context = transform_context
+      @transform_context = Array(transform_context)
       @compaction = compaction || nil
       @retries = retries || nil
+      @before_tool = before_tool
+      @after_tool = after_tool
     end
 
     attr_reader :session
@@ -195,8 +203,9 @@ module Mistri
     # attempt is recorded as a retry entry, never as a message, so retries
     # stay invisible to the model. Only the final outcome persists.
     def run_turn(signal, output_schema = nil, &emit)
-      history = @session.messages
-      history = @transform_context.call(history) if @transform_context
+      history = @transform_context.reduce(@session.messages) do |messages, transform|
+        transform.call(messages)
+      end
       attempt = 0
       loop do
         message = @provider.stream(messages: history, system: @system,
@@ -247,7 +256,7 @@ module Mistri
         return []
       end
 
-      parked, free = calls.partition { |call| gated?(call) }
+      parked, free = screen(calls, signal, &emit).partition { |call| gated?(call) }
       execute(free, signal, &emit)
       parked.each do |call|
         @session.append("approval_request", "call" => call.to_h)
@@ -258,7 +267,8 @@ module Mistri
 
     def settle(open, signal, &emit)
       approved, denied = open.partition { |approval| approval[:decision]["approved"] }
-      execute(approved.map { |approval| approval[:call] }, signal, &emit)
+      cleared = screen(approved.map { |approval| approval[:call] }, signal, &emit)
+      execute(cleared, signal, &emit)
       denied.each do |approval|
         note = approval[:decision]["note"]
         text = "The user denied this tool call#{note ? ": #{note}" : "."}"
@@ -272,7 +282,41 @@ module Mistri
       results = ToolExecutor.call(calls, @tools_by_name, signal: signal,
                                                          max_concurrency: @max_concurrency,
                                                          session: @session, emit: emit)
-      results.each { |call, result| answer(call, result, &emit) }
+      context = hook_context(signal, emit)
+      results.each do |call, result|
+        result = rewrite(call, result, context) if @after_tool
+        answer(call, result, &emit)
+      end
+    end
+
+    # A blocked call answers in band, so the model reads the reason and
+    # reacts; a hook that raises blocks conservatively rather than letting
+    # an unpoliced call through.
+    def screen(calls, signal, &emit)
+      return calls unless @before_tool
+
+      context = hook_context(signal, emit)
+      calls.reject do |call|
+        reason = begin
+          @before_tool.call(call, context)
+        rescue StandardError => e
+          "the before_tool hook failed: #{e.class}: #{e.message}"
+        end
+        next false unless reason.is_a?(String)
+
+        answer(call, "Blocked: #{reason}", &emit)
+        true
+      end
+    end
+
+    def rewrite(call, result, context)
+      @after_tool.call(call, result, context) || result
+    rescue StandardError => e
+      "Error in after_tool hook: #{e.class}: #{e.message}"
+    end
+
+    def hook_context(signal, emit)
+      ToolContext.new(session: @session, signal: signal, emit: emit)
     end
 
     # The tool message carries both channels; the :tool_result event exposes
