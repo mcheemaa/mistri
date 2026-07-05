@@ -5,6 +5,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+- Mistri::Reminder.every(3, text): a periodic tail reminder for long runs,
+  riding transform_context; due by completed assistant turns, fresh on the
+  wire each time, never persisted.
+
 - Tool hooks: before_tool(call, context) blocks a call by returning the
   reason as a String, answered to the model in band; it outranks the
   approval gate and screens approved calls again at settle time, so an
