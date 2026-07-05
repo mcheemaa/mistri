@@ -11,3 +11,4 @@ Gemfile.lock
 /.bundle/
 /test/tmp/
 /Gemfile.lock
+/tmp/
