@@ -30,7 +30,8 @@ module Mistri
     # return a replacement result, or nil to keep the original.
     def initialize(provider:, session: nil, system: nil, tools: [], budget: nil,
                    max_concurrency: 4, transform_context: nil, compaction: Compaction.new,
-                   retries: RetryPolicy.new, skills: [], before_tool: nil, after_tool: nil)
+                   retries: RetryPolicy.new, skills: [], before_tool: nil, after_tool: nil,
+                   context: nil)
       @provider = provider
       @session = session || Session.new(store: Stores::Memory.new)
       skills = skills.is_a?(String) ? Skills.load(skills) : Array(skills)
@@ -46,6 +47,7 @@ module Mistri
       @retries = retries || nil
       @before_tool = before_tool
       @after_tool = after_tool
+      @context = context
     end
 
     attr_reader :session
@@ -302,7 +304,8 @@ module Mistri
 
       results = ToolExecutor.call(calls, @tools_by_name, signal: signal,
                                                          max_concurrency: @max_concurrency,
-                                                         session: @session, emit: emit)
+                                                         session: @session, emit: emit,
+                                                         app: @context)
       context = hook_context(signal, emit)
       results.each do |call, result, seconds|
         result = rewrite(call, result, context) if @after_tool
@@ -337,7 +340,7 @@ module Mistri
     end
 
     def hook_context(signal, emit)
-      ToolContext.new(session: @session, signal: signal, emit: emit)
+      ToolContext.new(session: @session, signal: signal, emit: emit, app: @context)
     end
 
     # The tool message carries both channels; the :tool_result event exposes

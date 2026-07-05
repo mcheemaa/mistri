@@ -16,10 +16,12 @@ module Mistri
 
     module_function
 
-    def call(calls, tools_by_name, signal: nil, max_concurrency: 4, session: nil, emit: nil)
+    def call(calls, tools_by_name, signal: nil, max_concurrency: 4, session: nil, emit: nil,
+             app: nil)
       return [] if calls.empty?
 
-      context = ToolContext.new(session: session, signal: signal, emit: thread_safe(emit))
+      context = ToolContext.new(session: session, signal: signal, emit: thread_safe(emit),
+                                app: app)
       results = Array.new(calls.length)
       queue = Queue.new
       calls.each_with_index { |call, index| queue << [call, index] }
