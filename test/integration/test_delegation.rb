@@ -23,7 +23,8 @@ class TestDelegationIntegration < Minitest::Test
     origins = []
     parent = Mistri::Agent.new(provider: Mistri.provider(model), tools: [researcher.tool],
                                session: Mistri::Session.new(store:),
-                               system: "Delegate research to the researcher.")
+                               system: "Never answer company questions from memory: " \
+                                       "call the researcher and relay what it reports.")
 
     result = parent.run("What year was #{company} founded? One sentence.") do |e|
       origins << e.origin if e.origin
