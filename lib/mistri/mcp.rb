@@ -92,3 +92,4 @@ module Mistri
 end
 
 require_relative "mcp/client"
+require_relative "mcp/oauth"

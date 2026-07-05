@@ -5,6 +5,15 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+- MCP connections out of the box: Mistri::MCP::OAuth.start/.complete/
+  .refresh are storage-agnostic services implementing the spec's OAuth 2.1
+  subset (challenge and well-known discovery, RFC 8414 metadata with an
+  OpenID fallback, dynamic client registration as the host application,
+  PKCE with resource indicators, rotating refresh). `rails generate
+  mistri:mcp YourModel` creates a host-named connection model whose rows
+  carry their own flow state and encrypted tokens, with connection.tools
+  bridging straight into an agent and refreshing ahead of expiry.
+
 - MCP bridge: Mistri::MCP::Client speaks Streamable HTTP (initialize
   handshake, tools/list with pagination, tools/call, sessions with
   transparent expiry recovery, JSON or SSE responses) with zero new

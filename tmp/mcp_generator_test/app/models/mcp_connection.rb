@@ -1,0 +1,60 @@
+# One MCP server connection: its own OAuth flow state, its tokens, and the
+# bridge into agent tools. Rows with a manually supplied access_token (API
+# key servers) work the same way without the OAuth columns.
+class McpConnection < ApplicationRecord
+  encrypts :access_token, :refresh_token, :client_secret
+
+  # Begin the OAuth flow: persists a pending connection and returns it with
+  # the URL to send the user to.
+  def self.connect(name:, url:, client_name:, redirect_uri:, scope: nil)
+    flow = Mistri::MCP::OAuth.start(url: url, client_name: client_name,
+                                    redirect_uri: redirect_uri, scope: scope)
+    connection = create!(name: name, url: url, status: "pending",
+                         state: flow["state"], code_verifier: flow["code_verifier"],
+                         client_id: flow["client_id"], client_secret: flow["client_secret"],
+                         token_endpoint: flow["token_endpoint"],
+                         redirect_uri: flow["redirect_uri"])
+    [connection, flow["authorize_url"]]
+  end
+
+  # Finish the flow from the OAuth callback.
+  def self.complete(state:, code:)
+    connection = find_by!(state: state)
+    tokens = Mistri::MCP::OAuth.complete(code: code,
+                                         code_verifier: connection.code_verifier,
+                                         client_id: connection.client_id,
+                                         client_secret: connection.client_secret,
+                                         token_endpoint: connection.token_endpoint,
+                                         resource: connection.url,
+                                         redirect_uri: connection.redirect_uri)
+    connection.update!(status: "connected", state: nil, code_verifier: nil,
+                       access_token: tokens["access_token"],
+                       refresh_token: tokens["refresh_token"],
+                       expires_at: tokens["expires_at"], scope: tokens["scope"])
+    connection
+  end
+
+  def client
+    Mistri::MCP::Client.new(url: url, token: -> { bearer_token })
+  end
+
+  def tools(**options)
+    Mistri::MCP.tools(client, **options)
+  end
+
+  # A fresh bearer for every request; refreshes ahead of expiry and persists
+  # the rotated refresh token.
+  def bearer_token
+    refresh! if refresh_token.present? && expires_at && expires_at <= 1.minute.from_now
+    access_token
+  end
+
+  def refresh!
+    tokens = Mistri::MCP::OAuth.refresh(refresh_token: refresh_token,
+                                        client_id: client_id, client_secret: client_secret,
+                                        token_endpoint: token_endpoint, resource: url)
+    update!(access_token: tokens["access_token"],
+            refresh_token: tokens["refresh_token"] || refresh_token,
+            expires_at: tokens["expires_at"], scope: tokens["scope"] || scope)
+  end
+end

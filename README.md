@@ -250,6 +250,47 @@ The edit engine matches exactly, then whitespace-tolerantly; an ambiguous
 match refuses (never silently edits the wrong place), and a near-miss error
 names the closest region so the model's retry is one-shot.
 
+## MCP
+
+Bridge any Model Context Protocol server's tools into an agent. The client
+speaks Streamable HTTP with zero new dependencies; auth is a token string
+or a lambda that re-resolves once on 401, so refresh logic lives in one
+place. Approval gates compose: a third-party write tool can require a
+human.
+
+```ruby
+client = Mistri::MCP::Client.new(url: "https://mcp.linear.app/mcp",
+                                 token: -> { connection.bearer_token })
+tools = Mistri::MCP.tools(client, prefix: "linear",
+                          gates: { "create_issue" => true })
+
+agent = Mistri.agent("claude-opus-4-8", tools: tools)
+```
+
+For the full connect-your-tools story in Rails, generate a connection model
+(name it whatever you like):
+
+```console
+$ bin/rails generate mistri:mcp McpConnection
+```
+
+Each row is one server connection carrying its own OAuth flow state and
+encrypted tokens. The OAuth services underneath (`Mistri::MCP::OAuth.start`,
+`.complete`, `.refresh`) are storage-agnostic, so the same flow works from a
+controller, a GraphQL mutation, or a job. Registration happens as your
+application: `client_name:` is yours to set.
+
+```ruby
+connection, authorize_url = McpConnection.connect(
+  name: "Linear", url: params[:url],
+  client_name: "YourApp", redirect_uri: mcp_callback_url,
+)
+# redirect the user to authorize_url; then, in the callback:
+connection = McpConnection.complete(state: params[:state], code: params[:code])
+
+agent = Mistri.agent("claude-opus-4-8", tools: connection.tools(prefix: "linear"))
+```
+
 ## Streaming into Rails
 
 Sinks bridge the event stream to a transport, and compose as blocks:
