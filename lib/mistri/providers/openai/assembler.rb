@@ -25,7 +25,8 @@ module Mistri
           case record["type"]
           when "response.output_item.added" then start_item(record["item"], &)
           when "response.output_text.delta" then text_delta(record["delta"], &)
-          when "response.reasoning_summary_text.delta" then thinking_delta(record["delta"], &)
+          when "response.reasoning_summary_text.delta"
+            thinking_delta(record["delta"], record["summary_index"], &)
           when "response.function_call_arguments.delta" then arguments_delta(record["delta"], &)
           when "response.output_item.done" then finish_item(record["item"], &)
           when "response.completed", "response.incomplete", "response.failed"
@@ -83,6 +84,7 @@ module Mistri
           return unless kind
 
           @current = Builder.new(kind, @blocks.size, +"", +"")
+          @summary_part = nil
           emit_event(:"#{kind}_start", content_index: @current.index, &)
         end
 
@@ -93,9 +95,17 @@ module Mistri
           emit_event(:text_delta, content_index: @current.index, delta: delta, &)
         end
 
-        def thinking_delta(delta, &)
+        # A reasoning item carries one or more summary parts, each its own
+        # paragraph; the boundary streams as a delta so live views keep the
+        # break the finished text will have.
+        def thinking_delta(delta, part, &)
           return unless @current
 
+          if @summary_part && part && part != @summary_part
+            @current.text << "\n\n"
+            emit_event(:thinking_delta, content_index: @current.index, delta: "\n\n", &)
+          end
+          @summary_part = part if part
           @current.text << delta.to_s
           emit_event(:thinking_delta, content_index: @current.index, delta: delta, &)
         end
@@ -131,7 +141,7 @@ module Mistri
             text = Array(item["content"]).filter_map { |part| part["text"] }.join
             Content::Text.new(text: text, signature: item["id"])
           when :thinking
-            summary = Array(item["summary"]).filter_map { |part| part["text"] }.join
+            summary = Array(item["summary"]).filter_map { |part| part["text"] }.join("\n\n")
             Content::Thinking.new(thinking: summary, signature: JSON.generate(item))
           when :toolcall
             ToolCall.new(id: item["call_id"], name: item["name"],

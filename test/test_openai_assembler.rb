@@ -42,6 +42,35 @@ class TestOpenAIAssembler < Minitest::Test
                  events.select { |e| e.type.start_with?("thinking") }.map(&:type)
   end
 
+  def test_summary_parts_stay_separate_paragraphs
+    events = []
+    reasoning_item = { "type" => "reasoning", "id" => "rs_2",
+                       "summary" => [
+                         { "type" => "summary_text", "text" => "**Sizing the data**\nSmall." },
+                         { "type" => "summary_text", "text" => "**Planning charts**\nThree." }
+                       ] }
+    message = drive(events, [
+                      { "type" => "response.output_item.added",
+                        "item" => { "type" => "reasoning", "id" => "rs_2" } },
+                      { "type" => "response.reasoning_summary_text.delta",
+                        "delta" => "**Sizing the data**\nSmall.", "summary_index" => 0 },
+                      { "type" => "response.reasoning_summary_text.delta",
+                        "delta" => "**Planning charts**\nThree.", "summary_index" => 1 },
+                      { "type" => "response.output_item.done", "item" => reasoning_item },
+                      { "type" => "response.completed",
+                        "response" => { "status" => "completed" } }
+                    ])
+
+    thinking = message.content.first
+
+    assert_equal "**Sizing the data**\nSmall.\n\n**Planning charts**\nThree.",
+                 thinking.thinking
+    deltas = events.select { |e| e.type == :thinking_delta }.map(&:delta)
+
+    assert_includes deltas, "\n\n", "the paragraph break streams live"
+    assert_equal thinking.thinking, deltas.join, "streamed deltas equal the finished text"
+  end
+
   def test_a_tool_call_turn_parses_arguments_and_keeps_the_item_id
     events = []
     message = drive(events, [

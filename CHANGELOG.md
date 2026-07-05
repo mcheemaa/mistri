@@ -5,6 +5,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+- OpenAI reasoning summaries keep their paragraph structure: a reasoning
+  item's summary parts join with a blank line, and the boundary streams as
+  a thinking delta, so live views match the finished text.
+
 ## [0.3.0] - 2026-07-05
 
 - Sessions heal at replay: a run killed mid-tool (deploy, crash) leaves
