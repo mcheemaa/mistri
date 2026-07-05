@@ -50,6 +50,15 @@ module Mistri
       # second copy of what can be a multi-megabyte payload.
       def self.from_bytes(bytes, mime_type:) = new(data: [bytes.b].pack("m0").freeze, mime_type:)
 
+      # Browsers, canvases, and upload pipelines hand images around as
+      # data: URIs; accept them directly.
+      def self.from_data_uri(uri)
+        match = /\Adata:(?<mime>[^;,]+);base64,(?<data>.+)\z/m.match(uri.to_s)
+        raise ArgumentError, "not a base64 data: URI" unless match
+
+        new(data: match[:data].delete("\n").freeze, mime_type: match[:mime])
+      end
+
       def initialize(data:, mime_type:)
         super(data: Content.freeze_string(data), mime_type: Content.freeze_string(mime_type))
       end

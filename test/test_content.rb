@@ -60,4 +60,15 @@ class TestContent < Minitest::Test
   def test_unknown_block_type_raises
     assert_raises(ArgumentError) { Mistri::Content.from_h({ type: "video" }) }
   end
+
+  def test_an_image_parses_from_a_data_uri
+    png = "fakepngbytes"
+    uri = "data:image/png;base64,#{[png].pack("m0")}"
+    image = Mistri::Content::Image.from_data_uri(uri)
+
+    assert_equal "image/png", image.mime_type
+    assert_equal png, image.bytes
+
+    assert_raises(ArgumentError) { Mistri::Content::Image.from_data_uri("https://x/y.png") }
+  end
 end
