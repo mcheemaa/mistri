@@ -5,6 +5,19 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [0.3.0] - 2026-07-05
+
+- Sessions heal at replay: a run killed mid-tool (deploy, crash) leaves
+  tool calls without results, which providers reject on every later turn.
+  Unsettled calls now replay with a synthesized interrupted result; calls
+  parked for human approval stay open for resume. The stored log is never
+  rewritten, and context assembly now reads the store exactly once.
+- Empty completions retry: a turn that answers with no text, thinking, or
+  tool calls (an intermittent provider behavior) now retries under the
+  standard policy instead of ending the run in silence.
+- Gemini: consecutive user turns are no longer merged. Mixing a text part
+  into a functionResponse turn makes Gemini answer an empty candidate, so
+  steers and resumed prompts stay their own turns; Gemini accepts this.
 - The spawn tool takes an optional `name`: the model labels each worker,
   and the label rides origin tags and the transcript link, so fan-out
   streams read as `pricing-scout#a41f` instead of `spawn#a41f`.

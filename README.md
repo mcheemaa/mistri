@@ -367,7 +367,7 @@ $ MISTRI_INTEGRATION_MODELS=claude-opus-4-8 bundle exec rake integration
 
 ## Roadmap
 
-`0.3.0`: strict tool schemas, provider-native MCP passthrough, and the
+Next up: strict tool schemas, provider-native MCP passthrough, and the
 hardening that falls out of the first production applications.
 
 ## Credits
