@@ -5,6 +5,12 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+- The spawn tool takes an optional `name`: the model labels each worker,
+  and the label rides origin tags and the transcript link, so fan-out
+  streams read as `pricing-scout#a41f` instead of `spawn#a41f`.
+- The spawn tool's `model` parameter names the default child model in its
+  description, so the model's choice (or non-choice) is informed.
+
 ## [0.2.1] - 2026-07-05
 
 - The gem homepage and documentation links now point at

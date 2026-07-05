@@ -50,12 +50,17 @@ class TestDelegationIntegration < Minitest::Test
     parent = Mistri::Agent.new(provider: Mistri.provider(model), tools: [spawn],
                                system: "Delegate lookups via spawn_agent; keep your " \
                                        "own context clean.")
+    origins = []
 
-    result = parent.run("Using a sub-agent, find how many employees #{company} has. " \
-                        "One sentence.")
+    result = parent.run("Using a sub-agent named headcount-scout, find how many " \
+                        "employees #{company} has. One sentence.") do |e|
+      origins << e.origin if e.origin
+    end
 
     assert_predicate result, :completed?
     assert(parent.session.entries.any? { |e| e["type"] == "subagent" }, "nothing spawned")
     assert Integration.saw?(result.text, count.to_s), "the count never flowed: #{result.text}"
+    assert(origins.any? { |o| o.start_with?("headcount-scout#") },
+           "the chosen name never reached the origin channel: #{origins.uniq}")
   end
 end

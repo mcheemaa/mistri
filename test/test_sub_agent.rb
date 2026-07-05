@@ -210,6 +210,59 @@ class TestSubAgent < Minitest::Test
     refute properties.key?("model"), "no allowlist means no model surface at all"
   end
 
+  def test_the_model_names_its_worker_across_origins_and_the_link
+    store = Mistri::Stores::Memory.new
+    spawn = Mistri::SubAgent.spawner(provider: fake({ text: "$8 a seat" }))
+    parent_fake = fake({ tool_calls: [{ name: "spawn_agent",
+                                        arguments: { "name" => "pricing-scout",
+                                                     "task" => "t",
+                                                     "instructions" => "i" } }] },
+                       { text: "done" })
+    session = Mistri::Session.new(store:)
+    events = []
+
+    Mistri::Agent.new(provider: parent_fake, tools: [spawn], session:)
+                 .run("go") { |e| events << e }
+
+    origins = events.filter_map(&:origin).uniq
+
+    assert_equal 1, origins.length
+    assert_match(/\Apricing-scout#\h{8}\z/, origins.first)
+
+    link = session.messages.select(&:tool?).last.ui
+
+    assert_equal "pricing-scout", link["agent"]
+    assert_equal "pricing-scout",
+                 session.entries.find { |e| e["type"] == "subagent" }["name"]
+  end
+
+  def test_worker_names_sanitize_for_the_origin_channel
+    calls = [{ "name" => "  Pricing # Scout > v2 ", "task" => "t", "instructions" => "i" },
+             { "task" => "t", "instructions" => "i" }]
+    calls.each_with_index do |arguments, index|
+      spawn = Mistri::SubAgent.spawner(provider: fake({ text: "ok" }))
+      parent_fake = fake({ tool_calls: [{ name: "spawn_agent", arguments: }] },
+                         { text: "done" })
+      agent = Mistri::Agent.new(provider: parent_fake, tools: [spawn])
+      origins = []
+
+      agent.run("go") { |e| origins << e.origin if e.origin }
+
+      expected = index.zero? ? "Pricing-Scout-v2" : "spawn"
+
+      assert_match(/\A#{expected}#\h{8}\z/, origins.first)
+    end
+  end
+
+  def test_the_model_surface_names_the_default_child_model
+    spawn = Mistri::SubAgent.spawner(provider: fake, models: ["claude-haiku-4-5-20251001"])
+    properties = spawn.spec[:input_schema][:properties]
+
+    assert properties.key?("name"), "the worker name surface exists"
+    assert_includes properties["model"][:description], "fake-1",
+                    "the default model is named, so the choice is informed"
+  end
+
   def test_strict_lambda_handlers_still_receive_one_argument
     handler = ->(args) { "got #{args["x"]}" }
     tool = Mistri::Tool.new(name: "t", description: "d", &handler)

@@ -18,8 +18,8 @@ module Mistri
   #   )
   #   agent = Mistri::Agent.new(provider:, tools: [researcher.tool])
   #
-  # and the open spawn tool, where the model writes the child's
-  # instructions, picks a tool subset, and may name a model:
+  # and the open spawn tool, where the model composes each worker: names
+  # it, writes its instructions, picks a tool subset, and may pick a model:
   #
   #   spawn = Mistri::SubAgent.spawner(provider:, tools: [fetch_page, search])
   #
@@ -84,9 +84,10 @@ module Mistri
 
     class << self
       # The open spawn tool over a pool of tools the host allows children to
-      # use. The model may grant a tool subset by name; models: is the
-      # host's allowlist of child model ids — without one, no model choice
-      # is offered at all, so a hallucinated id can never construct a
+      # use. The model may name the worker (a display label riding origins
+      # and the transcript link) and grant a tool subset by name; models: is
+      # the host's allowlist of child model ids — without one, no model
+      # choice is offered at all, so a hallucinated id can never construct a
       # provider or land children on an expensive model.
       def spawner(provider:, tools: [], models: [], needs_approval: false, **agent_options)
         forbid_gated!(tools)
@@ -94,10 +95,11 @@ module Mistri
           raise ConfigurationError, "the spawn tool never goes in its own pool"
         end
 
+        schema = spawner_schema(tools, models, default_model(provider))
         Tool.define("spawn_agent", SPAWNER_DESCRIPTION,
-                    needs_approval: needs_approval,
-                    schema: spawner_schema(tools, models)) do |args, context|
-          run_child(label: "spawn", provider: child_provider(provider, args["model"], models),
+                    needs_approval: needs_approval, schema: schema) do |args, context|
+          run_child(label: child_label(args["name"]),
+                    provider: child_provider(provider, args["model"], models),
                     system: args.fetch("instructions"),
                     tools: pick(tools, args["tools"]),
                     task: args.fetch("task"), context: context, **agent_options)
@@ -173,20 +175,31 @@ module Mistri
         end
       end
 
-      def spawner_schema(pool, models)
+      def spawner_schema(pool, models, default)
         tool_names = pool.map(&:name)
+        fallback = default ? " (default: #{default})" : ""
         lambda do
+          string :name, "A short name for this worker, shown wherever its events appear"
           string :task, "The child's complete task", required: true
           string :instructions, "The child's system prompt", required: true
           if tool_names.any?
             array :tools, "Subset of tools to grant (default: all)",
                   items: { type: "string", enum: tool_names }
           end
-          if models.any?
-            string :model, "Model for the child (default: the configured one)",
-                   enum: models
-          end
+          string :model, "Model for the child#{fallback}", enum: models if models.any?
         end
+      end
+
+      def default_model(provider)
+        provider.model if provider.respond_to?(:model)
+      end
+
+      # The label rides origins as "label#id" and joins nesting with ">",
+      # so those separators squeeze to hyphens along with whitespace.
+      def child_label(raw)
+        label = raw.to_s.gsub(/[#>\s]+/, "-").squeeze("-")[0, 32]
+        label = label.delete_prefix("-").delete_suffix("-")
+        label.empty? ? "spawn" : label
       end
 
       def child_provider(default, requested, models)

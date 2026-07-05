@@ -232,8 +232,9 @@ agent = Mistri.agent("claude-opus-4-8", tools: [researcher.tool])
 ```
 
 Or hand the model an open spawn tool and let it compose its own workers:
-instructions, a tool subset, and a host-allowlisted model per child.
-Several spawns in one turn fan out in parallel:
+a name for the event stream, instructions, a tool subset, and a
+host-allowlisted model per child. Several spawns in one turn fan out in
+parallel:
 
 ```ruby
 spawn = Mistri::SubAgent.spawner(provider: provider, tools: [fetch_page, search])
