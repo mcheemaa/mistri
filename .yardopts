@@ -1,0 +1,7 @@
+--markup markdown
+--main README.md
+--no-private
+lib/**/*.rb
+-
+CHANGELOG.md
+NOTICE

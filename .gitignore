@@ -5,3 +5,4 @@
 .env*.local
 Gemfile.lock
 .DS_Store
+*.gem

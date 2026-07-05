@@ -15,10 +15,6 @@ Style/StringLiteralsInInterpolation:
 Style/Documentation:
   Enabled: false
 
-# Enable at launch, once MFA is turned on for the publishing account.
-Gemspec/RequireMFA:
-  Enabled: false
-
 # Message, Event, and Usage need real class bodies: constants and nested
 # classes assigned inside a Data.define block land in the wrong scope.
 Style/DataInheritance:

@@ -5,6 +5,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [0.1.0] - 2026-07-05
+
 - Live integration harness: `rake integration` runs every feature end to
   end against real provider APIs, once per model in the matrix
   (MISTRI_INTEGRATION_MODELS overrides the default trio). Scenarios assert
