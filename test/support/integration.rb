@@ -4,9 +4,9 @@ require_relative "../test_helper"
 
 # The live integration harness: every scenario runs the full loop against
 # real provider APIs, once per model in the matrix. Every assertion checks
-# that a GENERATED codename flowed through the machinery — a coined word
-# like Velkoreth exists in no training data, so its presence in an answer
-# proves the tool result, summary, or child transcript actually carried it.
+# that a GENERATED codename flowed through the machinery — a coined ghostly
+# word like Spectramoor exists in no training data, so its presence in an
+# answer proves the tool result, summary, or child transcript carried it.
 #
 #   bundle exec rake integration
 #   MISTRI_INTEGRATION_MODELS=claude-opus-4-8 bundle exec rake integration
@@ -14,9 +14,9 @@ require_relative "../test_helper"
 module Integration
   DEFAULT_MODELS = "claude-haiku-4-5-20251001,gpt-5.2,gemini-2.5-flash"
 
-  STARTS = %w[Vel Zor Quin Mar Tev Bral Nym Kor Fen Luz Dra Sol Pim Gal Ren].freeze
+  STARTS = %w[Spec Wraith Phan Umbra Shade Geist Vesper Haunt Grim Sable Mora Ecto].freeze
   MIDDLES = %w[a o e u ora ile ar in].freeze
-  ENDS = %w[vane dor mith quist bree lark fold wyn gate moss reth dale].freeze
+  ENDS = %w[moor wyn vane gale mire veil whisp mist fell dusk holt shade].freeze
 
   module_function
 
@@ -24,8 +24,8 @@ module Integration
     ENV.fetch("MISTRI_INTEGRATION_MODELS", DEFAULT_MODELS).split(",").map(&:strip)
   end
 
-  # A single coined word no model has ever seen; only our machinery can
-  # deliver it into an answer.
+  # A single coined specter of a word no model has ever seen; only our
+  # machinery can deliver it into an answer.
   def codename
     "#{STARTS.sample}#{MIDDLES.sample}#{ENDS.sample}"
   end
