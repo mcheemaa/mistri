@@ -4,18 +4,25 @@ require "uri"
 
 module Mistri
   module MCP
-    # A Model Context Protocol client over Streamable HTTP: the initialize
-    # handshake, tools/list with pagination, and tools/call, on the same
-    # persistent transport the providers use. Responses arrive as JSON or as
-    # an SSE stream; both decode the same way.
+    # A Model Context Protocol client: the initialize handshake, tools/list
+    # with pagination, and tools/call, over one of two wires. url: speaks
+    # Streamable HTTP on the same persistent transport the providers use;
+    # command: spawns a local stdio server with credentials in its
+    # environment.
     #
-    # Auth is a headers hash or token: a string or a callable. A callable
-    # resolves per request, and a 401 retries once after re-resolving, so a
-    # host's refresh logic lives in one lambda. A session the server expires
-    # (404 with a session attached) transparently re-initializes, per spec.
+    #   Mistri::MCP::Client.new(url: "https://mcp.linear.app/mcp",
+    #                           token: -> { connection.bearer_token })
+    #   Mistri::MCP::Client.new(command: ["npx", "-y", "some-mcp-server"],
+    #                           env: { "API_KEY" => key })
+    #
+    # HTTP auth is a headers hash or token: a string or a callable. A
+    # callable resolves per request, and a 401 retries once after
+    # re-resolving, so a host's refresh logic lives in one lambda. A session
+    # the server expires (404 with a session attached) transparently
+    # re-initializes, per spec.
     #
     # One client serializes its calls; parallel tool calls against one
-    # server queue rather than interleave on the socket.
+    # server queue rather than interleave.
     class Client
       PROTOCOL_VERSION = "2025-06-18"
       SUPPORTED_VERSIONS = %w[2025-11-25 2025-06-18 2025-03-26 2024-11-05].freeze
@@ -23,25 +30,26 @@ module Mistri
 
       attr_reader :server_info
 
-      def initialize(url:, token: nil, headers: {}, client_name: "mistri",
-                     open_timeout: 15, read_timeout: 120)
-        uri = URI(url)
-        if token && uri.scheme == "http" && !LOOPBACK.include?(uri.host)
-          raise ConfigurationError,
-                "refusing to send a bearer token over plain HTTP to #{uri.host}"
+      def initialize(url: nil, command: nil, env: {}, token: nil, headers: {},
+                     client_name: "mistri", open_timeout: 15, read_timeout: 120)
+        if [url, command].compact.length != 1
+          raise ConfigurationError, "pass exactly one of url: or command:"
         end
 
-        @path = uri.path.empty? ? "/" : uri.path
-        @path = "#{@path}?#{uri.query}" if uri.query
-        @transport = Transport.new(origin: "#{uri.scheme}://#{uri.host}:#{uri.port}",
-                                   open_timeout: open_timeout, read_timeout: read_timeout)
-        @token = token
-        @headers = headers
+        if url && token && URI(url).scheme == "http" && !LOOPBACK.include?(URI(url).host)
+          raise ConfigurationError,
+                "refusing to send a bearer token over plain HTTP to #{URI(url).host}"
+        end
+
+        @wire = if url
+                  Wires::Http.new(url: url, token: token, headers: headers,
+                                  open_timeout: open_timeout, read_timeout: read_timeout)
+                else
+                  Wires::Stdio.new(command: command, env: env, read_timeout: read_timeout)
+                end
         @client_name = client_name
         @mutex = Mutex.new
         @serial = 0
-        @session_id = nil
-        @protocol_version = nil
         @connected = false
       end
 
@@ -64,7 +72,7 @@ module Mistri
       end
 
       def close
-        @transport.close
+        @wire.close
         @connected = false
         nil
       end
@@ -84,9 +92,9 @@ module Mistri
           raise Error, "server negotiated unsupported protocol version #{version.inspect}"
         end
 
-        @protocol_version = version
+        @wire.protocol_version = version
         @server_info = result["serverInfo"]
-        notify("notifications/initialized")
+        @wire.notify({ jsonrpc: "2.0", method: "notifications/initialized" })
         @connected = true
       end
 
@@ -94,15 +102,15 @@ module Mistri
         ensure_connected
         rpc(method, params)
       rescue AuthenticationError
-        raise if refreshed || !@token.respond_to?(:call)
+        raise if refreshed || !@wire.refreshable?
 
-        # The callable resolves fresh on the retry; the host refreshes there.
+        # The token callable resolves fresh on retry; hosts refresh there.
         request(method, params, reconnected: reconnected, refreshed: true)
       rescue SessionExpired
         raise Error, "the server expired the session twice in a row" if reconnected
 
         @connected = false
-        @session_id = nil
+        @wire.reset_session
         request(method, params, reconnected: true, refreshed: refreshed)
       end
 
@@ -111,7 +119,7 @@ module Mistri
         payload = { jsonrpc: "2.0", id: id, method: method, params: params }
         result = nil
         responded = false
-        meta = @transport.post_either(@path, body: payload, headers: request_headers) do |record|
+        @wire.call(payload) do |record|
           next unless record.is_a?(Hash) && record["id"] == id
 
           responded = true
@@ -119,21 +127,13 @@ module Mistri
 
           result = record["result"]
         end
-        capture_session(meta)
         raise Error, "the server sent no response to #{method}" unless responded
 
         result
       rescue ProviderError => e
-        raise SessionExpired if e.status == 404 && @session_id
+        raise SessionExpired if e.status == 404 && @wire.session?
 
         raise
-      end
-
-      def notify(method)
-        payload = { jsonrpc: "2.0", method: method }
-        discard = ->(_record) {}
-        @transport.post_either(@path, body: payload, headers: request_headers, &discard)
-        nil
       end
 
       def list_tools
@@ -146,24 +146,6 @@ module Mistri
           break unless cursor
         end
         collected
-      end
-
-      def request_headers
-        headers = { "Accept" => "application/json, text/event-stream" }
-        headers.merge!(@headers)
-        headers["Authorization"] = "Bearer #{resolve_token}" if @token
-        headers["Mcp-Session-Id"] = @session_id if @session_id
-        headers["MCP-Protocol-Version"] = @protocol_version if @protocol_version
-        headers
-      end
-
-      def resolve_token
-        @token.respond_to?(:call) ? @token.call : @token
-      end
-
-      def capture_session(meta)
-        session = meta && meta["mcp-session-id"]
-        @session_id = session if session
       end
 
       def rpc_error(error)

@@ -267,6 +267,14 @@ tools = Mistri::MCP.tools(client, prefix: "linear",
 agent = Mistri.agent("claude-opus-4-8", tools: tools)
 ```
 
+Local stdio servers spawn as child processes, credentials in their
+environment:
+
+```ruby
+local = Mistri::MCP::Client.new(command: ["npx", "-y", "some-mcp-server"],
+                                env: { "API_KEY" => key })
+```
+
 For the full connect-your-tools story in Rails, generate a connection model
 (name it whatever you like):
 

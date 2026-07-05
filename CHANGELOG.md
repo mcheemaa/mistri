@@ -5,6 +5,11 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+- MCP stdio wire: Client.new(command: [...], env: {...}) spawns a local
+  server as a child process speaking line-delimited JSON-RPC, credentials
+  in its environment per spec. Dying servers and non-protocol stdout fail
+  loudly; close terminates the child.
+
 - MCP connections out of the box: Mistri::MCP::OAuth.start/.complete/
   .refresh are storage-agnostic services implementing the spec's OAuth 2.1
   subset (challenge and well-known discovery, RFC 8414 metadata with an

@@ -91,5 +91,6 @@ module Mistri
   end
 end
 
+require_relative "mcp/wires"
 require_relative "mcp/client"
 require_relative "mcp/oauth"
