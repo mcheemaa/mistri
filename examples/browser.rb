@@ -11,14 +11,14 @@ require "mistri"
 
 browser = Mistri::MCP::Client.new(
   command: ["npx", "-y", "@playwright/mcp@latest", "--browser", "chrome", "--headless"],
-  read_timeout: 180,
+  read_timeout: 180
 )
 
 tools = Mistri::MCP.tools(browser, prefix: "web",
                                    allow: %w[browser_navigate browser_snapshot])
 
 agent = Mistri.agent("claude-opus-4-8", tools: tools,
-                     system: "Use the browser tools to answer. Be brief.")
+                                        system: "Use the browser tools to answer. Be brief.")
 
 puts agent.run("Open https://example.com and report the main heading.").text
 browser.close
