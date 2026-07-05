@@ -1,4 +1,9 @@
-<h1 align="center">مستری</h1>
+<p align="center">
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="assets/logo-dark.svg">
+    <img src="assets/logo-light.svg" alt="مستری" width="360">
+  </picture>
+</p>
 
 <p align="center"><strong>mistri</strong>, the agent harness for Ruby applications.</p>
 
