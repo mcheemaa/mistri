@@ -50,7 +50,10 @@ class TestGeminiSerializer < Minitest::Test
     assert_equal "image/png", contents.first[:parts].last[:inlineData][:mimeType]
   end
 
-  def test_a_steer_behind_tool_results_merges_into_one_user_turn
+  # Mixing a text part into a functionResponse turn makes Gemini answer an
+  # empty candidate, and it accepts consecutive user turns, so a steer stays
+  # its own turn behind the tool results.
+  def test_a_steer_behind_tool_results_stays_a_separate_user_turn
     call = Mistri::ToolCall.new(id: "c1", name: "paint", arguments: {})
     history = [Mistri::Message.user("go"),
                Mistri::Message.assistant(content: [call], provider: :gemini),
@@ -59,10 +62,9 @@ class TestGeminiSerializer < Minitest::Test
 
     contents = SERIALIZER.contents(history)
 
-    assert_equal(%w[user model user], contents.map { |turn| turn[:role] })
-    merged = contents.last[:parts]
-
-    assert(merged.any? { |part| part[:functionResponse] })
-    assert_equal "make it blue", merged.last[:text]
+    assert_equal(%w[user model user user], contents.map { |turn| turn[:role] })
+    assert(contents[2][:parts].all? { |part| part[:functionResponse] },
+           "the tool turn carries only functionResponse parts")
+    assert_equal [{ text: "make it blue" }], contents.last[:parts]
   end
 end

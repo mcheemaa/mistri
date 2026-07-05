@@ -32,6 +32,36 @@ class TestAgentRetry < Minitest::Test
            "the failed attempt never becomes a message")
   end
 
+  # Providers intermittently finish with an empty candidate: no text, no
+  # tool calls, nothing. That is never a real answer, so it retries like a
+  # transient failure instead of ending the run in silence.
+  def test_an_empty_completion_retries_and_recovers
+    provider = Mistri::Providers::Fake.new(turns: [
+                                             { text: "\n" },
+                                             { text: "a real answer" }
+                                           ])
+    agent = Mistri::Agent.new(provider:, retries: FAST)
+
+    result = agent.run("go")
+
+    assert_predicate result, :completed?
+    assert_equal "a real answer", result.text
+    assert_equal 2, provider.requests.length
+    assert(agent.session.entries.any? do |e|
+      e["type"] == "retry" && e.dig("error", "type") == "EmptyCompletion"
+    end)
+  end
+
+  def test_a_still_empty_completion_returns_after_retries_exhaust
+    provider = Mistri::Providers::Fake.new(turns: [{ text: "" }, { text: "" }, { text: "" }])
+    agent = Mistri::Agent.new(provider:, retries: FAST)
+
+    result = agent.run("go")
+
+    assert_predicate result, :completed?
+    assert_equal 3, provider.requests.length, "two retries, then the answer stands as it is"
+  end
+
   def test_a_permanent_failure_fails_fast
     provider = Mistri::Providers::Fake.new(turns: [{ error: "bad request", status: 400 }])
     agent = Mistri::Agent.new(provider:, retries: FAST)

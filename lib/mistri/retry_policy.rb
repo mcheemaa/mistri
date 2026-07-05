@@ -11,7 +11,7 @@ module Mistri
   class RetryPolicy
     RETRYABLE_STATUSES = [408, 429, 500, 502, 503, 504, 529].freeze
     RETRYABLE_TYPES = %w[ProviderError RateLimitError OverloadedError ServerError
-                         TruncatedStream].freeze
+                         TruncatedStream EmptyCompletion].freeze
 
     attr_reader :attempts, :base, :max_delay
 

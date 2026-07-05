@@ -50,6 +50,12 @@ module Mistri
 
     attr_reader :session
 
+    # What retries see when a completion answers nothing at all.
+    EMPTY_COMPLETION_ERROR = {
+      "type" => "EmptyCompletion",
+      "message" => "the provider returned an empty completion"
+    }.freeze
+
     # Run one exchange: append the user turn, then loop until the model
     # answers without tools, a gated tool suspends the run, the run aborts,
     # or a budget stops it.
@@ -212,9 +218,10 @@ module Mistri
                                    tools: @tools.map(&:spec), signal: signal,
                                    output_schema: output_schema, &emit)
         attempt += 1
-        if retry_turn?(message, attempt, signal)
-          pause = @retries.delay(attempt, message.error&.dig("retry_after"))
-          record_retry(message, attempt, pause, &emit)
+        error = turn_error(message)
+        if retry_turn?(error, attempt, signal)
+          pause = @retries.delay(attempt, error["retry_after"])
+          record_retry(message, error, attempt, pause, &emit)
           wait(pause, signal)
           next unless signal&.aborted?
         end
@@ -223,15 +230,29 @@ module Mistri
       end
     end
 
-    def retry_turn?(message, attempt, signal)
-      return false unless @retries && message.stop_reason == StopReason::ERROR
-      return false if signal&.aborted?
+    # The provider's own error when the turn failed, or a synthesized one
+    # for a completion that answers nothing: providers intermittently stop
+    # with an empty candidate, and a retry usually clears it.
+    def turn_error(message)
+      return message.error if message.stop_reason == StopReason::ERROR
 
-      @retries.retry?(message.error, attempt)
+      EMPTY_COMPLETION_ERROR if empty_completion?(message)
     end
 
-    def record_retry(message, attempt, pause, &emit)
-      @session.append("retry", "attempt" => attempt, "error" => message.error,
+    def empty_completion?(message)
+      message.stop_reason == StopReason::STOP &&
+        message.content.all? { |block| block.is_a?(Content::Text) && block.text.to_s.strip.empty? }
+    end
+
+    def retry_turn?(error, attempt, signal)
+      return false unless @retries && error
+      return false if signal&.aborted?
+
+      @retries.retry?(error, attempt)
+    end
+
+    def record_retry(message, error, attempt, pause, &emit)
+      @session.append("retry", "attempt" => attempt, "error" => error,
                                "delay" => pause.round(2))
       note = format("attempt %<attempt>d failed; retrying in %<pause>.1fs",
                     attempt: attempt, pause: pause)

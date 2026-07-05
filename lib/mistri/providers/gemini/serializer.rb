@@ -10,25 +10,16 @@ module Mistri
       # thought signatures echo back verbatim on the exact part they arrived
       # with, but only for messages this provider produced; a foreign
       # signature would be rejected. Thinking summaries are output-only and
-      # never replay.
+      # never replay. Consecutive user turns stay separate: Gemini accepts
+      # them, and mixing a text part into a functionResponse turn makes it
+      # answer an empty candidate.
       module Serializer
         module_function
 
         def contents(history)
           groups = history.reject(&:system?).chunk_while { |a, b| a.tool? && b.tool? }
-          turns = groups.filter_map do |group|
+          groups.filter_map do |group|
             group.first.tool? ? tool_turn(group) : turn(group.first)
-          end
-          merge_user_runs(turns)
-        end
-
-        # A steered run puts a user message right behind tool results, and
-        # both serialize as user turns. Gemini expects turns to alternate, so
-        # consecutive user turns merge into one.
-        def merge_user_runs(turns)
-          turns.chunk_while { |a, b| a[:role] == "user" && b[:role] == "user" }
-               .map do |run|
-            run.length == 1 ? run.first : { role: "user", parts: run.flat_map { |t| t[:parts] } }
           end
         end
 
