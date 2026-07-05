@@ -12,14 +12,14 @@ Gem::Specification.new do |spec|
                      "fire-and-forget human approval, steering, compaction, structured " \
                      "output, skills, and sub-agents, across Anthropic, OpenAI, and " \
                      "Gemini, with zero runtime dependencies."
-  spec.homepage = "https://github.com/mcheemaa/mistri"
+  spec.homepage = "https://mistri.sh"
   spec.license = "MIT"
   spec.required_ruby_version = ">= 3.2"
 
   spec.metadata["source_code_uri"] = "https://github.com/mcheemaa/mistri"
   spec.metadata["changelog_uri"] = "https://github.com/mcheemaa/mistri/blob/main/CHANGELOG.md"
   spec.metadata["rubygems_mfa_required"] = "true"
-  spec.metadata["documentation_uri"] = "https://rubydoc.info/gems/mistri"
+  spec.metadata["documentation_uri"] = "https://mistri.sh/docs/getting-started/"
   spec.metadata["bug_tracker_uri"] = "https://github.com/mcheemaa/mistri/issues"
 
   # The .tt generator templates must ship, or rails g mistri:install breaks.
