@@ -4,8 +4,8 @@ require_relative "../test_helper"
 
 # The live integration harness: every scenario runs the full loop against
 # real provider APIs, once per model in the matrix. Every assertion checks
-# that a GENERATED codename flowed through the machinery — a name like
-# AMBER-KESTREL-42 exists in no training data, so its presence in an answer
+# that a GENERATED codename flowed through the machinery — a coined word
+# like Velkoreth exists in no training data, so its presence in an answer
 # proves the tool result, summary, or child transcript actually carried it.
 #
 #   bundle exec rake integration
@@ -14,10 +14,9 @@ require_relative "../test_helper"
 module Integration
   DEFAULT_MODELS = "claude-haiku-4-5-20251001,gpt-5.2,gemini-2.5-flash"
 
-  ADJECTIVES = %w[AMBER VELVET CRIMSON COBALT IVORY ONYX SAFFRON INDIGO PEARL GILDED
-                  MISTY SOLAR LUNAR CORAL JADE SCARLET ASHEN GOLDEN SILVER RUSTIC].freeze
-  BIRDS = %w[KESTREL OSPREY HERON FALCON PELICAN SPARROW MAGPIE PLOVER CONDOR SWIFT
-             CRANE EGRET PUFFIN PETREL AVOCET BITTERN CURLEW DUNLIN GANNET LAPWING].freeze
+  STARTS = %w[Vel Zor Quin Mar Tev Bral Nym Kor Fen Luz Dra Sol Pim Gal Ren].freeze
+  MIDDLES = %w[a o e u ora ile ar in].freeze
+  ENDS = %w[vane dor mith quist bree lark fold wyn gate moss reth dale].freeze
 
   module_function
 
@@ -25,9 +24,10 @@ module Integration
     ENV.fetch("MISTRI_INTEGRATION_MODELS", DEFAULT_MODELS).split(",").map(&:strip)
   end
 
-  # A name no model has ever seen; only our machinery can deliver it.
+  # A single coined word no model has ever seen; only our machinery can
+  # deliver it into an answer.
   def codename
-    "#{ADJECTIVES.sample}-#{BIRDS.sample}-#{rand(10..99)}"
+    "#{STARTS.sample}#{MIDDLES.sample}#{ENDS.sample}"
   end
 
   def saw?(text, code)
