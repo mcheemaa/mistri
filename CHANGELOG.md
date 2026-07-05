@@ -5,6 +5,16 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [0.4.0] - 2026-07-05
+
+- Mistri::Definition: agents as frontmatter markdown files. Config in
+  YAML, prompt in the body, {placeholders} filled at build time and
+  unfilled ones raise. Tool names and extra keys stay the host's
+  vocabulary.
+- Agent context: Mistri.agent(context: anything) rides the run and reaches
+  every tool handler and hook as context.app, untouched.
+- Content::Image.from_data_uri accepts base64 data: URIs directly.
+
 - OpenAI reasoning summaries keep their paragraph structure: a reasoning
   item's summary parts join with a blank line, and the boundary streams as
   a thinking delta, so live views match the finished text.

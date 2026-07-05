@@ -12,7 +12,7 @@
 <p align="center">
   <a href="https://rubygems.org/gems/mistri"><img alt="Gem Version" src="https://img.shields.io/gem/v/mistri"></a>
   <a href="https://github.com/mcheemaa/mistri/actions/workflows/ci.yml"><img alt="CI" src="https://github.com/mcheemaa/mistri/actions/workflows/ci.yml/badge.svg"></a>
-  <a href="https://codecov.io/gh/mcheemaa/mistri"><img alt="Coverage" src="https://codecov.io/gh/mcheemaa/mistri/graph/badge.svg"></a>
+  <a href="https://codecov.io/gh/mcheemaa/mistri"><img alt="Coverage" src="https://img.shields.io/codecov/c/github/mcheemaa/mistri"></a>
   <a href="mistri.gemspec"><img alt="Ruby >= 3.2" src="https://img.shields.io/badge/ruby-%3E%3D%203.2-CC342D"></a>
   <a href="Gemfile"><img alt="Runtime dependencies: zero" src="https://img.shields.io/badge/runtime_deps-0-brightgreen"></a>
   <a href="LICENSE"><img alt="License: MIT" src="https://img.shields.io/badge/license-MIT-blue.svg"></a>
@@ -102,6 +102,20 @@ Mistri::Tool.define("edit_page", "Applies a page edit.") do |args|
 end
 ```
 
+Handlers and hooks can take the run's context as a second argument, and
+`context.app` carries whatever object you pass as `Mistri.agent(context:)`
+— the acting user, a tenant, a request — so tools stay authorization-aware
+without closure gymnastics:
+
+```ruby
+agent = Mistri.agent("claude-opus-4-8", tools: tools,
+                     context: { traveler: current_traveler })
+
+Mistri::Tool.define("book_hotel", "Books the chosen hotel.") do |args, context|
+  Bookings.create!(args, traveler: context.app[:traveler])
+end
+```
+
 ## Human approval
 
 Mark a tool `needs_approval: true` (or a predicate on its arguments) and the
@@ -110,12 +124,12 @@ The decision is a one-line session write from any process, any time later;
 `resume` settles it and carries on.
 
 ```ruby
-send_gift = Mistri::Tool.define("send_gift", "Sends a real gift.",
-                                needs_approval: ->(args) { args["amount"].to_i > 100 }) do |args|
-  Gifts.send!(args)
+book_hotel = Mistri::Tool.define("book_hotel", "Books the chosen hotel.",
+                                 needs_approval: ->(args) { args["total_usd"].to_i > 500 }) do |args|
+  Bookings.create!(args)
 end
 
-result = agent.run("Send Ana a $200 gift")
+result = agent.run("Book the corner suite for the Lisbon trip")
 result.awaiting_approval?   # => true; nothing executed
 
 # Days later, in a controller:
@@ -214,6 +228,20 @@ agent = Mistri.agent("claude-opus-4-8", skills: "app/skills")   # or an array of
 A skill is a `SKILL.md` (or flat `.md`) with `name:`/`description:`
 frontmatter, or built from database rows with
 `Mistri::Skill.new(name:, description:, body:)`.
+
+## Definitions
+
+An agent as a markdown file: YAML frontmatter for config, the body as the
+prompt, `{placeholders}` filled at build time (unfilled ones raise). Tool
+names and any extra keys stay your vocabulary; the gem only reads the
+file.
+
+```ruby
+definition = Mistri::Definition.load("app/agents/trip_planner.md")
+agent = Mistri.agent(definition.model,
+                     system: definition.render(first_name: traveler.first_name),
+                     tools: registry.build(definition.tools, traveler))
+```
 
 ## Sub-agents
 
@@ -345,6 +373,7 @@ policy = Mistri::RetryPolicy.new(attempts: 3)
 
 ```ruby
 photo = Mistri::Content::Image.from_bytes(File.binread("chart.png"), mime_type: "image/png")
+photo = Mistri::Content::Image.from_data_uri(params[:image])   # canvases and uploads
 agent.run("What trend does this chart show?", images: [photo])
 
 Mistri.agent("gpt-5.5", provider_options: { reasoning: { effort: "high" } })
