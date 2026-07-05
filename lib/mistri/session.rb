@@ -40,16 +40,25 @@ module Mistri
     # The conversation as the model replays it.
     def messages = replay.map(&:first)
 
+    # What a run killed mid-tool answers in place of the result it never got.
+    INTERRUPTED_RESULT = "[interrupted: the run stopped before this tool returned]"
+
     # Replay messages paired with the entry index each came from, starting at
     # the latest compaction boundary. The synthetic summary message carries a
     # nil index. Compaction places its cuts by these indexes; the full entry
-    # log stays in the store for transcript views.
+    # log stays in the store for transcript views. One store read builds the
+    # whole context, healed: a crash that left tool calls unanswered would
+    # brick every later turn with a provider rejection, so unsettled calls
+    # get a synthesized interrupted result. Calls parked for human approval
+    # stay open; resume owns those.
     def replay
-      compaction = last_compaction
+      log = entries
+      compaction = log.reverse_each.find { |entry| entry["type"] == "compaction" }
       from = compaction ? compaction["kept_from"] : 0
-      pairs = entries.each_with_index.filter_map do |entry, index|
+      pairs = log.each_with_index.filter_map do |entry, index|
         [Message.from_h(entry["message"]), index] if index >= from && entry["type"] == "message"
       end
+      pairs = heal(pairs, parked_call_ids(log))
       compaction ? [[summary_message(compaction["summary"]), nil], *pairs] : pairs
     end
 
@@ -101,6 +110,28 @@ module Mistri
     end
 
     private
+
+    def heal(pairs, parked)
+      answered = pairs.map(&:first).select(&:tool?).to_set(&:tool_call_id)
+      pairs.flat_map do |message, index|
+        dangling = if message.assistant?
+                     message.tool_calls.reject do |call|
+                       answered.include?(call.id) || parked.include?(call.id)
+                     end
+                   else
+                     []
+                   end
+        [[message, index]] + dangling.map do |call|
+          [Message.tool(content: INTERRUPTED_RESULT, tool_call_id: call.id,
+                        tool_name: call.name), nil]
+        end
+      end
+    end
+
+    def parked_call_ids(log)
+      log.filter_map { |entry| entry.dig("call", "id") if entry["type"] == "approval_request" }
+         .to_set
+    end
 
     def summary_message(summary)
       Message.user("#{Compaction::SUMMARY_PREFACE}\n\n#{summary}")

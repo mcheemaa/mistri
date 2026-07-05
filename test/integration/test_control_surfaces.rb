@@ -57,4 +57,28 @@ class TestControlSurfacesIntegration < Minitest::Test
     assert_predicate result, :completed?
     assert Integration.saw?(result.text, keyword), "the steer never reached the model"
   end
+
+  # A crash between the assistant turn and its tool results leaves calls
+  # unanswered, which providers reject on every later turn. Healing must
+  # make the resumed context acceptable to the real API.
+  Integration.scenario(self, :a_crashed_run_resumes_healed) do |model|
+    venue = Integration.codename
+    store = Mistri::Stores::Memory.new
+    session = Mistri::Session.new(store:)
+    calls = [Mistri::ToolCall.new(id: "call_1", name: "book_venue",
+                                  arguments: { "city" => "Lisbon" })]
+    session.append_message(Mistri::Message.user("Book us a venue, then confirm."))
+    session.append_message(Mistri::Message.assistant(tool_calls: calls))
+
+    booked = Mistri::Tool.define("book_venue", "Books the venue.",
+                                 schema: -> { string :city, "City" }) { "Booked #{venue}." }
+    agent = Mistri::Agent.new(provider: Mistri.provider(model), tools: [booked], session:)
+
+    result = agent.run("Run book_venue for Lisbon again now, then repeat " \
+                       "the venue name it returns back to me.")
+
+    assert_predicate result, :completed?
+    assert Integration.saw?(result.text, venue),
+           "the healed session never recovered: #{result.text}"
+  end
 end
