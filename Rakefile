@@ -1,5 +1,6 @@
 # frozen_string_literal: true
 
+require "bundler/gem_tasks"
 require "minitest/test_task"
 
 # The default suite stays hermetic and fast; the integration harness runs
