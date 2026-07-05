@@ -268,11 +268,14 @@ agent = Mistri.agent("claude-opus-4-8", tools: tools)
 ```
 
 Local stdio servers spawn as child processes, credentials in their
-environment:
+environment. That is also the whole "give the agent a browser" story:
 
 ```ruby
-local = Mistri::MCP::Client.new(command: ["npx", "-y", "some-mcp-server"],
-                                env: { "API_KEY" => key })
+browser = Mistri::MCP::Client.new(
+  command: ["npx", "-y", "@playwright/mcp@latest", "--browser", "chrome", "--headless"],
+)
+agent = Mistri.agent("claude-opus-4-8",
+                     tools: Mistri::MCP.tools(browser, allow: %w[browser_navigate browser_snapshot]))
 ```
 
 For the full connect-your-tools story in Rails, generate a connection model
