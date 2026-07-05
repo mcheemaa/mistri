@@ -68,4 +68,37 @@ class TestTool < Minitest::Test
 
     assert tool.spec[:eager_input_streaming]
   end
+
+  def test_a_timeout_answers_in_band_instead_of_stalling_the_run
+    slow = Mistri::Tool.define("slow", "Sleeps.", timeout: 0.1) do
+      sleep 1
+      "never"
+    end
+    provider = Mistri::Providers::Fake.new(turns: [
+                                             { tool_calls: [{ name: "slow", arguments: {} }] },
+                                             { text: "moving on" }
+                                           ])
+    agent = Mistri::Agent.new(provider:, tools: [slow])
+
+    result = agent.run("go")
+
+    assert_predicate result, :completed?
+    assert_match(/timed out after 0.1s/, agent.session.messages.select(&:tool?).last.text)
+  end
+
+  def test_tool_results_carry_their_duration
+    quick = Mistri::Tool.define("quick", "Q.") { "ok" }
+    provider = Mistri::Providers::Fake.new(turns: [
+                                             { tool_calls: [{ name: "quick", arguments: {} }] },
+                                             { text: "done" }
+                                           ])
+    durations = []
+    Mistri::Agent.new(provider:, tools: [quick]).run("go") do |event|
+      durations << event.duration if event.type == :tool_result
+    end
+
+    assert_equal 1, durations.length
+    assert_operator durations.first, :>=, 0.0
+    assert_kind_of Float, durations.first
+  end
 end

@@ -5,6 +5,11 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+- Per-tool timeouts: Tool.define(..., timeout: 30) answers in band when a
+  handler stalls, so one hung tool cannot stall the run.
+- :tool_result events carry duration (seconds) for executed tools, feeding
+  latency metrics straight from any sink.
+
 - Mistri::Reminder.every(3, text): a periodic tail reminder for long runs,
   riding transform_context; due by completed assistant turns, fresh on the
   wire each time, never persisted.

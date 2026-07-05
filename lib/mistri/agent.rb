@@ -283,9 +283,9 @@ module Mistri
                                                          max_concurrency: @max_concurrency,
                                                          session: @session, emit: emit)
       context = hook_context(signal, emit)
-      results.each do |call, result|
+      results.each do |call, result, seconds|
         result = rewrite(call, result, context) if @after_tool
-        answer(call, result, &emit)
+        answer(call, result, duration: seconds, &emit)
       end
     end
 
@@ -321,12 +321,13 @@ module Mistri
 
     # The tool message carries both channels; the :tool_result event exposes
     # it whole so hosts read event.message.ui for their side of the result.
-    def answer(call, result, &emit)
+    def answer(call, result, duration: nil, &emit)
       content, ui = result.is_a?(ToolResult) ? [result.content, result.ui] : [result, nil]
       message = @session.append_message(Message.tool(content: content, tool_call_id: call.id,
                                                      tool_name: call.name, ui: ui))
       text = content.is_a?(String) ? content : "[content]"
-      emit&.call(Event.new(type: :tool_result, tool_call: call, content: text, message: message))
+      emit&.call(Event.new(type: :tool_result, tool_call: call, content: text,
+                           message: message, duration: duration))
     end
 
     def gated?(call)

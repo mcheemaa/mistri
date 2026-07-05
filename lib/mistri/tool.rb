@@ -13,7 +13,7 @@ module Mistri
     # bare empty hash.
     EMPTY_SCHEMA = { type: "object", properties: {} }.freeze
 
-    attr_reader :name, :description, :input_schema
+    attr_reader :name, :description, :input_schema, :timeout
 
     # Define a tool. Give the argument shape as a raw JSON Schema hash via
     # input_schema:, or build it in Ruby with a schema: block.
@@ -28,7 +28,7 @@ module Mistri
     end
 
     def initialize(name:, description:, input_schema: EMPTY_SCHEMA, eager_input_streaming: false,
-                   needs_approval: false, &handler)
+                   needs_approval: false, timeout: nil, &handler)
       raise ArgumentError, "tool #{name.inspect} needs a handler block" unless handler
 
       @name = name.to_s
@@ -36,6 +36,7 @@ module Mistri
       @input_schema = input_schema
       @eager_input_streaming = eager_input_streaming
       @needs_approval = needs_approval
+      @timeout = timeout
       @handler = handler
     end
 

@@ -1,5 +1,7 @@
 # frozen_string_literal: true
 
+require "timeout"
+
 module Mistri
   # Runs a turn's tool calls and returns their results in the order the model
   # emitted them, regardless of completion order. Independent calls run
@@ -23,7 +25,10 @@ module Mistri
       calls.each_with_index { |call, index| queue << [call, index] }
       workers = max_concurrency.clamp(1, calls.length)
       Array.new(workers) { worker(queue, results, tools_by_name, context) }.each(&:join)
-      calls.zip(results).map { |call, result| [call, result || INTERRUPTED] }
+      calls.zip(results).map do |call, entry|
+        value, seconds = entry || [INTERRUPTED, nil]
+        [call, value, seconds]
+      end
     end
 
     def worker(queue, results, tools_by_name, context)
@@ -34,8 +39,14 @@ module Mistri
           rescue ThreadError
             break
           end
-          interrupted = context.signal&.aborted?
-          results[index] = interrupted ? INTERRUPTED : run_one(call, tools_by_name, context)
+          if context.signal&.aborted?
+            results[index] = [INTERRUPTED, nil]
+            next
+          end
+
+          started = Process.clock_gettime(Process::CLOCK_MONOTONIC)
+          value = run_one(call, tools_by_name, context)
+          results[index] = [value, Process.clock_gettime(Process::CLOCK_MONOTONIC) - started]
         end
       end
     end
@@ -44,9 +55,19 @@ module Mistri
       tool = tools_by_name[call.name]
       return "Error: unknown tool #{call.name.inspect}" unless tool
 
-      with_rails_executor { tool.call(call.arguments, context) }
+      with_rails_executor { invoke(tool, call, context) }
     rescue StandardError => e
       "Error running tool #{call.name.inspect}: #{e.class}: #{e.message}"
+    end
+
+    # A tool with a timeout answers in band when it stalls, so one hung
+    # handler cannot stall the whole run.
+    def invoke(tool, call, context)
+      return tool.call(call.arguments, context) unless tool.timeout
+
+      Timeout.timeout(tool.timeout) { tool.call(call.arguments, context) }
+    rescue Timeout::Error
+      "Error running tool #{call.name.inspect}: timed out after #{tool.timeout}s"
     end
 
     # Concurrent tools share the caller's sink; sinks are not required to be
