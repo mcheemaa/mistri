@@ -5,6 +5,13 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [0.2.1] - 2026-07-05
+
+- The gem homepage and documentation links now point at
+  [mistri.sh](https://mistri.sh), the project site with full docs at
+  [mistri.sh/docs](https://mistri.sh/docs/getting-started/).
+- README polish: wordmark, testing section.
+
 ## [0.2.0] - 2026-07-05
 
 - Repository hygiene: coverage floor enforced in CI (simplecov, 90% line),
