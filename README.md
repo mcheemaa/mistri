@@ -304,6 +304,12 @@ tools = Mistri::MCP.tools(client, prefix: "linear",
 agent = Mistri.agent("claude-opus-4-8", tools: tools)
 ```
 
+The bridge lists the server's tools once, at build time; `client.tools(refresh: true)`
+re-lists when a host wants a changed toolset. `prefix:` namespaces local
+names (`linear__create_issue`) because duplicate tool names raise at
+`Agent.new`: collisions fail loud instead of one server's tool silently
+shadowing another's.
+
 Local stdio servers spawn as child processes, credentials in their
 environment. That is also the whole "give the agent a browser" story:
 
@@ -367,6 +373,23 @@ budget = Mistri::Budget.new(turns: 20, cost_usd: 2.00)
 # Transient failures (429, 5xx, timeouts) retry with backoff, invisibly to
 # the model. On by default; retries: false disables.
 policy = Mistri::RetryPolicy.new(attempts: 3)
+```
+
+Retries are invisible to the model but not to your UI: each backoff emits a
+`:retry` event carrying `attempt`, `max_attempts`, and `delay`, so a sink can
+show a live "reconnecting" state instead of a silent spinner. Terminal events
+are loop-owned: `:done` and `:error` reach the subscriber only for the
+accepted attempt, so a recovered retry never flashes an error it then walks
+back.
+
+```ruby
+agent.run("Plan the itinerary.") do |event|
+  case event.type
+  when :text_delta then stream(event.delta)
+  when :retry then banner("Retrying (#{event.attempt}/#{event.max_attempts}) in #{event.delay}s")
+  when :done, :error then clear_banner
+  end
+end
 ```
 
 ## Images and provider options

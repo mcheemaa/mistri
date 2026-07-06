@@ -5,6 +5,26 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [0.4.1] - 2026-07-06
+
+- Terminal events are loop-owned: each attempt's :done or :error is held at
+  a gate and only the accepted attempt's terminal reaches the subscriber. A
+  transient failure that retries and recovers no longer shows the host an
+  error it then walks back, and repeated empty completions no longer emit a
+  :done per attempt.
+- The :retry event carries structure: attempt, max_attempts, and delay ride
+  the event (and its wire form), so a sink can render "Retrying (2/3) in
+  1.3s" without parsing prose. The prose note stays as content. The event
+  no longer carries a stop reason, because a retry is not a stop.
+- RetryPolicy owns attempt classification: error_for(message) returns the
+  provider's error or a synthesized EmptyCompletion for a blank answer.
+  RetryPolicy::EMPTY_COMPLETION replaces the agent-internal constant.
+- The MCP client advertises protocol 2025-11-25, the current spec revision
+  it already negotiated.
+- README: the :retry event and the terminal-events invariant are documented
+  in the reliability section; the MCP section documents eager listing,
+  refresh:, and the duplicate-name raise at Agent.new.
+
 ## [0.4.0] - 2026-07-05
 
 - Mistri::Definition: agents as frontmatter markdown files. Config in
