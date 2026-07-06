@@ -52,12 +52,6 @@ module Mistri
 
     attr_reader :session
 
-    # What retries see when a completion answers nothing at all.
-    EMPTY_COMPLETION_ERROR = {
-      "type" => "EmptyCompletion",
-      "message" => "the provider returned an empty completion"
-    }.freeze
-
     # Run one exchange: append the user turn, then loop until the model
     # answers without tools, a gated tool suspends the run, the run aborts,
     # or a budget stops it.
@@ -66,10 +60,12 @@ module Mistri
     # on top; run alone does not validate.
     def run(input, images: [], signal: nil, output_schema: nil, &emit)
       if @session.open_approvals.any?
-        raise ConfigurationError, "session is awaiting approval decisions; call resume"
+        raise ConfigurationError,
+              "session is awaiting approvals; call resume"
       end
       if input.to_s.empty? && Array(images).empty?
-        raise ArgumentError, "run needs input text or images"
+        raise ArgumentError,
+              "run needs input text or images"
       end
 
       fold_steers # steers queued while idle arrived first; keep that order
@@ -208,42 +204,33 @@ module Mistri
     # the request.
     #
     # A transient failure retries the same request with backoff; the failed
-    # attempt is recorded as a retry entry, never as a message, so retries
-    # stay invisible to the model. Only the final outcome persists.
+    # attempt records as a retry entry, never as a message, and its terminal
+    # (:done or :error) holds at a gate, so retries stay invisible to the
+    # model and a recovered retry never shows the subscriber an error it
+    # walks back. Only the accepted attempt persists and terminates.
     def run_turn(signal, output_schema = nil, &emit)
       history = @transform_context.reduce(@session.messages) do |messages, transform|
         transform.call(messages)
       end
       attempt = 0
       loop do
+        held = nil
+        gate = emit && ->(event) { event.terminal? ? held = event : emit.call(event) }
         message = @provider.stream(messages: history, system: @system,
                                    tools: @tools.map(&:spec), signal: signal,
-                                   output_schema: output_schema, &emit)
+                                   output_schema: output_schema, &gate)
         attempt += 1
-        error = turn_error(message)
+        error = @retries&.error_for(message)
         if retry_turn?(error, attempt, signal)
           pause = @retries.delay(attempt, error["retry_after"])
           record_retry(message, error, attempt, pause, &emit)
           wait(pause, signal)
           next unless signal&.aborted?
         end
+        emit&.call(held) if held
         @session.append_message(message)
         return message
       end
-    end
-
-    # The provider's own error when the turn failed, or a synthesized one
-    # for a completion that answers nothing: providers intermittently stop
-    # with an empty candidate, and a retry usually clears it.
-    def turn_error(message)
-      return message.error if message.stop_reason == StopReason::ERROR
-
-      EMPTY_COMPLETION_ERROR if empty_completion?(message)
-    end
-
-    def empty_completion?(message)
-      message.stop_reason == StopReason::STOP &&
-        message.content.all? { |block| block.is_a?(Content::Text) && block.text.to_s.strip.empty? }
     end
 
     def retry_turn?(error, attempt, signal)
@@ -258,7 +245,8 @@ module Mistri
                                "delay" => pause.round(2))
       note = format("attempt %<attempt>d failed; retrying in %<pause>.1fs",
                     attempt: attempt, pause: pause)
-      emit&.call(Event.new(type: :retry, content: note, reason: StopReason::ERROR,
+      emit&.call(Event.new(type: :retry, content: note, attempt: attempt,
+                           max_attempts: @retries.attempts, delay: pause.round(2),
                            message: message))
     end
 

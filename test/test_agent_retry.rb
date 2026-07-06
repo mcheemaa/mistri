@@ -24,6 +24,13 @@ class TestAgentRetry < Minitest::Test
     retry_event = events.find { |e| e.type == :retry }
 
     assert_match(/retrying/, retry_event.content)
+    assert_equal 1, retry_event.attempt
+    assert_equal 2, retry_event.max_attempts
+    assert_kind_of Float, retry_event.delay
+    assert_nil retry_event.reason, "a retry is not a stop"
+    refute(events.any? { |e| e.type == :error },
+           "the recovered attempt's terminal never reaches the subscriber")
+    assert_equal(1, events.count { |e| e.type == :done })
 
     entries = agent.session.entries
 
@@ -55,11 +62,13 @@ class TestAgentRetry < Minitest::Test
   def test_a_still_empty_completion_returns_after_retries_exhaust
     provider = Mistri::Providers::Fake.new(turns: [{ text: "" }, { text: "" }, { text: "" }])
     agent = Mistri::Agent.new(provider:, retries: FAST)
+    events = []
 
-    result = agent.run("go")
+    result = agent.run("go") { |event| events << event }
 
     assert_predicate result, :completed?
     assert_equal 3, provider.requests.length, "two retries, then the answer stands as it is"
+    assert_equal 1, events.count(&:terminal?), "only the accepted attempt's :done surfaces"
   end
 
   def test_a_permanent_failure_fails_fast
@@ -88,13 +97,17 @@ class TestAgentRetry < Minitest::Test
     provider = Mistri::Providers::Fake.new(turns:)
     agent = Mistri::Agent.new(provider:, retries: FAST)
 
-    result = agent.run("go")
+    events = []
+    result = agent.run("go") { |event| events << event }
 
     assert_predicate result, :errored?
     assert_equal 3, provider.requests.length, "attempts 2 means three requests"
     assert_equal 529, agent.session.messages.last.error["status"],
                  "the machine-readable failure persists with the message"
     assert_equal(2, agent.session.entries.count { |e| e["type"] == "retry" })
+    assert_equal 1, events.count { |e| e.type == :error },
+                 "exhaustion surfaces exactly one terminal error"
+    assert_equal [1, 2], events.select { |e| e.type == :retry }.map(&:attempt)
   end
 
   def test_retries_false_disables_the_policy

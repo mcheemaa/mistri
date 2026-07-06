@@ -15,11 +15,14 @@ module Mistri
   # events; nil where nothing ran (denials, interruptions).
   class Event < Data.define(:type, :content_index, :delta, :content, :tool_call,
                             :reason, :message, :error_message, :partial, :origin,
-                            :duration)
+                            :duration, :attempt, :max_attempts, :delay)
     # The stream types come from a provider mid-turn; the loop adds
     # :tool_result after it runs each tool, :approval_needed when a gated
-    # call parks for a human, and :compacting/:compaction around a context
-    # compaction, so one subscription sees the whole exchange.
+    # call parks for a human, :compacting/:compaction around a context
+    # compaction, and :retry (with attempt, max_attempts, delay) before it
+    # waits out a transient failure, so one subscription sees the whole
+    # exchange. :done and :error are loop-owned and terminal: only the
+    # accepted attempt's terminal event reaches the subscriber.
     TYPES = %i[
       start
       text_start text_delta text_end
@@ -33,7 +36,7 @@ module Mistri
 
     def initialize(type:, content_index: nil, delta: nil, content: nil, tool_call: nil,
                    reason: nil, message: nil, error_message: nil, partial: nil, origin: nil,
-                   duration: nil)
+                   duration: nil, attempt: nil, max_attempts: nil, delay: nil)
       raise ArgumentError, "unknown event type #{type.inspect}" unless TYPES.include?(type)
 
       super
@@ -48,7 +51,8 @@ module Mistri
     # Partials are ephemeral streaming state and stay out of serialization.
     def to_h
       { type:, content_index:, delta:, content:, tool_call: tool_call&.to_h,
-        reason:, message: message&.to_h, error_message:, origin:, duration: }.compact
+        reason:, message: message&.to_h, error_message:, origin:, duration:,
+        attempt:, max_attempts:, delay: }.compact
     end
   end
 end

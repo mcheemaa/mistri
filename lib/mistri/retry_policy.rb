@@ -21,8 +21,23 @@ module Mistri
       @max_delay = max_delay
     end
 
+    # What retries see when a completion answers nothing at all.
+    EMPTY_COMPLETION = {
+      "type" => "EmptyCompletion",
+      "message" => "the provider returned an empty completion"
+    }.freeze
+
     def retry?(error, attempt)
       attempt <= attempts && retryable?(error)
+    end
+
+    # The error a finished attempt carries: the provider's own error, or a
+    # synthesized one for a completion that answers nothing at all, which a
+    # retry usually clears.
+    def error_for(message)
+      return message.error if message.stop_reason == StopReason::ERROR
+
+      EMPTY_COMPLETION if empty?(message)
     end
 
     # error is the ErrorData hash from an errored message. A status decides
@@ -42,6 +57,13 @@ module Mistri
 
       exponential = base * (2**(attempt - 1))
       (exponential * rand(0.5..1.0)).clamp(0.0, max_delay)
+    end
+
+    private
+
+    def empty?(message)
+      message.stop_reason == StopReason::STOP &&
+        message.content.all? { |block| block.is_a?(Content::Text) && block.text.to_s.strip.empty? }
     end
   end
 end
