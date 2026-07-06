@@ -18,7 +18,7 @@ class TestMcpStdio < Minitest::Test
       result =
         case message["method"]
         when "initialize"
-          { "protocolVersion" => "2025-06-18", "capabilities" => {},
+          { "protocolVersion" => "2025-11-25", "capabilities" => {},
             "serverInfo" => { "name" => "stdio-stub", "version" => "1" } }
         when "tools/list"
           { "tools" => [{ "name" => "echo", "description" => "Echoes.",

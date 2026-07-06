@@ -30,7 +30,7 @@ class TestMcpClient < Minitest::Test
 
       init = server.bodies.first["params"]
 
-      assert_equal "2025-06-18", init["protocolVersion"]
+      assert_equal "2025-11-25", init["protocolVersion"]
       assert_equal "mistri", init.dig("clientInfo", "name")
 
       client.call_tool("echo", { "text" => "hi" })
@@ -38,7 +38,7 @@ class TestMcpClient < Minitest::Test
       last = server.requests.last[:headers]
 
       assert_equal "sess-1", last["mcp-session-id"], "the session rides every request"
-      assert_equal "2025-06-18", last["mcp-protocol-version"]
+      assert_equal "2025-11-25", last["mcp-protocol-version"]
     end
   end
 

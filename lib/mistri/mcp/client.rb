@@ -24,7 +24,7 @@ module Mistri
     # One client serializes its calls; parallel tool calls against one
     # server queue rather than interleave.
     class Client
-      PROTOCOL_VERSION = "2025-06-18"
+      PROTOCOL_VERSION = "2025-11-25"
       SUPPORTED_VERSIONS = %w[2025-11-25 2025-06-18 2025-03-26 2024-11-05].freeze
       LOOPBACK = %w[localhost 127.0.0.1 ::1].freeze
 

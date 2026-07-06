@@ -14,7 +14,7 @@ module Mistri
       attr_reader :calls, :initializes
 
       def initialize(tools: {}, sse: true, session: nil, page_size: nil,
-                     require_token: nil, expire_after: nil, protocol: "2025-06-18")
+                     require_token: nil, expire_after: nil, protocol: "2025-11-25")
         @tools = tools
         @sse = sse
         @session = session
