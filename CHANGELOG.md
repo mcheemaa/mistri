@@ -5,6 +5,17 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+- Stop one child, keep the run: every sub-agent now runs on its own signal
+  derived from the parent's (AbortSignal#derive), so the parent's abort
+  still cascades down while Child#stop ends a single worker and the parent
+  reasons on with "[the X sub-agent was stopped]". Cross-process stops ride
+  the lock adapter's flags; the lease thread turns them into the child's
+  cooperative abort within a tick.
+- A run stopped during its tool phase now reports :aborted. The final
+  assistant message is clean in that case, so the message's stop reason
+  read :completed and a user-stopped run could claim success; the signal
+  is consulted alongside the message.
+
 - The lock adapter: Mistri.locks takes an adapter for cross-process leases
   and flags (Locks::Memory built in; Locks::RailsCache as an opt-in require,
   the Stores::ActiveRecord pattern). Locks.hold keeps a lease alive on a

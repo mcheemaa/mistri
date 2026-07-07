@@ -155,7 +155,7 @@ module Mistri
         # transcript is unpairable and replay fails.
         parked = last.tool_calls? ? run_tools(last, signal, &emit) : []
         return suspended(last, parked, usage) if parked.any?
-        return finished(last, usage) if done?(last, signal)
+        return finished(last, usage, signal) if done?(last, signal)
       end
     end
 
@@ -347,9 +347,13 @@ module Mistri
       tool ? tool.needs_approval?(call.arguments) : false
     end
 
-    def finished(message, usage)
+    # A run stopped during its tool phase ends with a clean assistant
+    # message, so the message's stop reason alone would read :completed;
+    # the signal is what knows the user stopped it.
+    def finished(message, usage, signal = nil)
       status = { StopReason::ABORTED => :aborted, StopReason::BUDGET => :budget,
                  StopReason::ERROR => :error }.fetch(message.stop_reason, :completed)
+      status = :aborted if status == :completed && signal&.aborted?
       Result.new(message: message, status: status, usage: usage)
     end
 
