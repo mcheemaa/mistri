@@ -113,24 +113,30 @@ module Mistri
         context.session&.append("subagent", "name" => label, "session_id" => child.id)
         # From the moment the link exists, every exit writes a terminal entry,
         # setup failures included, or the child would read as running forever.
-        # The lease says "alive right now" to other processes; a child that
-        # dies without its terminal reads :interrupted once it lapses.
-        lease = Locks.hold(Child.lease_key(child.id))
+        # The child runs on its own signal: the parent's abort cascades down
+        # through the derived handle, while stopping the child alone leaves
+        # the parent running. The lease says "alive right now" to other
+        # processes and its thread watches the child's stop flag.
+        signal, cascade = context.signal ? context.signal.derive : [AbortSignal.new, nil]
+        lease = Locks.hold(Child.lease_key(child.id),
+                           stop_key: Child.stop_key(child.id), signal: signal)
         result = begin
           agent = Agent.new(provider: provider, session: child, system: system,
                             tools: tools, **agent_options)
           origin = "#{label}##{child.id[0, 8]}"
           emit = ->(event) { forward(event, origin, context) }
           if schema
-            agent.task(task, schema: schema, signal: context.signal, &emit)
+            agent.task(task, schema: schema, signal: signal, &emit)
           else
-            agent.run(task, signal: context.signal, &emit)
+            agent.run(task, signal: signal, &emit)
           end
         rescue StandardError => e
           child.append(Child::TERMINAL, "status" => "failed", "error" => "#{e.class}: #{e.message}")
           raise
         ensure
           lease&.release
+          context.signal&.remove_callback(cascade) if cascade
+          Mistri.locks&.clear_flag(Child.stop_key(child.id))
         end
         outcome = answer(result, label, child)
         child.append(Child::TERMINAL, terminal(result))
@@ -184,7 +190,7 @@ module Mistri
           ToolResult.new(content: "The #{label} sub-agent stopped: it needed human " \
                                   "approval, which sub-agents cannot wait for.", ui: link)
         when :aborted
-          ToolResult.new(content: "[the #{label} sub-agent was aborted]", ui: link)
+          ToolResult.new(content: "[the #{label} sub-agent was stopped]", ui: link)
         else
           reason = result.error_message || result.status
           ToolResult.new(content: "The #{label} sub-agent failed: #{reason}", ui: link)

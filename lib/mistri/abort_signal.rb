@@ -32,6 +32,16 @@ module Mistri
       nil
     end
 
+    # A signal that trips when this one does, never the reverse: abort the
+    # derived signal alone and this one runs on. Returns [signal, handle];
+    # remove the handle when the derived work ends, so a finished child
+    # never leaks a callback into a later abort.
+    def derive
+      child = AbortSignal.new
+      handle = on_abort { child.abort!(reason) }
+      [child, handle]
+    end
+
     # Register a callback for the moment of abort. Fires immediately when the
     # signal is already tripped. Returns a handle for #remove_callback.
     def on_abort(&callback)

@@ -31,26 +31,41 @@ module Mistri
     # the lease is already held elsewhere: a caller that was refused must
     # never renew or delete the real holder's key. Callers that need to
     # tell refusal apart from no-adapter use the adapter's acquire directly.
-    def hold(key, ttl: LEASE_TTL, heartbeat: HEARTBEAT)
+    #
+    # With stop_key: and signal:, the same thread watches the flag and trips
+    # the signal within a tick, so a stop request written in another process
+    # becomes this run's cooperative abort.
+    def hold(key, ttl: LEASE_TTL, heartbeat: HEARTBEAT, stop_key: nil, signal: nil)
       adapter = Mistri.locks
       return nil unless adapter
       return nil unless adapter.acquire(key, ttl: ttl)
 
-      Hold.new(adapter, key, ttl, heartbeat)
+      Hold.new(adapter, key, ttl, heartbeat, stop_key: stop_key, signal: signal)
     end
 
-    # A held lease: a renewal thread keeps it alive, release stops the
-    # thread (and joins it, so a mid-renewal tick can never re-stamp a
-    # lease that was just released) and deletes the key.
+    # A held lease: one thread renews it on the heartbeat and watches the
+    # stop flag between renewals. Renewal runs on a monotonic deadline (the
+    # last sleep before it is the remaining fraction, never a full tick, so
+    # the cadence is exact and a lease can never lapse waiting for a tick to
+    # round up). release stops the thread (and joins it, so a mid-renewal
+    # tick can never re-stamp a lease that was just released) and deletes
+    # the key.
     class Hold
-      def initialize(adapter, key, ttl, heartbeat)
+      def initialize(adapter, key, ttl, heartbeat, stop_key: nil, signal: nil)
         @adapter = adapter
         @key = key
         @stopping = false
         @thread = Thread.new do
+          deadline = now + heartbeat
           until @stopping
-            sleep heartbeat
-            @adapter.renew(key, ttl: ttl) unless @stopping
+            sleep (deadline - now).clamp(0.01, 1.0)
+            break if @stopping
+
+            signal.abort!("stopped by user") if stop_key && signal && adapter.flag?(stop_key)
+            if now >= deadline
+              adapter.renew(key, ttl: ttl)
+              deadline = now + heartbeat
+            end
           end
         end
       end
@@ -61,6 +76,10 @@ module Mistri
         @thread.join(2)
         @adapter.release(@key)
       end
+
+      private
+
+      def now = Process.clock_gettime(Process::CLOCK_MONOTONIC)
     end
 
     # The in-process adapter: real TTL semantics over a hash, for tests,

@@ -60,6 +60,26 @@ class TestLocks < Minitest::Test
     assert_nil Mistri::Locks.hold("child:x")
   end
 
+  def test_renewal_honors_a_fractional_heartbeat_above_the_tick
+    renewed_at = []
+    started = Process.clock_gettime(Process::CLOCK_MONOTONIC)
+    spy = Class.new(Mistri::Locks::Memory) do
+      define_method(:renew) do |key, ttl:|
+        renewed_at << (Process.clock_gettime(Process::CLOCK_MONOTONIC) - started)
+        super(key, ttl: ttl)
+      end
+    end.new
+    Mistri.locks = spy
+    hold = Mistri::Locks.hold("run:1", ttl: 5, heartbeat: 1.5)
+
+    sleep 1.9
+    hold.release
+
+    assert_predicate renewed_at, :any?, "a 1.5s heartbeat must have renewed by 1.9s"
+    assert_operator renewed_at.first, :<, 1.75,
+                    "renewal follows the requested cadence, not tick rounding"
+  end
+
   def test_hold_respects_an_existing_holder
     Mistri.locks = Mistri::Locks::Memory.new
     first = Mistri::Locks.hold("run:1", ttl: 60, heartbeat: 60)

@@ -22,6 +22,8 @@ module Mistri
 
     def self.lease_key(session_id) = "child:#{session_id}"
 
+    def self.stop_key(session_id) = "child-stop:#{session_id}"
+
     def initialize(name:, session_id:, store:)
       @name = name
       @session_id = session_id
@@ -54,6 +56,18 @@ module Mistri
     # child that finishes first never sees it.
     def say(text)
       session.steer(text)
+    end
+
+    # Ask a running child to stop, from any process. The child's runner sees
+    # the flag within a tick and trips the child's own signal; the parent
+    # runs on. Stop is cross-process by nature, so it needs a lock adapter;
+    # without one this returns false. An action that reports acceptance,
+    # not a predicate.
+    def stop # rubocop:disable Naming/PredicateMethod
+      return false unless Mistri.locks
+
+      Mistri.locks.set_flag(self.class.stop_key(@session_id))
+      true
     end
 
     def to_h
