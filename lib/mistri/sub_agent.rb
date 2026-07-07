@@ -115,12 +115,35 @@ module Mistri
                           tools: tools, **agent_options)
         origin = "#{label}##{child.id[0, 8]}"
         emit = ->(event) { forward(event, origin, context) }
-        result = if schema
-                   agent.task(task, schema: schema, signal: context.signal, &emit)
-                 else
-                   agent.run(task, signal: context.signal, &emit)
-                 end
-        answer(result, label, child)
+        result = begin
+          if schema
+            agent.task(task, schema: schema, signal: context.signal, &emit)
+          else
+            agent.run(task, signal: context.signal, &emit)
+          end
+        rescue StandardError => e
+          # Even a crash ends with a terminal entry, or the child would read
+          # as running forever.
+          child.append(Child::TERMINAL, "status" => "failed", "error" => "#{e.class}: #{e.message}")
+          raise
+        end
+        outcome = answer(result, label, child)
+        child.append(Child::TERMINAL, terminal(result))
+        outcome
+      end
+
+      # Every child ends by writing its own terminal entry: completion is a
+      # contract, and status stays readable from the store forever.
+      def terminal(result)
+        case result.status
+        when :completed then { "status" => "done", "report" => result.text.to_s }
+        when :aborted then { "status" => "stopped" }
+        when :awaiting_approval
+          { "status" => "failed",
+            "error" => "needed human approval, which sub-agents cannot wait for" }
+        else
+          { "status" => "failed", "error" => (result.error_message || result.status).to_s }
+        end
       end
 
       def forbid_gated!(tools)

@@ -5,6 +5,15 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+- The children registry: Session#children lists every sub-agent a session
+  has spawned as a Mistri::Child, a window onto the child's own session
+  with name, status, report, transcript(tail:) with image bytes stripped,
+  and say(text) to steer it. All of it derives from the store, so it reads
+  the same from any process, while the child runs and forever after.
+- Completion is a contract: every child ends by writing a terminal entry
+  (done with its report, stopped, or failed with the error), including
+  when the child's run raises, so a crashed child never reads as running.
+
 ## [0.4.1] - 2026-07-06
 
 - Terminal events are loop-owned: each attempt's :done or :error is held at
