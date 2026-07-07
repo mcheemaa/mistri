@@ -53,7 +53,7 @@ module Mistri
         next Console.unknown(context.session, args["agent"]) unless child
 
         if args["wait"]
-          Console.await(child, timeout, poll)
+          Console.await(child, timeout, poll, context.signal)
         else
           Console.render(child, args.fetch("tail", 20).to_i.clamp(1, 200))
         end
@@ -109,14 +109,16 @@ module Mistri
       end
     end
 
-    # Latest spawn wins on duplicate names; ids and id prefixes (8+ chars)
-    # stay unambiguous.
+    # Ids are advertised as unambiguous, so they resolve first: exact, then
+    # an 8+ character prefix (what list_agents displays). Names come last,
+    # latest spawn winning on duplicates, so a model-chosen name can never
+    # shadow another worker's id.
     def find(session, ref)
       children = session.children
-      children.reverse_each.find { |child| child.name == ref } ||
-        children.find do |child|
-          child.session_id == ref || (ref.to_s.length >= 8 && child.session_id.start_with?(ref))
-        end
+      children.find { |child| child.session_id == ref } ||
+        (ref.to_s.length >= 8 &&
+          children.find { |child| child.session_id.start_with?(ref) }) ||
+        children.reverse_each.find { |child| child.name == ref }
     end
 
     def unknown(session, ref)
@@ -125,9 +127,13 @@ module Mistri
       "No worker matches #{ref.inspect}; #{known}."
     end
 
-    def await(child, timeout, poll)
+    # The wait is cooperative like everything else: the run's abort ends it
+    # promptly, never held hostage to the timeout.
+    def await(child, timeout, poll, signal = nil)
       deadline = Process.clock_gettime(Process::CLOCK_MONOTONIC) + timeout
       while child.status == :running
+        return "The wait was stopped; #{child.name} is still running." if signal&.aborted?
+
         if Process.clock_gettime(Process::CLOCK_MONOTONIC) >= deadline
           return "#{child.name} is still running after #{timeout.round}s. " \
                  "Read it without wait to see progress, or stop it."

@@ -148,6 +148,37 @@ class TestConsole < Minitest::Test
     assert_match(/needs a lock adapter/, output)
   end
 
+  def test_read_agent_wait_ends_promptly_when_the_run_aborts
+    Mistri.locks = Mistri::Locks::Memory.new
+    _store, parent, _done, running = setup_family
+    Mistri.locks.acquire(Mistri::Child.lease_key(running.id), ttl: 60)
+    signal = Mistri::AbortSignal.new
+    signal.abort!(:user_stop)
+    context = Mistri::ToolContext.new(session: parent, signal: signal, emit: nil, app: nil)
+
+    started = Process.clock_gettime(Process::CLOCK_MONOTONIC)
+    output = Mistri::Console.read_agent(timeout: 30, poll: 0.05)
+                            .call({ "agent" => "Husky", "wait" => true }, context)
+
+    assert_operator Process.clock_gettime(Process::CLOCK_MONOTONIC) - started, :<, 1
+    assert_match(/wait was stopped/, output)
+  end
+
+  def test_ids_resolve_before_a_colliding_worker_name
+    store = Mistri::Stores::Memory.new
+    parent = Mistri::Session.new(store:)
+    target = link(parent, store, "Corgi")
+    target.append(Mistri::Child::TERMINAL, "status" => "done", "report" => "the id owner")
+    impostor = link(parent, store, target.id[0, 8])
+    impostor.append(Mistri::Child::TERMINAL, "status" => "done", "report" => "the name squatter")
+
+    output = Mistri::Console.read_agent.call({ "agent" => target.id[0, 8], "wait" => true },
+                                             context_for(parent))
+
+    assert_match(/the id owner/, output,
+                 "an id prefix must never be shadowed by a worker named like it")
+  end
+
   def test_unknown_workers_answer_with_the_roster
     _store, parent, = setup_family
     output = Mistri::Console.read_agent.call({ "agent" => "Poodle" }, context_for(parent))
