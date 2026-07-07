@@ -5,6 +5,16 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+- The lock adapter: Mistri.locks takes an adapter for cross-process leases
+  and flags (Locks::Memory built in; Locks::RailsCache as an opt-in require,
+  the Stores::ActiveRecord pattern). Locks.hold keeps a lease alive on a
+  heartbeat from a background thread and releases it cleanly, join and all,
+  so a mid-renewal tick can never re-stamp a released lease.
+- Children gain liveness: every child run holds a lease, and with an
+  adapter configured a child that died without writing its terminal entry
+  reads :interrupted instead of :running forever. Without an adapter
+  nothing changes.
+
 - The children registry: Session#children lists every sub-agent a session
   has spawned as a Mistri::Child, a window onto the child's own session
   with name, status, report, transcript(tail:) with image bytes stripped,

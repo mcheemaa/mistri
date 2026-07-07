@@ -113,6 +113,9 @@ module Mistri
         context.session&.append("subagent", "name" => label, "session_id" => child.id)
         # From the moment the link exists, every exit writes a terminal entry,
         # setup failures included, or the child would read as running forever.
+        # The lease says "alive right now" to other processes; a child that
+        # dies without its terminal reads :interrupted once it lapses.
+        lease = Locks.hold(Child.lease_key(child.id))
         result = begin
           agent = Agent.new(provider: provider, session: child, system: system,
                             tools: tools, **agent_options)
@@ -126,6 +129,8 @@ module Mistri
         rescue StandardError => e
           child.append(Child::TERMINAL, "status" => "failed", "error" => "#{e.class}: #{e.message}")
           raise
+        ensure
+          lease&.release
         end
         outcome = answer(result, label, child)
         child.append(Child::TERMINAL, terminal(result))
