@@ -35,6 +35,7 @@ require_relative "mistri/stores/memory"
 require_relative "mistri/stores/jsonl"
 require_relative "mistri/session"
 require_relative "mistri/child"
+require_relative "mistri/locks"
 require_relative "mistri/compactor"
 require_relative "mistri/result"
 require_relative "mistri/agent"
@@ -54,6 +55,11 @@ module Mistri
                 gemini: Providers::Gemini }.freeze
   API_KEY_ENV = { anthropic: "ANTHROPIC_API_KEY", openai: "OPENAI_API_KEY",
                   gemini: "GEMINI_API_KEY" }.freeze
+
+  # The configured lock adapter, nil until a host sets one. See Locks.
+  class << self
+    attr_accessor :locks
+  end
 
   module_function
 
