@@ -50,6 +50,28 @@ class TestChildren < Minitest::Test
     assert_match(/no scripted turns/, terminal["error"])
   end
 
+  def test_a_child_that_fails_setup_still_ends_with_a_failed_terminal
+    store = Mistri::Stores::Memory.new
+    duplicate = Mistri::Tool.define("lookup", "Looks up.") { "42" }
+    # Two tools with one name make Agent.new itself raise, after the link
+    # entry exists but before the child ever runs.
+    spawn = Mistri::SubAgent.spawner(provider: fake, tools: [duplicate, duplicate])
+    parent = fake({ tool_calls: [{ name: "spawn_agent",
+                                   arguments: { "name" => "Basset", "task" => "go",
+                                                "instructions" => "You are a finder." } }] },
+                  { text: "Moving on." })
+    session = Mistri::Session.new(store:)
+
+    Mistri::Agent.new(provider: parent, tools: [spawn], session:).run("go")
+
+    child = session.children.first
+
+    assert_equal :failed, child.status
+    terminal = Mistri::Session.new(store:, id: child.session_id).entries.last
+
+    assert_match(/duplicate tool names/, terminal["error"])
+  end
+
   def test_status_derives_from_hand_written_entries
     store = Mistri::Stores::Memory.new
     parent = Mistri::Session.new(store:)

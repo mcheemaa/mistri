@@ -111,19 +111,19 @@ module Mistri
         store = context.session ? context.session.store : Stores::Memory.new
         child = Session.new(store: store)
         context.session&.append("subagent", "name" => label, "session_id" => child.id)
-        agent = Agent.new(provider: provider, session: child, system: system,
-                          tools: tools, **agent_options)
-        origin = "#{label}##{child.id[0, 8]}"
-        emit = ->(event) { forward(event, origin, context) }
+        # From the moment the link exists, every exit writes a terminal entry,
+        # setup failures included, or the child would read as running forever.
         result = begin
+          agent = Agent.new(provider: provider, session: child, system: system,
+                            tools: tools, **agent_options)
+          origin = "#{label}##{child.id[0, 8]}"
+          emit = ->(event) { forward(event, origin, context) }
           if schema
             agent.task(task, schema: schema, signal: context.signal, &emit)
           else
             agent.run(task, signal: context.signal, &emit)
           end
         rescue StandardError => e
-          # Even a crash ends with a terminal entry, or the child would read
-          # as running forever.
           child.append(Child::TERMINAL, "status" => "failed", "error" => "#{e.class}: #{e.message}")
           raise
         end
