@@ -60,6 +60,19 @@ class TestLocks < Minitest::Test
     assert_nil Mistri::Locks.hold("child:x")
   end
 
+  def test_hold_respects_an_existing_holder
+    Mistri.locks = Mistri::Locks::Memory.new
+    first = Mistri::Locks.hold("run:1", ttl: 60, heartbeat: 60)
+
+    assert_nil Mistri::Locks.hold("run:1", ttl: 60, heartbeat: 60),
+               "a refused hold must not exist"
+    assert Mistri.locks.held?("run:1"), "the real holder keeps its lease"
+
+    first.release
+
+    refute Mistri.locks.held?("run:1")
+  end
+
   def test_a_child_without_lease_or_terminal_reads_interrupted
     Mistri.locks = Mistri::Locks::Memory.new
     store = Mistri::Stores::Memory.new

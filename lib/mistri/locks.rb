@@ -27,12 +27,15 @@ module Mistri
 
     # Hold a lease for the duration of a block of work: acquire, renew on a
     # heartbeat from a background thread, release on the way out. Returns a
-    # Hold, or nil when no adapter is configured; call #release in an ensure.
+    # Hold to release in an ensure, or nil when no adapter is configured or
+    # the lease is already held elsewhere: a caller that was refused must
+    # never renew or delete the real holder's key. Callers that need to
+    # tell refusal apart from no-adapter use the adapter's acquire directly.
     def hold(key, ttl: LEASE_TTL, heartbeat: HEARTBEAT)
       adapter = Mistri.locks
       return nil unless adapter
+      return nil unless adapter.acquire(key, ttl: ttl)
 
-      adapter.acquire(key, ttl: ttl)
       Hold.new(adapter, key, ttl, heartbeat)
     end
 
