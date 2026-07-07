@@ -111,16 +111,39 @@ module Mistri
         store = context.session ? context.session.store : Stores::Memory.new
         child = Session.new(store: store)
         context.session&.append("subagent", "name" => label, "session_id" => child.id)
-        agent = Agent.new(provider: provider, session: child, system: system,
-                          tools: tools, **agent_options)
-        origin = "#{label}##{child.id[0, 8]}"
-        emit = ->(event) { forward(event, origin, context) }
-        result = if schema
-                   agent.task(task, schema: schema, signal: context.signal, &emit)
-                 else
-                   agent.run(task, signal: context.signal, &emit)
-                 end
-        answer(result, label, child)
+        # From the moment the link exists, every exit writes a terminal entry,
+        # setup failures included, or the child would read as running forever.
+        result = begin
+          agent = Agent.new(provider: provider, session: child, system: system,
+                            tools: tools, **agent_options)
+          origin = "#{label}##{child.id[0, 8]}"
+          emit = ->(event) { forward(event, origin, context) }
+          if schema
+            agent.task(task, schema: schema, signal: context.signal, &emit)
+          else
+            agent.run(task, signal: context.signal, &emit)
+          end
+        rescue StandardError => e
+          child.append(Child::TERMINAL, "status" => "failed", "error" => "#{e.class}: #{e.message}")
+          raise
+        end
+        outcome = answer(result, label, child)
+        child.append(Child::TERMINAL, terminal(result))
+        outcome
+      end
+
+      # Every child ends by writing its own terminal entry: completion is a
+      # contract, and status stays readable from the store forever.
+      def terminal(result)
+        case result.status
+        when :completed then { "status" => "done", "report" => result.text.to_s }
+        when :aborted then { "status" => "stopped" }
+        when :awaiting_approval
+          { "status" => "failed",
+            "error" => "needed human approval, which sub-agents cannot wait for" }
+        else
+          { "status" => "failed", "error" => (result.error_message || result.status).to_s }
+        end
       end
 
       def forbid_gated!(tools)

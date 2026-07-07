@@ -78,8 +78,20 @@ module Mistri
     # message entry carries the steer id, so consumption is derived from the
     # log alone and reads the same from every process.
     def pending_steers
-      folded = entries.filter_map { |entry| entry["steer_id"] }
-      entries.select { |entry| entry["type"] == "steer" && !folded.include?(entry["id"]) }
+      log = entries
+      folded = log.filter_map { |entry| entry["steer_id"] }.to_set
+      log.select { |entry| entry["type"] == "steer" && !folded.include?(entry["id"]) }
+    end
+
+    # Sub-agents this session has spawned, in spawn order: one Child window
+    # per link entry, each reading the child's own session. Derived from the
+    # log alone, like everything else here.
+    def children
+      entries.filter_map do |entry|
+        next unless entry["type"] == "subagent"
+
+        Child.new(name: entry["name"], session_id: entry["session_id"], store: @store)
+      end
     end
 
     # Record a human's decision on a parked tool call. Decisions are session
