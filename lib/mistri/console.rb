@@ -157,14 +157,18 @@ module Mistri
       end
     end
 
+    # Tool calls ride the message's content as typed blocks, never as a
+    # separate key; render both channels from the blocks.
     def message_line(message)
-      role = message["role"]
-      calls = Array(message["tool_calls"]).map do |call|
-        "#{call["name"]}(#{JSON.generate(call["arguments"] || {})[0, 80]})"
+      blocks = message["content"].is_a?(Array) ? message["content"] : []
+      calls = blocks.filter_map do |block|
+        next unless block.is_a?(Hash) && block["type"] == "tool_call"
+
+        "#{block["name"]}(#{JSON.generate(block["arguments"] || {})[0, 80]})"
       end
       text = Console.text_of(message["content"])
       parts = [text[0, 240], *calls].reject { |part| part.to_s.empty? }
-      "#{role}: #{parts.join(" | ")}" unless parts.empty?
+      "#{message["role"]}: #{parts.join(" | ")}" unless parts.empty?
     end
 
     def text_of(content)

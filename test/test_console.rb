@@ -30,6 +30,30 @@ class TestConsole < Minitest::Test
     [store, parent, done, running]
   end
 
+  def test_tools_bundles_the_whole_console
+    names = Mistri::Console.tools.map(&:name)
+
+    assert_equal %w[list_agents read_agent steer_agent stop_agent], names
+  end
+
+  def test_read_agent_renders_tool_calls_compactly
+    store = Mistri::Stores::Memory.new
+    parent = Mistri::Session.new(store:)
+    worker = link(parent, store, "Setter")
+    worker.append_message(
+      Mistri::Message.assistant(content: "Looking it up.",
+                                tool_calls: [Mistri::ToolCall.new(
+                                  id: "c1", name: "browser",
+                                  arguments: { "url" => "https://example.com" }
+                                )])
+    )
+
+    output = Mistri::Console.read_agent.call({ "agent" => "Setter" }, context_for(parent))
+
+    assert_match(%r{browser\(\{"url":"https://example\.com"\}\)}, output)
+    assert_match(/Looking it up\./, output)
+  end
+
   def test_list_agents_shows_every_worker_with_status
     _store, parent, = setup_family
     output = Mistri::Console.list_agents.call({}, context_for(parent))
