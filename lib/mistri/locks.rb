@@ -44,26 +44,27 @@ module Mistri
     end
 
     # A held lease: one thread renews it on the heartbeat and watches the
-    # stop flag between renewals. release stops the thread (and joins it,
-    # so a mid-renewal tick can never re-stamp a lease that was just
-    # released) and deletes the key.
+    # stop flag between renewals. Renewal runs on a monotonic deadline (the
+    # last sleep before it is the remaining fraction, never a full tick, so
+    # the cadence is exact and a lease can never lapse waiting for a tick to
+    # round up). release stops the thread (and joins it, so a mid-renewal
+    # tick can never re-stamp a lease that was just released) and deletes
+    # the key.
     class Hold
       def initialize(adapter, key, ttl, heartbeat, stop_key: nil, signal: nil)
         @adapter = adapter
         @key = key
         @stopping = false
-        tick = [heartbeat, 1.0].min
         @thread = Thread.new do
-          elapsed = 0.0
+          deadline = now + heartbeat
           until @stopping
-            sleep tick
-            elapsed += tick
+            sleep (deadline - now).clamp(0.01, 1.0)
             break if @stopping
 
             signal.abort!("stopped by user") if stop_key && signal && adapter.flag?(stop_key)
-            if elapsed >= heartbeat
+            if now >= deadline
               adapter.renew(key, ttl: ttl)
-              elapsed = 0.0
+              deadline = now + heartbeat
             end
           end
         end
@@ -75,6 +76,10 @@ module Mistri
         @thread.join(2)
         @adapter.release(@key)
       end
+
+      private
+
+      def now = Process.clock_gettime(Process::CLOCK_MONOTONIC)
     end
 
     # The in-process adapter: real TTL semantics over a hash, for tests,
