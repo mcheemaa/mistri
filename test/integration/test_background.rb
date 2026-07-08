@@ -14,8 +14,11 @@ class TestBackgroundIntegration < Minitest::Test
     Mistri.locks = Mistri::Locks::Memory.new
     number = rand(100..900)
     store = Mistri::Stores::Memory.new
+    # Slow enough that the parent's receipt turn reliably finishes first;
+    # a faster oracle folds its report mid-run and the parent, correctly,
+    # answers with the number instead of the scripted acknowledgement.
     oracle = Mistri::Tool.define("oracle", "Answers the secret number, slowly.") do
-      sleep 2
+      sleep 8
       number.to_s
     end
     tools = Mistri::SubAgent.pack(provider: Mistri.provider(model), tools: [oracle],
