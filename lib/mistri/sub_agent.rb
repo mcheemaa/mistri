@@ -89,21 +89,41 @@ module Mistri
       # the host's allowlist of child model ids — without one, no model
       # choice is offered at all, so a hallucinated id can never construct a
       # provider or land children on an expensive model.
-      def spawner(provider:, tools: [], models: [], needs_approval: false, **agent_options)
+      #
+      # types: is the host's registry of curated workers, Definition by
+      # name: a typed child takes its system prompt, tools, and model from
+      # the definition (instructions appends, explicit args override within
+      # the pool and allowlist). "general-purpose" is always available: the
+      # model writes that worker's system prompt itself. max_children caps
+      # live workers per session; a spawn past the cap answers in band.
+      def spawner(provider:, tools: [], types: {}, models: [], max_children: 4,
+                  needs_approval: false, **agent_options)
         forbid_gated!(tools)
         if tools.any? { |tool| tool.name == "spawn_agent" }
           raise ConfigurationError, "the spawn tool never goes in its own pool"
         end
 
-        schema = spawner_schema(tools, models, default_model(provider))
-        Tool.define("spawn_agent", SPAWNER_DESCRIPTION,
+        validate_types!(types, tools)
+
+        schema = spawner_schema(tools, models, default_model(provider), types)
+        Tool.define("spawn_agent", spawner_description(types),
                     needs_approval: needs_approval, schema: schema) do |args, context|
-          run_child(label: child_label(args["name"]),
-                    provider: child_provider(provider, args["model"], models),
-                    system: args.fetch("instructions"),
-                    tools: pick(tools, args["tools"]),
+          crowded = over_capacity(context.session, max_children)
+          next crowded if crowded
+
+          worker = resolve_worker(args, types, tools, provider, models)
+          next worker if worker.is_a?(String)
+
+          run_child(label: child_label(args["name"]), provider: worker[:provider],
+                    system: worker[:system], tools: worker[:tools],
                     task: args.fetch("task"), context: context, **agent_options)
         end
+      end
+
+      # The whole kit in one call: the spawn tool plus the management
+      # console, so a host hands its agent everything workers need.
+      def pack(provider:, console: {}, **spawner_options)
+        [spawner(provider: provider, **spawner_options), *Console.tools(**console)]
       end
 
       def run_child(label:, provider:, system:, tools:, task:, context:, schema: nil,
@@ -197,6 +217,82 @@ module Mistri
         end
       end
 
+      # A worker's system prompt, tools, and provider, resolved from its
+      # type; a String answers the model in band instead of raising.
+      def resolve_worker(args, types, pool, parent_provider, models)
+        type = args["type"].to_s
+        return general_worker(args, pool, parent_provider, models) if type.empty? ||
+                                                                      type == "general-purpose"
+
+        definition = types[type]
+        unless definition
+          return "Unknown worker type #{type.inspect}; available: " \
+                 "#{["general-purpose", *types.keys].join(", ")}."
+        end
+
+        system = [definition.render, args["instructions"]]
+                 .reject { |part| part.to_s.strip.empty? }.join("\n\n")
+        chosen = args["tools"].nil? || args["tools"].empty? ? definition.tool_names : args["tools"]
+        { system: system, tools: pick(pool, chosen),
+          provider: typed_provider(parent_provider, args["model"], models, definition.model) }
+      end
+
+      def general_worker(args, pool, parent_provider, models)
+        system = args["instructions"].to_s
+        if system.strip.empty?
+          return "A general-purpose worker needs instructions: write its system prompt, " \
+                 "or pick a type."
+        end
+
+        { system: system, tools: pick(pool, args["tools"]),
+          provider: child_provider(parent_provider, args["model"], models) }
+      end
+
+      # An explicit model choice goes through the allowlist; otherwise a
+      # typed worker runs on its definition's model, and without one it
+      # inherits the parent's provider. Host-curated definitions are
+      # trusted the way the pool is.
+      def typed_provider(parent, requested, models, definition_model)
+        return child_provider(parent, requested, models) unless requested.to_s.empty?
+        return parent if definition_model.to_s.empty?
+
+        Mistri.provider(definition_model)
+      end
+
+      def over_capacity(session, max_children)
+        return nil unless session
+
+        busy = session.children.count { |child| %i[running queued].include?(child.status) }
+        return nil if busy < max_children
+
+        "You already have #{busy} workers running; wait for one to finish or stop one."
+      end
+
+      # Types fail at construction, never mid-spawn: every definition must
+      # render without vars (spawn types are self-contained prompts) and
+      # declare only tools the pool actually carries.
+      def validate_types!(types, pool)
+        return if types.empty?
+        if types.key?("general-purpose")
+          raise ConfigurationError, "\"general-purpose\" is the built-in type; pick another name"
+        end
+
+        pool_names = pool.map(&:name)
+        types.each do |name, definition|
+          begin
+            definition.render
+          rescue ConfigurationError => e
+            raise ConfigurationError,
+                  "type #{name.inspect} cannot be a spawn type: #{e.message}"
+          end
+          missing = definition.tool_names - pool_names
+          unless missing.empty?
+            raise ConfigurationError,
+                  "type #{name.inspect} declares tools the pool lacks: #{missing.join(", ")}"
+          end
+        end
+      end
+
       def pick(pool, names)
         return pool if names.nil? || names.empty?
 
@@ -209,19 +305,35 @@ module Mistri
         end
       end
 
-      def spawner_schema(pool, models, default)
+      def spawner_schema(pool, models, default, types = {})
         tool_names = pool.map(&:name)
+        type_names = ["general-purpose", *types.keys]
         fallback = default ? " (default: #{default})" : ""
         lambda do
           string :name, "A short name for this worker, shown wherever its events appear"
           string :task, "The child's complete task", required: true
-          string :instructions, "The child's system prompt", required: true
+          if types.any?
+            string :type, "The kind of worker (default: general-purpose)", enum: type_names
+            string :instructions, "The worker's system prompt (required for " \
+                                  "general-purpose; appended to a typed worker's own)"
+          else
+            string :instructions, "The child's system prompt", required: true
+          end
           if tool_names.any?
-            array :tools, "Subset of tools to grant (default: all)",
+            array :tools, "Subset of tools to grant (default: all, or the type's own list)",
                   items: { type: "string", enum: tool_names }
           end
           string :model, "Model for the child#{fallback}", enum: models if models.any?
         end
+      end
+
+      def spawner_description(types)
+        return SPAWNER_DESCRIPTION if types.empty?
+
+        "#{SPAWNER_DESCRIPTION} Typed workers come ready-made " \
+          "(#{types.keys.join(", ")}): their instructions, tools, and model " \
+          "are set; add instructions only to focus them. general-purpose " \
+          "workers are yours to compose."
       end
 
       def default_model(provider)

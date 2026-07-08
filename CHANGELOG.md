@@ -5,6 +5,18 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+- Typed workers: the spawner takes types:, a host registry of Definitions
+  by name. A typed child takes its system prompt, tools, and model from
+  the definition; instructions appends; explicit tool and model args
+  override within the pool and allowlist. "general-purpose" stays the
+  built-in composable default. Types fail at construction, never
+  mid-spawn: a definition with unfilled placeholders or tools the pool
+  lacks is a boot-time ConfigurationError.
+- max_children (default 4) caps live workers per session; a spawn past
+  the cap answers in band and freed slots reopen.
+- SubAgent.pack returns the spawn tool plus the management console in one
+  call, the whole kit for a worker-running agent.
+
 - The management console: Mistri::Console.tools returns list_agents,
   read_agent (tail: to choose how much transcript, wait: to block for the
   report with an in-band timeout), steer_agent, and stop_agent. Every tool
