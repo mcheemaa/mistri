@@ -28,7 +28,7 @@ module Mistri
     end
 
     def initialize(name:, description:, input_schema: EMPTY_SCHEMA, eager_input_streaming: false,
-                   needs_approval: false, timeout: nil, &handler)
+                   needs_approval: false, ends_turn: false, timeout: nil, &handler)
       raise ArgumentError, "tool #{name.inspect} needs a handler block" unless handler
 
       @name = name.to_s
@@ -36,6 +36,7 @@ module Mistri
       @input_schema = input_schema
       @eager_input_streaming = eager_input_streaming
       @needs_approval = needs_approval
+      @ends_turn = ends_turn
       @timeout = timeout
       @handler = handler
     end
@@ -59,6 +60,14 @@ module Mistri
     # (needs_approval: ->(args) { args["amount"].to_i > 100 }).
     def needs_approval?(arguments)
       @needs_approval.respond_to?(:call) ? @needs_approval.call(arguments) : @needs_approval
+    end
+
+    # A tool that is the last word of its turn: once it executes, the loop
+    # ends the run instead of prompting the model again. This is how a tool
+    # like ask_user hands the floor to a human structurally, with no prompt
+    # discipline required; the answer arrives as the next run's input.
+    def ends_turn?
+      @ends_turn
     end
 
     # The provider-facing definition; every serializer accepts this shape.
