@@ -128,6 +128,17 @@ module Mistri
       end
     end
 
+    # The session as a reader renders it: entries in order with inline image
+    # bytes stripped, and, with include_children, every sub-agent's own
+    # transcript spliced in after its link entry. Spliced entries carry an
+    # "origin" key shaped exactly like the live stream's event origins
+    # ("Magpie#ab12cd34", nesting joined with ">"), so a UI that rebuilds
+    # from this sees what it saw live, lanes included, running children's
+    # progress-so-far included. The raw log stays available as #entries.
+    def transcript(include_children: false)
+      splice(entries, include_children: include_children, prefix: nil, seen: Set[@id])
+    end
+
     # Record a human's decision on a parked tool call. Decisions are session
     # entries, so they can be written from any process, days later, with no
     # agent constructed; the next resume settles them.
@@ -181,6 +192,28 @@ module Mistri
 
     def summary_message(summary)
       Message.user("#{Compaction::SUMMARY_PREFACE}\n\n#{summary}")
+    end
+
+    # Each link entry opens its child's log in place, depth first, the way
+    # nested lanes opened live. The seen set makes expansion idempotent per
+    # child (a repeated or self-referencing link renders but never expands
+    # twice), so a hostile log cannot loop this.
+    def splice(log, include_children:, prefix:, seen:)
+      log.flat_map do |entry|
+        rendered = Child.strip_images(entry)
+        rendered = rendered.merge("origin" => prefix) if prefix
+        next [rendered] unless include_children && expandable?(entry, seen)
+
+        seen << entry["session_id"]
+        origin = "#{entry["name"]}##{entry["session_id"][0, 8]}"
+        origin = "#{prefix}>#{origin}" if prefix
+        child_log = self.class.new(store: @store, id: entry["session_id"]).entries
+        [rendered, *splice(child_log, include_children: true, prefix: origin, seen: seen)]
+      end
+    end
+
+    def expandable?(entry, seen)
+      entry["type"] == "subagent" && !seen.include?(entry["session_id"])
     end
 
     # How a report reads to the model: labeled with the worker's name and

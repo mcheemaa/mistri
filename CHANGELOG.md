@@ -5,6 +5,13 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+- Session#transcript reads the whole conversation back from the store:
+  entries with image bytes stripped, and with include_children every
+  sub-agent's log spliced in after its link entry, tagged with an
+  "origin" key shaped exactly like the live stream's event origins
+  (nesting joined with ">"). A UI that rebuilds from the transcript shows
+  the lanes it showed live, running children's progress-so-far included;
+  hosts stop hand-walking link entries.
 - Report delivery: a background child's terminal outcome reports back to
   its parent, exactly once. The report queues in the parent's inbox as a
   typed subagent_report entry and folds at the next turn boundary the way
