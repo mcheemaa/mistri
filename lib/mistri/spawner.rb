@@ -166,7 +166,7 @@ module Mistri
     def over_capacity(session)
       return nil unless session
 
-      busy = session.children.count { |child| %i[running queued].include?(child.status) }
+      busy = session.children.count { |child| Child::LIVE.include?(child.status) }
       return nil if busy < @max_children
 
       "You already have #{busy} workers running; wait for one to finish or stop one."

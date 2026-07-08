@@ -20,6 +20,9 @@ module Mistri
     TERMINAL = "subagent_result"
     DISPATCHED = "subagent_dispatched"
     STARTED = "subagent_started"
+    # The states a worker can still be caught in: steerable, stoppable,
+    # worth waiting on.
+    LIVE = %i[running queued].freeze
 
     attr_reader :name, :session_id
 
@@ -66,14 +69,16 @@ module Mistri
       session.steer(text)
     end
 
-    # Ask a running child to stop, from any process. The child's runner sees
-    # the flag within a tick and trips the child's own signal; the parent
-    # runs on. Stop is cross-process by nature, so it needs a lock adapter;
-    # without one this returns false. An action that reports acceptance,
-    # not a predicate.
+    # Ask a live child to stop, from any process. A running child's runner
+    # sees the flag within a tick and trips its own signal; a queued child
+    # is cancelled outright with a stopped terminal, which the runner
+    # honors by never starting it. Stop is cross-process by nature, so it
+    # needs a lock adapter; without one this returns false. An action that
+    # reports acceptance, not a predicate.
     def stop # rubocop:disable Naming/PredicateMethod
       return false unless Mistri.locks
 
+      session.append(TERMINAL, "status" => "stopped") if status == :queued
       Mistri.locks.set_flag(self.class.stop_key(@session_id))
       true
     end

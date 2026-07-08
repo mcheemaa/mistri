@@ -149,6 +149,87 @@ class TestBackgroundMode < Minitest::Test
     assert_equal :stopped, await_status(child, :stopped)
   end
 
+  def test_the_console_treats_a_queued_worker_as_live
+    dropper = drop_dispatcher
+    spawn = Mistri::SubAgent.spawner(provider: fake, dispatcher: dropper)
+    parent = spawn_call({ "name" => "Collie", "task" => "t", "instructions" => "You help.",
+                          "mode" => "background" })
+    store = Mistri::Stores::Memory.new
+    session = Mistri::Session.new(store:)
+    Mistri::Agent.new(provider: parent, tools: [spawn], session:).run("go")
+    context = Mistri::ToolContext.new(session: session, signal: nil, emit: nil, app: nil)
+
+    waited = Mistri::Console.read_agent(timeout: 0.15, poll: 0.05)
+                            .call({ "agent" => "Collie", "wait" => true }, context)
+
+    assert_match(/still queued/, waited, "a queued worker is worth waiting on")
+
+    steered = Mistri::Console.steer_agent.call(
+      { "agent" => "Collie", "message" => "prioritize speed" }, context
+    )
+
+    assert_match(/Queued\./, steered)
+    child_session = Mistri::Session.new(store:, id: session.children.first.session_id)
+
+    assert_equal 1, child_session.pending_steers.length,
+                 "a steer waits in the log for the job to start"
+  end
+
+  def test_stopping_a_queued_worker_cancels_it_for_good
+    Mistri.locks = Mistri::Locks::Memory.new
+    dropper = drop_dispatcher
+    child_fake = fake({ text: "should never run" })
+    spawn = Mistri::SubAgent.spawner(provider: child_fake, dispatcher: dropper)
+    parent = spawn_call({ "name" => "Saluki", "task" => "t", "instructions" => "You help.",
+                          "mode" => "background" })
+    store = Mistri::Stores::Memory.new
+    session = Mistri::Session.new(store:)
+    Mistri::Agent.new(provider: parent, tools: [spawn], session:).run("go")
+    child = session.children.first
+    context = Mistri::ToolContext.new(session: session, signal: nil, emit: nil, app: nil)
+
+    cancelled = Mistri::Console.stop_agent.call({ "agent" => "Saluki" }, context)
+
+    assert_match(/Cancelled\. Saluki had not started/, cancelled)
+    assert_equal :stopped, child.status
+
+    # The queue delivers late anyway; the runner honors the terminal.
+    result = Mistri::SubAgent.run_dispatched(dropper.spec, provider: child_fake,
+                                                           system: "You help.", tools: [],
+                                                           store: store)
+
+    assert_nil result
+    assert_equal :stopped, child.status
+    entries = Mistri::Session.new(store:, id: child.session_id).entries
+
+    assert(entries.none? { |entry| entry["type"] == Mistri::Child::STARTED },
+           "a cancelled child never starts")
+  end
+
+  def test_a_dispatched_child_that_needs_approval_leaves_no_open_requests
+    risky = Mistri::Tool.define("risky", "Needs a human sometimes.",
+                                needs_approval: ->(args) { args["danger"] == true }) { "did it" }
+    child_fake = fake({ tool_calls: [{ name: "risky", arguments: { "danger" => true } }] })
+    dropper = drop_dispatcher
+    spawn = Mistri::SubAgent.spawner(provider: child_fake, tools: [risky], dispatcher: dropper)
+    parent = spawn_call({ "name" => "Akita", "task" => "do the risky thing",
+                          "instructions" => "Use risky.", "mode" => "background" })
+    store = Mistri::Stores::Memory.new
+    session = Mistri::Session.new(store:)
+    Mistri::Agent.new(provider: parent, tools: [spawn], session:).run("go")
+
+    Mistri::SubAgent.run_dispatched(dropper.spec, provider: child_fake,
+                                                  system: "Use risky.", tools: [risky],
+                                                  store: store)
+
+    child = session.children.first
+    child_session = Mistri::Session.new(store:, id: child.session_id)
+
+    assert_equal :failed, child.status
+    assert_empty child_session.open_approvals,
+                 "no approval request may stay open on a finished child"
+  end
+
   def test_mode_and_workspace_only_exist_with_a_dispatcher
     bare = Mistri::SubAgent.spawner(provider: fake)
     dispatched = Mistri::SubAgent.spawner(provider: fake,

@@ -127,12 +127,36 @@ module Mistri
       def run_dispatched(spec, provider:, system:, tools:, store:, emit: nil, schema: nil,
                          **agent_options)
         child = Session.new(store: store, id: spec.fetch("session_id"))
+        # A terminal already written means there is nothing to run: the
+        # child was cancelled while queued, or a queue retried a job that
+        # already finished. Honoring it keeps stop_agent instant and
+        # double-dispatch harmless.
+        already = Child.new(name: spec.fetch("name"), session_id: child.id, store: store)
+        return nil unless Child::LIVE.include?(already.status)
+
         signal = AbortSignal.new
         result = execute_child(child: child, label: spec.fetch("name"), provider: provider,
                                system: system, tools: tools, task: spec.fetch("task"),
                                schema: schema, signal: signal, emit: emit, **agent_options)
+        deny_pending(result, child)
         child.append(Child::TERMINAL, terminal(result))
         result
+      end
+
+      # A child cannot wait for a human, whichever door it entered by: any
+      # calls parked for approval are denied AND settled with the denial as
+      # their tool result, so no approval request stays open on a finished
+      # child and its transcript replays without repair.
+      def deny_pending(result, child)
+        return unless result.awaiting_approval?
+
+        result.pending.each do |call|
+          child.deny(call.id, note: "sub-agents cannot pause for human approval")
+          child.append_message(Message.tool(
+                                 content: "Denied: sub-agents cannot pause for human approval.",
+                                 tool_call_id: call.id, tool_name: call.name
+                               ))
+        end
       end
 
       # Every child ends by writing its own terminal entry: completion is a
@@ -205,9 +229,7 @@ module Mistri
         when :completed
           ToolResult.new(content: result.text.to_s, ui: link)
         when :awaiting_approval
-          result.pending.each do |call|
-            child.deny(call.id, note: "sub-agents cannot pause for human approval")
-          end
+          deny_pending(result, child)
           ToolResult.new(content: "The #{label} sub-agent stopped: it needed human " \
                                   "approval, which sub-agents cannot wait for.", ui: link)
         when :aborted

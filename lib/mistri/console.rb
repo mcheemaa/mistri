@@ -75,7 +75,7 @@ module Mistri
         next Console.unknown(context.session, args["agent"]) unless child
 
         status = child.status
-        if status == :running
+        if Child::LIVE.include?(status)
           child.say(args.fetch("message"))
           "Queued. #{child.name} sees it at its next step; it may finish first."
         else
@@ -98,13 +98,15 @@ module Mistri
         next Console.unknown(context.session, args["agent"]) unless child
 
         status = child.status
-        if status != :running
+        if !Child::LIVE.include?(status)
           "#{child.name} is already #{status}."
-        elsif child.stop
+        elsif !child.stop
+          "Stopping needs a lock adapter (Mistri.locks) and none is configured."
+        elsif status == :queued
+          "Cancelled. #{child.name} had not started and never will."
+        else
           "Stop requested. #{child.name} halts within a second or two; " \
             "its partial work stays readable through read_agent."
-        else
-          "Stopping needs a lock adapter (Mistri.locks) and none is configured."
         end
       end
     end
@@ -131,11 +133,11 @@ module Mistri
     # promptly, never held hostage to the timeout.
     def await(child, timeout, poll, signal = nil)
       deadline = Process.clock_gettime(Process::CLOCK_MONOTONIC) + timeout
-      while child.status == :running
-        return "The wait was stopped; #{child.name} is still running." if signal&.aborted?
+      while Child::LIVE.include?(status = child.status)
+        return "The wait was stopped; #{child.name} is still #{status}." if signal&.aborted?
 
         if Process.clock_gettime(Process::CLOCK_MONOTONIC) >= deadline
-          return "#{child.name} is still running after #{timeout.round}s. " \
+          return "#{child.name} is still #{status} after #{timeout.round}s. " \
                  "Read it without wait to see progress, or stop it."
         end
         sleep poll
