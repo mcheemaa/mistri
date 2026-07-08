@@ -139,9 +139,11 @@ class TestSubAgent < Minitest::Test
     assert_includes answer.text, "cannot wait"
 
     child = Mistri::Session.new(store:, id: answer.ui["session_id"])
-    decision = child.open_approvals.first[:decision]
 
-    refute decision["approved"], "the orphaned approval was denied"
+    assert_empty child.open_approvals, "the orphaned approval is denied and settled"
+    denial = child.messages.select(&:tool?).last
+
+    assert_includes denial.text, "cannot pause"
   end
 
   def test_gating_the_delegation_itself_suspends_the_parent
