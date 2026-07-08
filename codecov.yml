@@ -3,3 +3,13 @@
 # provider keys, which CI never has) as missed patch coverage.
 ignore:
   - "test"
+
+# Thread-timing lines (lease heartbeats, await polls) flap by a line or two
+# between CI runs; local runs are deterministic. The threshold absorbs that
+# noise on the project total, while patch coverage stays the strict gate
+# for every new line.
+coverage:
+  status:
+    project:
+      default:
+        threshold: 0.5%
