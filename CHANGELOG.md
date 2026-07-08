@@ -5,10 +5,27 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+- Report delivery: a background child's terminal outcome reports back to
+  its parent, exactly once. The report queues in the parent's inbox as a
+  typed subagent_report entry and folds at the next turn boundary the way
+  a steer does (the model sees `[Magpie finished] <report>`; failures
+  carry the error, stops say so), and a report landing as a run finishes
+  cleanly extends it one turn so the parent reacts. A :subagent_report
+  event (agent, session_id, status, content) closes the child's lane in
+  whatever UI watched the spawn. Session#pending_inbox is the
+  steers-and-reports view (hosts that wake idle sessions on steers should
+  watch it instead); Session#deliver_report is the idempotent primitive
+  underneath.
+- Dispatched runs are fenced by the child's lease, taken before the
+  run-or-not decision: a queue that redelivers a live job leaves the
+  owner alone, a retry of a finished or cancelled child is a clean no-op,
+  and a retry of a child a crashed process left mid-run runs it again
+  (previously the guard refused it, wedging the child as interrupted
+  forever). Child#finished? and Child#error are new readers.
 - Background mode: spawn_agent takes mode: "background" when the spawner
   has a dispatcher, returning a truthful receipt immediately (what the
   child's status says after dispatch, not what the mode promised) while
-  the parent keeps working; reports collect through read_agent. The
+  the parent keeps working; the report arrives on its own (above). The
   dispatcher is a seam: Dispatchers::Inline (default degrade, synchronous
   but honest) and Dispatchers::Thread ship in the gem, and a queue host
   plugs one lambda whose job reconstructs tools from the serializable

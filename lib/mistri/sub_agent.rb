@@ -120,27 +120,44 @@ module Mistri
       # The host job's way back in: reconstruct provider, system, and tools
       # from the spec through host registries, then hand them here. Reopens
       # the child session the spawn created, runs it exactly like an inline
-      # child (started entry, lease, stop watching, terminals), and streams
-      # origin-tagged events to the emit the job supplies. A background
-      # child runs on its own signal: the parent's turn is long over, so
-      # only stop_agent and the stop flag end it early.
+      # child (started entry, lease, stop watching, terminals), streams
+      # origin-tagged events to the emit the job supplies, and reports the
+      # outcome back to the parent (see report_back). A background child
+      # runs on its own signal: the parent's turn is long over, so only
+      # stop_agent and the stop flag end it early.
+      #
+      # The child's lease is the exactly-once fence, so it is taken before
+      # anything else: refused means another process is running this child
+      # right now (a queue redelivered a live job), so leave its owner alone.
+      # Holding it, a terminal decides: present means the child was
+      # cancelled while queued or the queue retried a finished job, so
+      # there is nothing to run; absent means run, and that includes the
+      # child a crashed process left mid-run, which is exactly what queue
+      # retries are for. Either kind of no-op returns nil.
       def run_dispatched(spec, provider:, system:, tools:, store:, emit: nil, schema: nil,
                          **agent_options)
         child = Session.new(store: store, id: spec.fetch("session_id"))
-        # A terminal already written means there is nothing to run: the
-        # child was cancelled while queued, or a queue retried a job that
-        # already finished. Honoring it keeps stop_agent instant and
-        # double-dispatch harmless.
-        already = Child.new(name: spec.fetch("name"), session_id: child.id, store: store)
-        return nil unless Child::LIVE.include?(already.status)
-
         signal = AbortSignal.new
-        result = execute_child(child: child, label: spec.fetch("name"), provider: provider,
-                               system: system, tools: tools, task: spec.fetch("task"),
-                               schema: schema, signal: signal, emit: emit, **agent_options)
-        deny_pending(result, child)
-        child.append(Child::TERMINAL, terminal(result))
-        result
+        lease = Locks.hold(Child.lease_key(child.id),
+                           stop_key: Child.stop_key(child.id), signal: signal)
+        return nil if Mistri.locks && lease.nil?
+
+        begin
+          if Child.new(name: spec.fetch("name"), session_id: child.id, store: store).finished?
+            lease&.release
+            return nil
+          end
+
+          result = execute_child(child: child, label: spec.fetch("name"), provider: provider,
+                                 system: system, tools: tools, task: spec.fetch("task"),
+                                 schema: schema, signal: signal, emit: emit, lease: lease,
+                                 **agent_options)
+          deny_pending(result, child)
+          child.append(Child::TERMINAL, terminal(result))
+          result
+        ensure
+          report_back(spec, store, emit)
+        end
       end
 
       # A child cannot wait for a human, whichever door it entered by: any
@@ -188,12 +205,15 @@ module Mistri
       # door it entered by. From the started entry on, every exit writes a
       # terminal, setup failures included, or the child would read as
       # running forever. The lease says "alive right now" to other
-      # processes and its thread watches the child's stop flag.
+      # processes and its thread watches the child's stop flag; a
+      # dispatched run hands in the lease it already holds (its run-or-not
+      # decision happened under the fence), an inline child acquires its
+      # own here. Either way, this path releases it.
       def execute_child(child:, label:, provider:, system:, tools:, task:, schema:,
-                        signal:, emit:, **agent_options)
+                        signal:, emit:, lease: nil, **agent_options)
         child.append(Child::STARTED, {})
-        lease = Locks.hold(Child.lease_key(child.id),
-                           stop_key: Child.stop_key(child.id), signal: signal)
+        lease ||= Locks.hold(Child.lease_key(child.id),
+                             stop_key: Child.stop_key(child.id), signal: signal)
         begin
           agent = Agent.new(provider: provider, session: child, system: system,
                             tools: tools, **agent_options)
@@ -218,6 +238,32 @@ module Mistri
 
         tagged = event.origin ? "#{origin}>#{event.origin}" : origin
         emit.call(event.with(origin: tagged))
+      end
+
+      # Every terminal outcome reports back, exactly once. The report joins
+      # the parent's inbox (a typed entry that folds at its next turn
+      # boundary, exactly like a steer) and a :subagent_report event
+      # closes the child's lane in whatever UI watched the spawn. A child
+      # that never ran has nothing to say, and the parent session drops a
+      # duplicate delivery, so a redelivered job cannot repeat one.
+      def report_back(spec, store, emit)
+        facade = Child.new(name: spec.fetch("name"), session_id: spec.fetch("session_id"),
+                           store: store)
+        return unless facade.finished?
+
+        status = facade.status
+        text = status == :failed ? facade.error : facade.report
+        delivered = if (parent_id = spec["parent_session_id"])
+                      Session.new(store: store, id: parent_id)
+                             .deliver_report(name: facade.name, session_id: facade.session_id,
+                                             status: status.to_s, text: text)
+                    else
+                      true
+                    end
+        return unless delivered
+
+        emit&.call(Event.new(type: :subagent_report, agent: facade.name,
+                             session_id: facade.session_id, status: status, content: text))
       end
 
       # The parent always gets an in-band answer it can react to. A child

@@ -69,6 +69,11 @@ class TestBackgroundMode < Minitest::Test
 
     assert_equal :done, child.status
     assert_equal "The answer is 7.", child.report
+
+    # The child finished during the spawn itself, so its report folded at
+    # the very next turn boundary: the parent's final word already saw it.
+    assert_includes parent.requests.last[:messages].map(&:text).join("\n"),
+                    "[Corgi finished] The answer is 7."
   end
 
   def test_thread_dispatcher_runs_the_child_while_the_parent_moves_on
@@ -99,6 +104,13 @@ class TestBackgroundMode < Minitest::Test
     assert_equal :done, await_status(child, :done)
     assert_equal "Finished the slow work.", child.report
     refute Mistri.locks.held?(Mistri::Child.lease_key(child.session_id))
+
+    # The parent's run was long over, so the report waits in its inbox.
+    ends = Process.clock_gettime(Process::CLOCK_MONOTONIC) + 3
+    sleep 0.05 while session.pending_inbox.empty? &&
+                     Process.clock_gettime(Process::CLOCK_MONOTONIC) < ends
+
+    assert_equal "Finished the slow work.", session.pending_inbox.first["report"]
   end
 
   def test_a_dropped_spec_reads_queued_and_run_dispatched_picks_it_up

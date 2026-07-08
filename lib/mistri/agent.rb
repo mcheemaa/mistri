@@ -14,7 +14,8 @@ module Mistri
   # returns at once (no thread ever waits on a human), the decision arrives
   # later as a session entry from any process, and resume settles it and
   # carries on. Session#steer queues a user message from any process while
-  # the loop runs; it folds into the transcript at the next turn boundary.
+  # the loop runs; it folds into the transcript at the next turn boundary,
+  # and a background child's report arrives through the same inbox.
   class Agent
     # compaction defaults on so long sessions survive their context window;
     # pass false to disable, or a tuned Compaction. It only ever triggers
@@ -68,7 +69,7 @@ module Mistri
               "run needs input text or images"
       end
 
-      fold_steers # steers queued while idle arrived first; keep that order
+      fold_inbox # anything queued while this session sat idle arrived first; keep that order
       @session.append_message(Message.user_with_images(input, images))
       loop_turns(signal, output_schema, &emit)
     end
@@ -144,7 +145,7 @@ module Mistri
         reason = @budget.exceeded(turns: turns, usage: usage, elapsed: monotonic_now - started)
         return stop_for_budget(reason, usage, &emit) if reason
 
-        fold_steers
+        fold_inbox
         compacted = auto_compact(&emit)
         usage += compacted[:usage] if compacted&.dig(:usage)
         last = run_turn(signal, output_schema, &emit)
@@ -159,14 +160,15 @@ module Mistri
       end
     end
 
-    # A steer that lands while the model finishes cleanly extends the run one
-    # more turn so it gets answered. Aborts, errors, and length stops always
-    # end the run; the steer stays pending for the next one.
+    # A steer or a child's report that lands while the model finishes
+    # cleanly extends the run one more turn, so it is answered rather than
+    # left dangling. Aborts, errors, and length stops always end the run;
+    # the inbox stays pending for the next one.
     def done?(last, signal)
       return false if last.stop_reason == StopReason::TOOL_USE && !signal&.aborted?
       return true if signal&.aborted? || last.stop_reason != StopReason::STOP
 
-      @session.pending_steers.empty?
+      @session.pending_inbox.empty?
     end
 
     # Compact when the context has grown into the reserve. A failed
@@ -187,13 +189,15 @@ module Mistri
       @compaction&.window || Models.find(@provider.model)&.context_window
     end
 
-    # Materialize queued steers into the transcript in arrival order. The
-    # folded message entry carries the steer id, which is what marks the steer
-    # consumed: one append is both the fold and the marker, so a crash between
-    # steers never double-delivers.
-    def fold_steers
-      @session.pending_steers.each do |steer|
-        @session.append("message", "message" => steer["message"], "steer_id" => steer["id"])
+    # Materialize the inbox, queued steers and sub-agent reports alike, into
+    # the transcript in arrival order. The folded message entry carries the
+    # source entry's id under its marker key, which is what marks the entry
+    # consumed: one append is both the fold and the marker, so a crash
+    # between folds never double-delivers.
+    def fold_inbox
+      @session.pending_inbox.each do |entry|
+        marker = Session::INBOX.fetch(entry["type"])
+        @session.append("message", "message" => entry["message"], marker => entry["id"])
       end
     end
 

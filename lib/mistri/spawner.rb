@@ -105,8 +105,9 @@ module Mistri
                 "already finished (#{status})"
               end
       ToolResult.new(
-        content: "#{label} #{state} (agent id #{child.id[0, 8]}). Keep working: " \
-                 "read_agent checks on it (wait: true blocks for its report), " \
+        content: "#{label} #{state} (agent id #{child.id[0, 8]}). Keep working: its " \
+                 "report will arrive in your context when it finishes. Meanwhile " \
+                 "read_agent checks on it (wait: true blocks for the report), " \
                  "steer_agent adjusts it, stop_agent stops it.",
         ui: { "agent" => label, "session_id" => child.id, "mode" => "background" }
       )
@@ -252,8 +253,8 @@ module Mistri
       end
       if @dispatcher
         text += " Use background mode when the work is long and you can keep helping " \
-                "meanwhile: you get a receipt now, manage the worker with the console " \
-                "tools, and collect its report with read_agent."
+                "meanwhile: you get a receipt now, its report arrives on its own when " \
+                "the worker finishes, and the console tools manage it in between."
       end
       text
     end

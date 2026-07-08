@@ -13,8 +13,10 @@ module Mistri
         FileUtils.mkdir_p(dir)
       end
 
+      # One write call per line: concurrent appenders (a steer, a child's
+      # report) interleave whole lines, never fragments.
       def append(id, entry)
-        File.open(path(id), "a") { |file| file.puts(JSON.generate(entry)) }
+        File.write(path(id), "#{JSON.generate(entry)}\n", mode: "a")
         nil
       end
 
