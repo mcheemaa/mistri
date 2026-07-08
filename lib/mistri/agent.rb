@@ -13,9 +13,12 @@ module Mistri
   # marked needs_approval suspends the run instead of executing: the run
   # returns at once (no thread ever waits on a human), the decision arrives
   # later as a session entry from any process, and resume settles it and
-  # carries on. Session#steer queues a user message from any process while
-  # the loop runs; it folds into the transcript at the next turn boundary,
-  # and a background child's report arrives through the same inbox.
+  # carries on. A tool marked ends_turn ends the run once it executes: the
+  # model does not get another word, and whatever comes next (a human's
+  # answer to ask_user, say) arrives as the next run's input. Session#steer
+  # queues a user message from any process while the loop runs; it folds
+  # into the transcript at the next turn boundary, and a background child's
+  # report arrives through the same inbox.
   class Agent
     # compaction defaults on so long sessions survive their context window;
     # pass false to disable, or a tuned Compaction. It only ever triggers
@@ -77,7 +80,8 @@ module Mistri
     # Continue a suspended run. Undecided approvals return immediately, still
     # suspended. Decided ones settle first: approved calls execute, denied
     # calls answer in band so the model knows and can react. Then the loop
-    # carries on as if it never stopped.
+    # carries on as if it never stopped, unless a settled call's tool ends
+    # the turn, in which case its execution was the run's last word.
     def resume(signal: nil, &emit)
       open = @session.open_approvals
       pending = open.select { |approval| approval[:decision].nil? }
@@ -87,7 +91,12 @@ module Mistri
                           usage: Usage.zero)
       end
 
-      settle(open, signal, &emit)
+      executed = settle(open, signal, &emit)
+      if executed.any? { |call| ends_turn?(call) }
+        last = @session.messages.reverse_each.find(&:assistant?)
+        return finished(last, Usage.zero, signal)
+      end
+
       loop_turns(signal, nil, &emit)
     end
 
@@ -101,19 +110,19 @@ module Mistri
     # completed runs only, so resume the session and re-ask if that happens
     # mid-task.
     def task(input, schema:, images: [], signal: nil, fixes: 1, &emit)
-      result = run(task_input(input, schema), images: images, signal: signal,
-                                              output_schema: schema, &emit)
+      result = run(TaskOutput.prompt(input, schema), images: images, signal: signal,
+                                                     output_schema: schema, &emit)
       spent = result.usage
       fixes.downto(0) do |remaining|
         result = result.with(usage: spent)
         return result unless result.completed?
 
-        value = parse_output(result.text)
-        errors = task_errors(value, schema)
+        value = TaskOutput.parse(result.text)
+        errors = TaskOutput.errors(value, schema)
         return result.with(output: value) if errors.empty?
         raise SchemaError, "task output failed validation: #{errors.join("; ")}" if remaining.zero?
 
-        result = run(fix_prompt(errors), signal: signal, output_schema: schema, &emit)
+        result = run(TaskOutput.fix_prompt(errors), signal: signal, output_schema: schema, &emit)
         spent += result.usage
       end
     end
@@ -154,9 +163,9 @@ module Mistri
 
         # Any tool call the turn made must be answered or parked, or the
         # transcript is unpairable and replay fails.
-        parked = last.tool_calls? ? run_tools(last, signal, &emit) : []
+        parked, ended = last.tool_calls? ? run_tools(last, signal, &emit) : [[], false]
         return suspended(last, parked, usage) if parked.any?
-        return finished(last, usage, signal) if done?(last, signal)
+        return finished(last, usage, signal) if ended || done?(last, signal)
       end
     end
 
@@ -262,37 +271,44 @@ module Mistri
 
     # Answer or park the assistant's tool calls. Ungated calls execute (only
     # on a genuine tool_use turn with no abort; otherwise they pair with
-    # interrupted results). Gated calls park as approval requests and are
-    # returned, so the loop can suspend. Nothing is left dangling either way.
+    # interrupted results). Gated calls park as approval requests. Nothing
+    # is left dangling either way. Returns the parked calls and whether an
+    # executed tool ends the turn; a parked call outranks an executed
+    # ends_turn, because a suspension is the stronger stop and the model
+    # regains the floor when the run resumes.
     def run_tools(assistant, signal, &emit)
       calls = assistant.tool_calls
       unless assistant.stop_reason == StopReason::TOOL_USE && !signal&.aborted?
         calls.each { |call| answer(call, ToolExecutor::INTERRUPTED, &emit) }
-        return []
+        return [[], false]
       end
 
       parked, free = screen(calls, signal, &emit).partition { |call| gated?(call) }
-      execute(free, signal, &emit)
+      executed = execute(free, signal, &emit)
       parked.each do |call|
         @session.append("approval_request", "call" => call.to_h)
         emit&.call(Event.new(type: :approval_needed, tool_call: call))
       end
-      parked
+      [parked, executed.any? { |call| ends_turn?(call) }]
     end
 
+    # Returns the calls that actually executed (denied ones only answer).
     def settle(open, signal, &emit)
       approved, denied = open.partition { |approval| approval[:decision]["approved"] }
       cleared = screen(approved.map { |approval| approval[:call] }, signal, &emit)
-      execute(cleared, signal, &emit)
+      executed = execute(cleared, signal, &emit)
       denied.each do |approval|
         note = approval[:decision]["note"]
         text = "The user denied this tool call#{note ? ": #{note}" : "."}"
         answer(approval[:call], text, &emit)
       end
+      executed
     end
 
+    # Runs the calls and answers each; returns the calls that executed
+    # (blocked and parked calls never reach here).
     def execute(calls, signal, &emit)
-      return if calls.empty?
+      return [] if calls.empty?
 
       results = ToolExecutor.call(calls, @tools_by_name, signal: signal,
                                                          max_concurrency: @max_concurrency,
@@ -303,6 +319,7 @@ module Mistri
         result = rewrite(call, result, context) if @after_tool
         answer(call, result, duration: seconds, &emit)
       end
+      calls
     end
 
     # A blocked call answers in band, so the model reads the reason and
@@ -351,6 +368,11 @@ module Mistri
       tool ? tool.needs_approval?(call.arguments) : false
     end
 
+    def ends_turn?(call)
+      tool = @tools_by_name[call.name]
+      tool ? tool.ends_turn? : false
+    end
+
     # A run stopped during its tool phase ends with a clean assistant
     # message, so the message's stop reason alone would read :completed;
     # the signal is what knows the user stopped it.
@@ -373,35 +395,6 @@ module Mistri
       emit&.call(Event.new(type: :error, reason: StopReason::BUDGET, message: message,
                            error_message: "budget_#{reason}"))
       Result.new(message: message, status: :budget, usage: usage)
-    end
-
-    # Distinguishable from a parsed nil: JSON "null" is a valid value.
-    PARSE_FAILED = Object.new.freeze
-    private_constant :PARSE_FAILED
-
-    def task_input(input, schema)
-      "#{input}\n\nAnswer with ONLY a JSON value matching this schema:\n" \
-        "#{JSON.generate(Schema.strict(schema))}"
-    end
-
-    def parse_output(text)
-      body = text.to_s.strip
-      body = body[/\A```(?:json)?\s*(.*?)```\z/m, 1] || body
-      JSON.parse(body)
-    rescue JSON::ParserError
-      PARSE_FAILED
-    end
-
-    def task_errors(value, schema)
-      return ["the answer is not valid JSON"] if value.equal?(PARSE_FAILED)
-
-      Schema.violations(value, schema)
-    end
-
-    def fix_prompt(errors)
-      lines = errors.map { |error| "- #{error}" }.join("\n")
-      "Your answer did not satisfy the required output schema. Problems:\n" \
-        "#{lines}\nReply with ONLY the corrected JSON."
     end
 
     def monotonic_now = Process.clock_gettime(Process::CLOCK_MONOTONIC)
