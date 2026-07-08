@@ -103,6 +103,9 @@ module Mistri
           raise ConfigurationError, "the spawn tool never goes in its own pool"
         end
 
+        # Symbol keys are natural Ruby; the wire speaks strings. One
+        # normalization here and lookup, schema, and menu all agree.
+        types = types.transform_keys(&:to_s)
         validate_types!(types, tools)
 
         schema = spawner_schema(tools, models, default_model(provider), types)

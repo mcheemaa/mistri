@@ -136,6 +136,19 @@ class TestSpawnTypes < Minitest::Test
     assert_equal :done, session.children.last.status
   end
 
+  def test_symbol_keyed_types_resolve_like_string_keyed_ones
+    child_fake = fake({ text: "Report ready." })
+    spawn = Mistri::SubAgent.spawner(provider: child_fake, tools: [archive],
+                                     types: { researcher: researcher_type })
+    parent_fake = spawn_call({ "name" => "Corgi", "type" => "researcher", "task" => "go" })
+    session = Mistri::Session.new(store: Mistri::Stores::Memory.new)
+
+    Mistri::Agent.new(provider: parent_fake, tools: [spawn], session:).run("go")
+
+    assert_equal :done, session.children.first.status,
+                 "the wire speaks strings; a symbol-keyed registry must still resolve"
+  end
+
   def test_pack_bundles_the_spawner_with_the_console
     names = Mistri::SubAgent.pack(provider: fake).map(&:name)
 
