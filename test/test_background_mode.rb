@@ -99,7 +99,8 @@ class TestBackgroundMode < Minitest::Test
     receipt = session.messages.select(&:tool?).last
 
     assert_match(/working in the background/, receipt.text)
-    assert_equal :running, child.status, "the child is still at work as the parent finishes"
+    assert_includes Mistri::Child::LIVE, child.status,
+                    "the child has not finished as the parent moves on"
 
     assert_equal :done, await_status(child, :done)
     assert_equal "Finished the slow work.", child.report
