@@ -30,13 +30,15 @@ module Mistri
     # spawn call returns immediately. Enough for development and for hosts
     # whose children are short; queue-backed hosts plug their own lambda.
     class Thread
-      def call(_spec, runner)
+      def call(spec, runner)
         ::Thread.new do
           runner.call
-        rescue StandardError
-          # The runner writes terminals for its own failures; a thread must
-          # never die loudly into the process.
-          nil
+        rescue StandardError => e
+          # The runner writes the child's failed terminal before re-raising;
+          # a thread must not die loudly into the process, but it must not
+          # die silently either, or there is no trace to debug from.
+          warn "mistri: background runner for #{spec["name"].inspect} crashed: " \
+               "#{e.class}: #{e.message}"
         end
         nil
       end

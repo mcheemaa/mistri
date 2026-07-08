@@ -156,22 +156,32 @@ module Mistri
                            stop_key: Child.stop_key(child.id), signal: signal)
         return nil if Mistri.locks && lease.nil?
 
-        begin
-          if Child.new(name: spec.fetch("name"), session_id: child.id, store: store).finished?
-            lease&.release
-            return nil
-          end
-
-          result = execute_child(child: child, label: spec.fetch("name"), provider: provider,
-                                 system: system, tools: tools, task: spec.fetch("task"),
-                                 schema: schema, signal: signal, emit: emit, lease: lease,
-                                 **agent_options)
-          deny_pending(result, child)
-          child.append(Child::TERMINAL, terminal(result))
-          result
-        ensure
-          report_back(spec, store, emit)
+        if Child.new(name: spec.fetch("name"), session_id: child.id, store: store).finished?
+          lease&.release
+          return nil
         end
+
+        result = execute_child(child: child, label: spec.fetch("name"), provider: provider,
+                               system: system, tools: tools, task: spec.fetch("task"),
+                               schema: schema, signal: signal, emit: emit, lease: lease,
+                               **agent_options)
+        deny_pending(result, child)
+        child.append(Child::TERMINAL, terminal(result))
+        result
+      rescue StandardError => e
+        # Completion is a contract even when the runner dies in the
+        # preamble: without this, a raise before the started entry (a lock
+        # backend down, say) would leave the child reading :queued forever,
+        # with nothing to report and nothing for a retry to heal.
+        if child && !Child.new(name: spec.fetch("name"), session_id: child.id,
+                               store: store).finished?
+          child.append(Child::TERMINAL,
+                       "status" => "failed", "error" => "#{e.class}: #{e.message}")
+        end
+        lease&.release
+        raise
+      ensure
+        report_back(spec, store, emit) if child
       end
 
       # A child cannot wait for a human, whichever door it entered by: any

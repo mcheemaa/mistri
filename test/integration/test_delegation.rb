@@ -32,7 +32,11 @@ class TestDelegationIntegration < Minitest::Test
 
     assert_predicate result, :completed?
     assert Integration.saw?(result.text, year.to_s), "the year never flowed up: #{result.text}"
-    assert(origins.all? { |o| o.start_with?("researcher#") }, "child events untagged")
+    lanes = origins.uniq
+
+    assert_equal 1, lanes.length, "one worker, one lane: #{lanes.inspect}"
+    assert_match(/\A[\w-]+#\h{8}\z/, lanes.first,
+                 "child events carry a worker tag: #{lanes.first.inspect}")
 
     link = parent.session.messages.select(&:tool?).last.ui
     child = Mistri::Session.new(store:, id: link.fetch("session_id"))

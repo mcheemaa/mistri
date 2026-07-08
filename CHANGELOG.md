@@ -3,36 +3,48 @@
 All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
-## [Unreleased]
+## [0.5.0] - 2026-07-08
 
-- The Fake provider streams tool-call arguments in chunks, and each
-  delta's partial carries the in-progress call with arguments parsed so
-  far, the same shape a real assembler builds. A consumer that renders
-  tool input as it arrives (a page preview, a code block) is now testable
-  headless.
-- Each run of a named specialist can carry its own name: the delegate
-  tool takes an optional name argument, so two parallel researchers read
-  as Corgi and Beagle in lanes, lists, and links instead of "researcher"
-  twice. SubAgent.sanitize_label is the one shared sanitizer behind
-  specialist runs and spawner labels.
-- Tool.define takes ends_turn: true for a tool that is the last word of
-  its turn: once it executes, the loop ends the run instead of prompting
-  the model again, so an ask_user tool hands the floor to a human
-  structurally instead of through prompt discipline. The whole batch it
-  arrived in still executes and is answered; a blocked or denied call
-  never executed, so the model keeps the floor; a parked approval outranks
-  it (the run suspends, and an approved ends_turn call ends the resumed
-  run). A pending steer stays queued for the next run. The Result says it
-  happened (Result#handed_off?), so hosts route on the handoff instead of
-  sniffing messages, and task mode returns the handoff as-is rather than
-  re-prompting for JSON while a human holds the floor.
-- Session#transcript reads the whole conversation back from the store:
-  entries with image bytes stripped, and with include_children every
-  sub-agent's log spliced in after its link entry, tagged with an
-  "origin" key shaped exactly like the live stream's event origins
-  (nesting joined with ">"). A UI that rebuilds from the transcript shows
-  the lanes it showed live, running children's progress-so-far included;
-  hosts stop hand-walking link entries.
+- The children registry: Session#children lists every sub-agent a session
+  has spawned as a Mistri::Child, a window onto the child's own session
+  with name, status, report, transcript(tail:) with image bytes stripped,
+  and say(text) to steer it. All of it derives from the store, so it reads
+  the same from any process, while the child runs and forever after.
+- Completion is a contract: every child ends by writing a terminal entry
+  (done with its report, stopped, or failed with the error), including
+  when the child's run raises, so a crashed child never reads as running.
+
+- Spawn policy is an object: Mistri::Spawner carries the pool, types,
+  models, headcount, and dispatcher; SubAgent.spawner and SubAgent.pack
+  stay the front doors.
+- Typed workers: the spawner takes types:, a host registry of Definitions
+  by name. A typed child takes its system prompt, tools, and model from
+  the definition; instructions appends; explicit tool and model args
+  override within the pool and allowlist. "general-purpose" stays the
+  built-in composable default. Types fail at construction, never
+  mid-spawn: a definition with unfilled placeholders or tools the pool
+  lacks is a boot-time ConfigurationError.
+- max_children (default 4) caps live workers per session; a spawn past
+  the cap answers in band and freed slots reopen.
+- SubAgent.pack returns the spawn tool plus the management console in one
+  call, the whole kit for a worker-running agent.
+
+- Background mode: spawn_agent takes mode: "background" when the spawner
+  has a dispatcher, returning a truthful receipt immediately (what the
+  child's status says after dispatch, not what the mode promised) while
+  the parent keeps working; the report arrives on its own (above). The
+  dispatcher is a seam: Dispatchers::Inline (default degrade, synchronous
+  but honest) and Dispatchers::Thread ship in the gem, and a queue host
+  plugs one lambda whose job reconstructs tools from the serializable
+  spec and calls SubAgent.run_dispatched.
+- Lifecycle is entries: subagent_dispatched and subagent_started join the
+  terminal, so status walks the store alone: queued, running, interrupted,
+  done, stopped, failed. A job that dies before starting reads :queued,
+  honestly.
+- A background child runs on its own signal: the parent's turn is over, so
+  only stop_agent and the stop flag end it early. workspace: "parent"
+  requires inline mode, enforced in band.
+
 - Report delivery: a background child's terminal outcome reports back to
   its parent, exactly once. The report queues in the parent's inbox as a
   typed subagent_report entry and folds at the next turn boundary the way
@@ -50,36 +62,6 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   and a retry of a child a crashed process left mid-run runs it again
   (previously the guard refused it, wedging the child as interrupted
   forever). Child#finished? and Child#error are new readers.
-- Background mode: spawn_agent takes mode: "background" when the spawner
-  has a dispatcher, returning a truthful receipt immediately (what the
-  child's status says after dispatch, not what the mode promised) while
-  the parent keeps working; the report arrives on its own (above). The
-  dispatcher is a seam: Dispatchers::Inline (default degrade, synchronous
-  but honest) and Dispatchers::Thread ship in the gem, and a queue host
-  plugs one lambda whose job reconstructs tools from the serializable
-  spec and calls SubAgent.run_dispatched.
-- Lifecycle is entries: subagent_dispatched and subagent_started join the
-  terminal, so status walks the store alone: queued, running, interrupted,
-  done, stopped, failed. A job that dies before starting reads :queued,
-  honestly.
-- A background child runs on its own signal: the parent's turn is over, so
-  only stop_agent and the stop flag end it early. workspace: "parent"
-  requires inline mode, enforced in band.
-- Spawn policy is an object: Mistri::Spawner carries the pool, types,
-  models, headcount, and dispatcher; SubAgent.spawner and SubAgent.pack
-  stay the front doors.
-
-- Typed workers: the spawner takes types:, a host registry of Definitions
-  by name. A typed child takes its system prompt, tools, and model from
-  the definition; instructions appends; explicit tool and model args
-  override within the pool and allowlist. "general-purpose" stays the
-  built-in composable default. Types fail at construction, never
-  mid-spawn: a definition with unfilled placeholders or tools the pool
-  lacks is a boot-time ConfigurationError.
-- max_children (default 4) caps live workers per session; a spawn past
-  the cap answers in band and freed slots reopen.
-- SubAgent.pack returns the spawn tool plus the management console in one
-  call, the whole kit for a worker-running agent.
 
 - The management console: Mistri::Console.tools returns list_agents,
   read_agent (tail: to choose how much transcript, wait: to block for the
@@ -112,14 +94,44 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   reads :interrupted instead of :running forever. Without an adapter
   nothing changes.
 
-- The children registry: Session#children lists every sub-agent a session
-  has spawned as a Mistri::Child, a window onto the child's own session
-  with name, status, report, transcript(tail:) with image bytes stripped,
-  and say(text) to steer it. All of it derives from the store, so it reads
-  the same from any process, while the child runs and forever after.
-- Completion is a contract: every child ends by writing a terminal entry
-  (done with its report, stopped, or failed with the error), including
-  when the child's run raises, so a crashed child never reads as running.
+- Session#transcript reads the whole conversation back from the store:
+  entries with image bytes stripped, and with include_children every
+  sub-agent's log spliced in after its link entry, tagged with an
+  "origin" key shaped exactly like the live stream's event origins
+  (nesting joined with ">"). A UI that rebuilds from the transcript shows
+  the lanes it showed live, running children's progress-so-far included;
+  hosts stop hand-walking link entries.
+
+- Tool.define takes ends_turn: true for a tool that is the last word of
+  its turn: once it executes, the loop ends the run instead of prompting
+  the model again, so an ask_user tool hands the floor to a human
+  structurally instead of through prompt discipline. The whole batch it
+  arrived in still executes and is answered; a blocked or denied call
+  never executed, so the model keeps the floor; a parked approval outranks
+  it (the run suspends, and an approved ends_turn call ends the resumed
+  run). A pending steer stays queued for the next run. The Result says it
+  happened (Result#handed_off?), so hosts route on the handoff instead of
+  sniffing messages, and task mode returns the handoff as-is rather than
+  re-prompting for JSON while a human holds the floor.
+
+- Store appends tolerate concurrent writers. Sessions have more than one
+  appender by design (the loop, a steer from a web process, a worker's
+  report from a job), so the ActiveRecord store's unique index is now
+  concurrency control rather than a tripwire: a writer that loses the
+  position race retries at the next slot, bounded, then raises loudly.
+  The JSONL store writes each line in a single call, so concurrent
+  appenders interleave whole lines, never fragments.
+
+- The Fake provider streams tool-call arguments in chunks, and each
+  delta's partial carries the in-progress call with arguments parsed so
+  far, the same shape a real assembler builds. A consumer that renders
+  tool input as it arrives (a page preview, a code block) is now testable
+  headless.
+- Each run of a named specialist can carry its own name: the delegate
+  tool takes an optional name argument, so two parallel researchers read
+  as Corgi and Beagle in lanes, lists, and links instead of "researcher"
+  twice. SubAgent.sanitize_label is the one shared sanitizer behind
+  specialist runs and spawner labels.
 
 ## [0.4.1] - 2026-07-06
 

@@ -257,6 +257,29 @@ class TestReportDelivery < Minitest::Test
     assert_empty child_fake.requests
   end
 
+  def test_a_runner_that_dies_before_the_start_still_fails_the_child
+    broken = Class.new do
+      def held?(_key) = false
+      def acquire(*) = raise("lock backend down")
+      def clear_flag(_key) = nil
+    end
+    Mistri.locks = broken.new
+    child_fake = fake({ text: "never runs" })
+    spec, store, session = dispatch(child_fake, name: "Vizsla")
+
+    assert_raises(RuntimeError) do
+      Mistri::SubAgent.run_dispatched(spec, provider: child_fake, system: "You help.",
+                                            tools: [], store: store)
+    end
+
+    child = session.children.first
+
+    assert_equal :failed, child.status, "queued forever is a contract violation"
+    assert_match(/lock backend down/, child.error)
+    assert_equal "failed", session.pending_inbox.first["status"],
+                 "the failure still reports back to the parent"
+  end
+
   def test_a_parentless_spec_still_emits_the_event
     child_fake = fake({ text: "orphan work" })
     store = Mistri::Stores::Memory.new
