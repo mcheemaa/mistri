@@ -62,7 +62,9 @@ module Mistri
 
     # The delegate tool: each call runs a fresh child and answers with its
     # final text, plus {agent, session_id} on the ui channel so a host can
-    # link the child's transcript.
+    # link the child's transcript. The model may name each run, so two
+    # parallel researchers read as "Corgi" and "Beagle" in lanes and lists
+    # instead of "researcher" twice.
     def tool
       sub = self
       blurb = "#{@description} Runs as a focused sub-agent with a clean " \
@@ -71,13 +73,16 @@ module Mistri
                                 schema: lambda {
                                   string :task, "Complete instructions for the sub-agent",
                                          required: true
+                                  string :name, "A short name for this run, shown wherever " \
+                                                "its events appear (default: the tool's name)"
                                 }) do |args, context|
-        sub.run_child(args.fetch("task"), context)
+        sub.run_child(args.fetch("task"), context, name: args["name"])
       end
     end
 
-    def run_child(task, context)
-      SubAgent.run_child(label: @name, provider: @provider, system: @system,
+    def run_child(task, context, name: nil)
+      SubAgent.run_child(label: SubAgent.sanitize_label(name, fallback: @name),
+                         provider: @provider, system: @system,
                          tools: @tools, task: task, context: context, schema: @schema,
                          **@agent_options)
     end
@@ -94,6 +99,15 @@ module Mistri
       # console, so a host hands its agent everything workers need.
       def pack(provider:, console: {}, **spawner_options)
         [spawner(provider: provider, **spawner_options), *Console.tools(**console)]
+      end
+
+      # A worker's display name, made safe for origins: the label rides
+      # them as "label#id" and nesting joins with ">", so those separators
+      # squeeze to hyphens along with whitespace. Blank falls back.
+      def sanitize_label(text, fallback:)
+        label = text.to_s.gsub(/[#>\s]+/, "-").squeeze("-")[0, 32]
+        label = label.delete_prefix("-").delete_suffix("-")
+        label.empty? ? fallback : label
       end
 
       def run_child(label:, provider:, system:, tools:, task:, context:, schema: nil,

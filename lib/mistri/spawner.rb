@@ -259,12 +259,8 @@ module Mistri
       text
     end
 
-    # The label rides origins as "label#id" and joins nesting with ">",
-    # so those separators squeeze to hyphens along with whitespace.
     def label_for(args)
-      label = args["name"].to_s.gsub(/[#>\s]+/, "-").squeeze("-")[0, 32]
-      label = label.delete_prefix("-").delete_suffix("-")
-      label.empty? ? "spawn" : label
+      SubAgent.sanitize_label(args["name"], fallback: "spawn")
     end
   end
 end

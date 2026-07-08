@@ -67,16 +67,30 @@ module Mistri
         kind == :text ? Content::Text.new(text:) : Content::Thinking.new(thinking: text)
       end
 
+      # Arguments stream in chunks, and every delta's partial carries the
+      # in-progress call with the arguments parsed so far, the same shape a
+      # real assembler builds, so a consumer that renders tool input as it
+      # arrives (a page preview, a code block) is testable headless.
       def stream_tool_call(spec, position, blocks, emit)
         spec = spec.transform_keys(&:to_sym)
         call = ToolCall.new(id: spec[:id] || "call_#{position + 1}", name: spec[:name],
                             arguments: (spec[:arguments] || {}).transform_keys(&:to_s))
         index = blocks.size
         emit_event(emit, :toolcall_start, blocks, content_index: index)
-        emit_event(emit, :toolcall_delta, blocks, content_index: index,
-                                                  delta: JSON.generate(call.arguments))
+        built = +""
+        JSON.generate(call.arguments).scan(/.{1,#{@chunk_size}}/m) do |chunk|
+          built << chunk
+          emit_event(emit, :toolcall_delta, blocks + [in_progress(call, built)],
+                     content_index: index, delta: chunk)
+        end
         blocks << call
         emit_event(emit, :toolcall_end, blocks, content_index: index, tool_call: call)
+      end
+
+      def in_progress(call, json)
+        parsed = PartialJson.parse(json)
+        ToolCall.new(id: call.id, name: call.name,
+                     arguments: parsed.is_a?(Hash) ? parsed : {})
       end
 
       def finish(turn, blocks, emit)

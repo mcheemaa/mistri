@@ -64,6 +64,31 @@ class TestFakeProvider < Minitest::Test
     assert_equal 1, provider.requests.first[:messages].length
   end
 
+  def test_tool_call_arguments_stream_in_chunks_with_readable_partials
+    html = "<main>Hello, page</main>"
+    turn = { tool_calls: [{ name: "write_page", arguments: { "html" => html } }] }
+    provider = Mistri::Providers::Fake.new(turns: [turn], chunk_size: 8)
+    events = []
+
+    provider.stream { |event| events << event }
+
+    assert_well_formed events
+    chunks = deltas(events, :toolcall_delta)
+
+    assert_operator chunks.length, :>, 1, "arguments arrive over many deltas"
+    assert_equal JSON.generate({ "html" => html }), chunks.join
+
+    calls = events.select { |e| e.type == :toolcall_delta }
+                  .map { |e| e.partial.content.last }
+
+    calls.each { |call| assert_equal "write_page", call.name }
+    htmls = calls.map { |call| call.arguments["html"].to_s }
+
+    assert_equal htmls.sort_by(&:length), htmls,
+                 "the in-progress html only ever grows: #{htmls.inspect}"
+    assert_equal html, htmls.last, "the final delta's partial already reads complete"
+  end
+
   private
 
   def deltas(events, type)

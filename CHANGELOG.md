@@ -5,6 +5,16 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+- The Fake provider streams tool-call arguments in chunks, and each
+  delta's partial carries the in-progress call with arguments parsed so
+  far, the same shape a real assembler builds. A consumer that renders
+  tool input as it arrives (a page preview, a code block) is now testable
+  headless.
+- Each run of a named specialist can carry its own name: the delegate
+  tool takes an optional name argument, so two parallel researchers read
+  as Corgi and Beagle in lanes, lists, and links instead of "researcher"
+  twice. SubAgent.sanitize_label is the one shared sanitizer behind
+  specialist runs and spawner labels.
 - Tool.define takes ends_turn: true for a tool that is the last word of
   its turn: once it executes, the loop ends the run instead of prompting
   the model again, so an ask_user tool hands the floor to a human
