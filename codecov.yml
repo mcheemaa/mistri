@@ -1,0 +1,5 @@
+# Tests are not coverage targets: simplecov filters test/ out of the report,
+# so codecov must not count test lines (integration tests only run with live
+# provider keys, which CI never has) as missed patch coverage.
+ignore:
+  - "test"

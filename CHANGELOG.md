@@ -5,6 +5,16 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+- The management console: Mistri::Console.tools returns list_agents,
+  read_agent (tail: to choose how much transcript, wait: to block for the
+  report with an in-band timeout), steer_agent, and stop_agent. Every tool
+  is a thin wrapper over Session#children and the Child facade, the same
+  functions a host UI calls, so agent and user control stay structurally
+  equal. Workers answer to name or session id uniformly in every tool;
+  duplicate names resolve to the latest spawn, ids stay unambiguous, and
+  every state answers honestly in band (already done, nothing to steer,
+  stopping needs a lock adapter).
+
 - Stop one child, keep the run: every sub-agent now runs on its own signal
   derived from the parent's (AbortSignal#derive), so the parent's abort
   still cascades down while Child#stop ends a single worker and the parent
