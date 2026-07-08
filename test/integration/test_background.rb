@@ -53,4 +53,49 @@ class TestBackgroundIntegration < Minitest::Test
     assert_equal :done, child.status
     assert_equal :done, child.status, "terminal entry persists"
   end
+
+  # The report arrives on its own: no read_agent, no waiting — the worker
+  # finishes, its report folds into the parent's context, and the model
+  # answers from it.
+  Integration.scenario(self, :a_workers_report_arrives_without_being_asked_for) do |model|
+    Mistri.locks = Mistri::Locks::Memory.new
+    number = rand(100..900)
+    store = Mistri::Stores::Memory.new
+    oracle = Mistri::Tool.define("oracle", "Answers the secret number, slowly.") do
+      sleep 1
+      number.to_s
+    end
+    tools = Mistri::SubAgent.pack(provider: Mistri.provider(model), tools: [oracle],
+                                  dispatcher: Mistri::Dispatchers::Thread.new)
+    parent = Mistri::Agent.new(
+      provider: Mistri.provider(model), tools: tools,
+      session: Mistri::Session.new(store:),
+      system: "Delegate lookups to workers; their reports arrive on their own " \
+              "when they finish."
+    )
+
+    first = parent.run(
+      "Spawn a background worker named Terrier (instructions: call the oracle " \
+      "tool and report its answer) to fetch the secret number. Then, without " \
+      "waiting for Terrier, reply with exactly: receipt acknowledged."
+    )
+
+    assert_predicate first, :completed?
+
+    # The typed entry lands in the parent session whether the report folded
+    # mid-run or still waits in the inbox, so this await is race-free.
+    ends = Process.clock_gettime(Process::CLOCK_MONOTONIC) + 60
+    until parent.session.entries.any? { |entry| entry["type"] == "subagent_report" } ||
+          Process.clock_gettime(Process::CLOCK_MONOTONIC) > ends
+      sleep 0.2
+    end
+
+    assert_predicate parent.session.children.first, :finished?
+
+    second = parent.run("What number did your worker report? Answer with just the number.")
+
+    assert_predicate second, :completed?
+    assert Integration.saw?(second.text, number.to_s),
+           "the folded report never reached the model: #{second.text}"
+  end
 end

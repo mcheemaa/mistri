@@ -49,8 +49,21 @@ module Mistri
       :running
     end
 
+    # A terminal entry exists: the child ended as done, stopped, or failed
+    # and will never run again. The question a queue retry asks — and its
+    # inverse (started but no terminal) is what makes a crashed child
+    # re-runnable.
+    def finished?
+      !terminal_entry.nil?
+    end
+
     def report
       terminal_entry&.fetch("report", nil)
+    end
+
+    # The terminal entry's error string, once failed.
+    def error
+      terminal_entry&.fetch("error", nil)
     end
 
     # Recent entries, oldest first, with inline image bytes replaced by a

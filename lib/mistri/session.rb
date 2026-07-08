@@ -66,6 +66,11 @@ module Mistri
       entries.reverse_each.find { |entry| entry["type"] == "compaction" }
     end
 
+    # The inbox: entry types queued for the loop's next turn boundary, each
+    # mapped to the marker key its fold leaves on the consuming message
+    # entry.
+    INBOX = { "steer" => "steer_id", "subagent_report" => "report_id" }.freeze
+
     # Queue a message for a running exchange from any process. The loop folds
     # pending steers into the transcript at the next turn boundary, so the
     # model sees them mid-run; one that arrives as the model finishes cleanly
@@ -74,13 +79,42 @@ module Mistri
       append("steer", "id" => SecureRandom.uuid, "message" => Message.user(text).to_h)
     end
 
-    # Steers not yet folded into the transcript, oldest first. The folding
-    # message entry carries the steer id, so consumption is derived from the
-    # log alone and reads the same from every process.
-    def pending_steers
+    # A sub-agent's report, queued for this session the way a steer is: it
+    # folds into the transcript at the next turn boundary as a labeled block
+    # the model can react to ("[Magpie finished] <report>"), while the typed
+    # entry keeps name, status, and the raw text for hosts to render as a
+    # report card rather than a fake user message. One report per child,
+    # ever: a duplicate delivery (a redelivered queue job, a lease race) is
+    # dropped, and the return says which happened. Reports normally arrive
+    # via SubAgent.run_dispatched; call this directly only from a custom
+    # dispatch path.
+    def deliver_report(name:, session_id:, status:, text: nil) # rubocop:disable Naming/PredicateMethod
+      already = entries.any? do |entry|
+        entry["type"] == "subagent_report" && entry["session_id"] == session_id
+      end
+      return false if already
+
+      append("subagent_report", "id" => SecureRandom.uuid, "name" => name,
+                                "session_id" => session_id, "status" => status, "report" => text,
+                                "message" => Message.user(report_label(name, status, text)).to_h)
+      true
+    end
+
+    # Everything queued for the loop's next turn boundary — steers and
+    # sub-agent reports — oldest first, in arrival order. The folding
+    # message entry carries the source entry's id under its marker key, so
+    # consumption is derived from the log alone and reads the same from
+    # every process. A host that wakes an idle session when a steer arrives
+    # should watch this instead: a report deserves the same pickup.
+    def pending_inbox
       log = entries
-      folded = log.filter_map { |entry| entry["steer_id"] }.to_set
-      log.select { |entry| entry["type"] == "steer" && !folded.include?(entry["id"]) }
+      folded = log.flat_map { |entry| entry.values_at(*INBOX.values) }.compact.to_set
+      log.select { |entry| INBOX.key?(entry["type"]) && !folded.include?(entry["id"]) }
+    end
+
+    # The steer-only slice of the inbox, oldest first.
+    def pending_steers
+      pending_inbox.select { |entry| entry["type"] == "steer" }
     end
 
     # Sub-agents this session has spawned, in spawn order: one Child window
@@ -147,6 +181,17 @@ module Mistri
 
     def summary_message(summary)
       Message.user("#{Compaction::SUMMARY_PREFACE}\n\n#{summary}")
+    end
+
+    # How a report reads to the model: labeled with the worker's name and
+    # fate, so the parent knows exactly who finished and how.
+    def report_label(name, status, text)
+      case status
+      when "done" then "[#{name} finished] #{text}"
+      when "failed" then "[#{name} failed] #{text}"
+      when "stopped" then "[#{name} was stopped]"
+      else "[#{name} ended: #{status}]"
+      end
     end
 
     def decide(call_id, approved:, note:)
