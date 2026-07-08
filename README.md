@@ -307,6 +307,16 @@ definition; `general-purpose` stays open for the model to compose.
 `max_children` (default 4) caps live workers, and every policy violation
 answers the model in band.
 
+Everything cross-process (stopping a worker from another process, the
+`:interrupted` liveness read, and the lease fence below) rides a lock
+adapter; configure one at boot. Without it, workers still run, but stops
+need the parent's own signal, a crashed child reads `:running`, and
+dispatched retries are unfenced:
+
+```ruby
+Mistri.locks = Mistri::Locks::RailsCache.new   # Locks::Memory for a single process
+```
+
 With a dispatcher, `spawn_agent` takes `mode: "background"`: the model gets
 a truthful receipt at once and keeps working while the child runs. The
 console manages the roster with the same functions a host UI calls, so
