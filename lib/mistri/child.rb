@@ -11,12 +11,15 @@ module Mistri
   #   child.transcript(tail: 20)  # recent entries, image bytes stripped
   #   child.say("Also check their pricing page")
   #
-  # :running means no terminal entry yet. With a lock adapter configured
-  # (Mistri.locks), a child whose liveness lease has lapsed reads
-  # :interrupted instead: it died without writing its terminal. Without an
-  # adapter there is no liveness signal, so no-terminal stays :running.
+  # Status is a walk over the child's own entries: a terminal entry wins; a
+  # started child is :running while its lease holds and :interrupted once
+  # it lapses (with a lock adapter; without one there is no liveness signal
+  # and no-terminal stays :running); a dispatched-but-never-started child is
+  # :queued, honestly, because the host's queue owns that gap.
   class Child
     TERMINAL = "subagent_result"
+    DISPATCHED = "subagent_dispatched"
+    STARTED = "subagent_started"
 
     attr_reader :name, :session_id
 
@@ -31,8 +34,13 @@ module Mistri
     end
 
     def status
-      terminal = terminal_entry
+      log = session.entries
+      terminal = log.reverse_each.find { |entry| entry["type"] == TERMINAL }
       return terminal["status"].to_sym if terminal
+      if log.any? { |entry| entry["type"] == DISPATCHED } &&
+         log.none? { |entry| entry["type"] == STARTED }
+        return :queued
+      end
       return :interrupted if Mistri.locks && !Mistri.locks.held?(self.class.lease_key(@session_id))
 
       :running

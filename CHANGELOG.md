@@ -5,6 +5,25 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+- Background mode: spawn_agent takes mode: "background" when the spawner
+  has a dispatcher, returning a truthful receipt immediately (what the
+  child's status says after dispatch, not what the mode promised) while
+  the parent keeps working; reports collect through read_agent. The
+  dispatcher is a seam: Dispatchers::Inline (default degrade, synchronous
+  but honest) and Dispatchers::Thread ship in the gem, and a queue host
+  plugs one lambda whose job reconstructs tools from the serializable
+  spec and calls SubAgent.run_dispatched.
+- Lifecycle is entries: subagent_dispatched and subagent_started join the
+  terminal, so status walks the store alone: queued, running, interrupted,
+  done, stopped, failed. A job that dies before starting reads :queued,
+  honestly.
+- A background child runs on its own signal: the parent's turn is over, so
+  only stop_agent and the stop flag end it early. workspace: "parent"
+  requires inline mode, enforced in band.
+- Spawn policy is an object: Mistri::Spawner carries the pool, types,
+  models, headcount, and dispatcher; SubAgent.spawner and SubAgent.pack
+  stay the front doors.
+
 - Typed workers: the spawner takes types:, a host registry of Definitions
   by name. A typed child takes its system prompt, tools, and model from
   the definition; instructions appends; explicit tool and model args
