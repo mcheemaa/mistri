@@ -3,7 +3,7 @@
 require_relative "test_helper"
 
 # Two-channel tool results: content reaches the model, ui reaches only the
-# host — on the event, in the store, and never on a provider's wire.
+# host: on the event, in the store, and never on a provider's wire.
 class TestToolResultUi < Minitest::Test
   MARKER = "UI_ONLY_PAYLOAD_9Z"
 

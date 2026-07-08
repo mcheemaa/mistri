@@ -3,7 +3,7 @@
 module Mistri
   # Loads skills and wires them into an agent: their one-line descriptions
   # ride the system prompt, and the model pulls a full body on demand with
-  # the read_skill tool — so a large library costs almost nothing until a
+  # the read_skill tool, so a large library costs almost nothing until a
   # skill is actually used.
   module Skills
     module_function

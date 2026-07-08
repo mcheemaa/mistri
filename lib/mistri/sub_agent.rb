@@ -3,7 +3,7 @@
 module Mistri
   # Delegation with a clean context: a child agent runs on its own session
   # (the caller's store, linked in the caller's transcript), and only its
-  # final answer returns to the parent — exploration never fills the
+  # final answer returns to the parent; exploration never fills the
   # parent's window. Compaction rescues a full context after the fact;
   # spawning avoids filling it in the first place. A child session is its
   # own single-provider session, so delegating to a cheaper model is the
@@ -24,7 +24,7 @@ module Mistri
   #   spawn = Mistri::SubAgent.spawner(provider:, tools: [fetch_page, search])
   #
   # Children never receive a spawn tool: delegation is one level deep by
-  # construction. Parallel fan-out costs nothing — several spawn calls in
+  # construction. Parallel fan-out costs nothing: several spawn calls in
   # one turn run concurrently on the executor pool.
   #
   # Child events forward into the parent's stream tagged with origin
@@ -45,7 +45,7 @@ module Mistri
     attr_reader :name, :description
 
     # schema: makes the specialist answer in validated JSON (task mode
-    # underneath) — fan-out children then return a uniform shape the parent
+    # underneath), so fan-out children return a uniform shape the parent
     # synthesizes instead of five styles of prose.
     def initialize(name:, description:, provider:, system: nil, tools: [], schema: nil,
                    **agent_options)

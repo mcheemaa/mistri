@@ -260,7 +260,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   keep their old arity. Events gained an origin field.
 
 - Task mode: Agent#task(input, schema:) runs an exchange that must end in
-  JSON matching the schema — tools run as usual, providers constrain the
+  JSON matching the schema: tools run as usual, providers constrain the
   final answer natively where supported (Anthropic output_config, OpenAI
   text.format strict, Gemini responseJsonSchema when no tools), and the
   answer validates client-side everywhere. A violation goes back to the
@@ -280,8 +280,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - Rails integration: `rails generate mistri:install YourModel` creates a
   host-named entry model and its migration for Stores::ActiveRecord
   (MEDIUMTEXT payload on MySQL-family adapters). Streaming sinks under
-  Mistri::Sinks — ActionCable (lazy server, injectable), SSE (outbound
-  frames to any IO), and Coalesced (merges delta bursts to UI speed) — all
+  Mistri::Sinks: ActionCable (lazy server, injectable), SSE (outbound
+  frames to any IO), and Coalesced (merges delta bursts to UI speed), all
   pure Ruby, usable as `agent.run(input, &sink)`. No Railtie: generators
   auto-discover and everything else duck-types.
 

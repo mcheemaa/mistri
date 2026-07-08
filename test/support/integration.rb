@@ -4,7 +4,7 @@ require_relative "../test_helper"
 
 # The live integration harness: every scenario runs the full loop against
 # real provider APIs, once per model in the matrix. Every assertion checks
-# that a GENERATED codename flowed through the machinery — a coined ghostly
+# that a GENERATED codename flowed through the machinery: a coined ghostly
 # word like Spectramoor exists in no training data, so its presence in an
 # answer proves the tool result, summary, or child transcript carried it.
 #

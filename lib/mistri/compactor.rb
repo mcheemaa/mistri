@@ -5,7 +5,7 @@ require "json"
 module Mistri
   # Compacts a session in place: everything before a cut point is summarized
   # by the provider, and a compaction entry redirects replay to the summary
-  # plus the kept tail. Append-only — the full history stays in the store for
+  # plus the kept tail. Append-only: the full history stays in the store for
   # transcript UIs; only what the model sees shrinks. Callable from any
   # process (a UI button, a job), with or without a running agent.
   #
