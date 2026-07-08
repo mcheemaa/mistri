@@ -50,7 +50,7 @@ module Mistri
     end
 
     # A terminal entry exists: the child ended as done, stopped, or failed
-    # and will never run again. The question a queue retry asks — and its
+    # and will never run again. The question a queue retry asks; its
     # inverse (started but no terminal) is what makes a crashed child
     # re-runnable.
     def finished?

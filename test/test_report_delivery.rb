@@ -3,8 +3,8 @@
 require_relative "test_helper"
 
 # Report delivery: a background child's terminal outcome reaches its parent
-# exactly once — a typed inbox entry that folds like a steer, and an event
-# that closes the child's lane — and the lease fences dispatched runs so
+# exactly once (a typed inbox entry that folds like a steer, plus an event
+# that closes the child's lane), and the lease fences dispatched runs so
 # queue retries heal crashes without ever double-running a child.
 class TestReportDelivery < Minitest::Test
   def teardown
@@ -97,7 +97,7 @@ class TestReportDelivery < Minitest::Test
     delivered = false
 
     # The worker finishes while the model is mid-way through its clean
-    # final turn — too late for that turn's fold, so the run extends.
+    # final turn, too late for that turn's fold, so the run extends.
     result = Mistri::Agent.new(provider: parent, session:).run("go") do |event|
       next if delivered || event.type != :text_end
 

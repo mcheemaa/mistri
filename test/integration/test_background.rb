@@ -54,7 +54,7 @@ class TestBackgroundIntegration < Minitest::Test
     assert_equal :done, child.status, "terminal entry persists"
   end
 
-  # The report arrives on its own: no read_agent, no waiting — the worker
+  # The report arrives on its own: no read_agent, no waiting. The worker
   # finishes, its report folds into the parent's context, and the model
   # answers from it.
   Integration.scenario(self, :a_workers_report_arrives_without_being_asked_for) do |model|

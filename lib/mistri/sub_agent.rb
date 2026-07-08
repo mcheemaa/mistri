@@ -128,7 +128,7 @@ module Mistri
       #
       # The child's lease is the exactly-once fence, so it is taken before
       # anything else: refused means another process is running this child
-      # right now (a queue redelivered a live job) — leave its owner alone.
+      # right now (a queue redelivered a live job), so leave its owner alone.
       # Holding it, a terminal decides: present means the child was
       # cancelled while queued or the queue retried a finished job, so
       # there is nothing to run; absent means run, and that includes the
@@ -241,8 +241,8 @@ module Mistri
       end
 
       # Every terminal outcome reports back, exactly once. The report joins
-      # the parent's inbox — a typed entry that folds at its next turn
-      # boundary, exactly like a steer — and a :subagent_report event
+      # the parent's inbox (a typed entry that folds at its next turn
+      # boundary, exactly like a steer) and a :subagent_report event
       # closes the child's lane in whatever UI watched the spawn. A child
       # that never ran has nothing to say, and the parent session drops a
       # duplicate delivery, so a redelivered job cannot repeat one.

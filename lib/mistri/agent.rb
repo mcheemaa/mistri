@@ -189,8 +189,8 @@ module Mistri
       @compaction&.window || Models.find(@provider.model)&.context_window
     end
 
-    # Materialize the inbox — queued steers and sub-agent reports — into the
-    # transcript in arrival order. The folded message entry carries the
+    # Materialize the inbox, queued steers and sub-agent reports alike, into
+    # the transcript in arrival order. The folded message entry carries the
     # source entry's id under its marker key, which is what marks the entry
     # consumed: one append is both the fold and the marker, so a crash
     # between folds never double-delivers.

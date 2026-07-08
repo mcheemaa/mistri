@@ -100,8 +100,8 @@ module Mistri
       true
     end
 
-    # Everything queued for the loop's next turn boundary — steers and
-    # sub-agent reports — oldest first, in arrival order. The folding
+    # Everything queued for the loop's next turn boundary (steers and
+    # sub-agent reports), oldest first, in arrival order. The folding
     # message entry carries the source entry's id under its marker key, so
     # consumption is derived from the log alone and reads the same from
     # every process. A host that wakes an idle session when a steer arrives

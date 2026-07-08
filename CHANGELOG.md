@@ -8,8 +8,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - Report delivery: a background child's terminal outcome reports back to
   its parent, exactly once. The report queues in the parent's inbox as a
   typed subagent_report entry and folds at the next turn boundary the way
-  a steer does — the model sees `[Magpie finished] <report>`, failures
-  carry the error, stops say so — and a report landing as a run finishes
+  a steer does (the model sees `[Magpie finished] <report>`; failures
+  carry the error, stops say so), and a report landing as a run finishes
   cleanly extends it one turn so the parent reacts. A :subagent_report
   event (agent, session_id, status, content) closes the child's lane in
   whatever UI watched the spawn. Session#pending_inbox is the
