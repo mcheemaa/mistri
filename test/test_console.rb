@@ -187,6 +187,70 @@ class TestConsole < Minitest::Test
     assert_match(/Corgi, Husky/, output)
   end
 
+  def test_steer_and_stop_answer_unknown_refs_with_the_roster
+    _store, parent, = setup_family
+    context = context_for(parent)
+
+    steer = Mistri::Console.steer_agent.call({ "agent" => "Poodle", "message" => "x" }, context)
+    stop = Mistri::Console.stop_agent.call({ "agent" => "Poodle" }, context)
+
+    assert_match(/No worker matches "Poodle"/, steer)
+    assert_match(/No worker matches "Poodle"/, stop)
+  end
+
+  def test_unknown_ref_with_no_workers_says_so
+    parent = Mistri::Session.new(store: Mistri::Stores::Memory.new)
+    output = Mistri::Console.read_agent.call({ "agent" => "Poodle" }, context_for(parent))
+
+    assert_match(/you have no workers/, output)
+  end
+
+  def test_wait_on_a_stopped_child_reports_without_a_body
+    store = Mistri::Stores::Memory.new
+    parent = Mistri::Session.new(store:)
+    halted = link(parent, store, "Whippet")
+    halted.append(Mistri::Child::TERMINAL, "status" => "stopped")
+
+    output = Mistri::Console.read_agent(timeout: 1, poll: 0.05)
+                            .call({ "agent" => "Whippet", "wait" => true }, context_for(parent))
+
+    assert_equal "Whippet stopped.", output
+  end
+
+  def test_read_agent_on_a_child_with_no_entries_says_so
+    store = Mistri::Stores::Memory.new
+    parent = Mistri::Session.new(store:)
+    link(parent, store, "Pointer")
+
+    output = Mistri::Console.read_agent.call({ "agent" => "Pointer" }, context_for(parent))
+
+    assert_match(/no entries yet/, output)
+  end
+
+  def test_render_skips_unrenderable_entries_and_handles_every_content_shape
+    store = Mistri::Stores::Memory.new
+    parent = Mistri::Session.new(store:)
+    worker = link(parent, store, "Terrier")
+    worker.steer("a steer entry rides the log but is not a transcript line")
+    worker.append("message", "message" => { "role" => "user", "content" => "plain string" })
+    worker.append("message", "message" => {
+                    "role" => "user",
+                    "content" => ["a bare string in the array",
+                                  { "type" => "text", "text" => "and a block" }]
+                  })
+    worker.append("message", "message" => {
+                    "role" => "tool", "tool_call_id" => "c1", "tool_name" => "browser",
+                    "content" => [{ "data" => "AAAA", "mime_type" => "image/png" }]
+                  })
+
+    output = Mistri::Console.read_agent.call({ "agent" => "Terrier" }, context_for(parent))
+
+    assert_match(/last 2 entries/, output, "steer and image-only entries render to nothing")
+    assert_match(/user: and a block/, output, "bare strings inside content arrays are skipped")
+    assert_match(/user: plain string/, output)
+    refute_match(%r{image/png}, output)
+  end
+
   def test_duplicate_names_resolve_to_the_latest_spawn
     store = Mistri::Stores::Memory.new
     parent = Mistri::Session.new(store:)
