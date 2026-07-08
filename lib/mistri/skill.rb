@@ -3,7 +3,7 @@
 module Mistri
   # One expert playbook: a name the model selects by, a description that
   # earns the selection, and the full body it reads before acting. Build
-  # them from anywhere — Skills.load reads a directory, and a host with
+  # them from anywhere: Skills.load reads a directory, and a host with
   # skills in a database constructs these directly.
   Skill = Data.define(:name, :description, :body) do
     def initialize(name:, description: "", body: "")

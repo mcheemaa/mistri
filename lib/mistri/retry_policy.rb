@@ -4,8 +4,8 @@ module Mistri
   # When a failed turn is worth retrying, and how long to wait. Transient
   # failures (rate limits, overload, server errors, timeouts, dropped or
   # truncated streams) retry with jittered exponential backoff, honoring the
-  # provider's retry-after when it sent one. Everything else — auth, invalid
-  # requests, our own bugs — fails fast.
+  # provider's retry-after when it sent one. Everything else (auth, invalid
+  # requests, our own bugs) fails fast.
   #
   # attempts counts retries, not calls: attempts 3 means up to four requests.
   class RetryPolicy

@@ -5,7 +5,7 @@ require "json"
 module Mistri
   # Bridge Model Context Protocol servers into Mistri tools: list a server's
   # tools, hand them to an agent, and everything the harness already does
-  # composes — approval gates on third-party write tools, retries, sub-agent
+  # composes: approval gates on third-party write tools, retries, sub-agent
   # pools, the ui channel.
   #
   #   client = Mistri::MCP::Client.new(url: "https://mcp.linear.app/mcp",

@@ -104,7 +104,7 @@ end
 
 Handlers and hooks can take the run's context as a second argument, and
 `context.app` carries whatever object you pass as `Mistri.agent(context:)`
-— the acting user, a tenant, a request — so tools stay authorization-aware
+(the acting user, a tenant, a request), so tools stay authorization-aware
 without closure gymnastics:
 
 ```ruby
@@ -113,6 +113,21 @@ agent = Mistri.agent("claude-opus-4-8", tools: tools,
 
 Mistri::Tool.define("book_hotel", "Books the chosen hotel.") do |args, context|
   Bookings.create!(args, traveler: context.app[:traveler])
+end
+```
+
+A tool can also be the last word of its turn. `ends_turn: true` makes the
+loop end the run once the tool executes, instead of prompting the model
+again: an `ask_user` tool hands the floor to a human structurally, no
+"remember to stop after asking" prompt required. The result says it
+happened (`result.handed_off?`), and the answer arrives as the next run's
+input:
+
+```ruby
+ask_user = Mistri::Tool.define("ask_user", "Ask the human and wait.",
+                               ends_turn: true,
+                               schema: -> { string :question, "The question", required: true }) do |args|
+  "Question presented to the user."
 end
 ```
 
@@ -151,6 +166,10 @@ finishes cleanly extends the run so it gets answered.
 ```ruby
 Mistri::Session.new(store:, id: session_id).steer("Make the headline blue instead.")
 ```
+
+Background workers' reports arrive through the same inbox (see Sub-agents).
+A host that wakes an idle session when a steer lands should watch
+`session.pending_inbox`, which holds both, in arrival order.
 
 ## Sessions
 
@@ -215,6 +234,10 @@ result = agent.task("Extract the pricing tiers from this page.", schema: schema)
 result.output # => { "tiers" => [...] }, parsed and validated
 ```
 
+A run that suspends for approval, or that an `ends_turn` tool ended,
+returns as-is: validation applies to answers, not handoffs. Route on
+`result.handed_off?` and ask again once the human's answer arrives.
+
 ## Skills
 
 Expert playbooks with progressive disclosure: each skill costs one line in
@@ -248,7 +271,9 @@ agent = Mistri.agent(definition.model,
 Delegate to a child agent with a clean context: exploration fills the
 child's window, and only the final answer returns. Children run on their own
 sessions in your store, linked in the parent transcript; their events stream
-into the parent tagged with an `origin`.
+into the parent tagged with an `origin`. Each run of a specialist can carry
+its own name, so two parallel researchers read as Corgi and Beagle in your
+UI instead of "researcher" twice.
 
 ```ruby
 researcher = Mistri::SubAgent.new(
@@ -260,12 +285,55 @@ agent = Mistri.agent("claude-opus-4-8", tools: [researcher.tool])
 ```
 
 Or hand the model an open spawn tool and let it compose its own workers:
-a name for the event stream, instructions, a tool subset, and a
-host-allowlisted model per child. Several spawns in one turn fan out in
-parallel:
+a name, instructions, a tool subset, and a host-allowlisted model per
+child. Several spawns in one turn fan out in parallel. `pack` is the whole
+kit: the spawn tool plus a management console (`list_agents`, `read_agent`,
+`steer_agent`, `stop_agent`), with curated types and an optional
+dispatcher:
 
 ```ruby
 spawn = Mistri::SubAgent.spawner(provider: provider, tools: [fetch_page, search])
+
+tools = Mistri::SubAgent.pack(
+  provider: provider, tools: [fetch_page, search],
+  types: { "researcher" => Mistri::Definition.load("agents/researcher.md") },
+  models: ["claude-haiku-4-5-20251001"],
+  dispatcher: Mistri::Dispatchers::Thread.new,      # or one lambda onto your queue
+)
+```
+
+A typed worker takes its prompt, tools, and model from the host's
+definition; `general-purpose` stays open for the model to compose.
+`max_children` (default 4) caps live workers, and every policy violation
+answers the model in band.
+
+With a dispatcher, `spawn_agent` takes `mode: "background"`: the model gets
+a truthful receipt at once and keeps working while the child runs. The
+console manages the roster with the same functions a host UI calls, so
+agent and user control stay structurally equal: either can read a worker's
+transcript, steer it mid-run, or stop it, from any process. When a worker
+finishes, its report delivers itself: a typed entry queues in the parent's
+inbox and folds at the next turn boundary as `[Corgi finished] <report>`
+(failures carry the error), while a `:subagent_report` event settles the
+worker's lane in whatever UI watched the spawn. In a queue host, the job
+rebuilds tools from the serializable spec and calls
+`SubAgent.run_dispatched`, which fences on the child's lease: a redelivered
+job leaves the running owner alone, a retry of a finished child is a no-op,
+and a retry of a crashed one runs it again.
+
+Everything about a child derives from the store and reads the same from
+any process, while it runs and forever after:
+
+```ruby
+session.children               # => [#<Mistri::Child Corgi running>, ...]
+child.status                   # :queued, :running, :done, :stopped, :failed
+child.report                   # the terminal entry's report, once finished
+child.say("Check pricing too") # folds at the child's next turn boundary
+child.stop                     # cooperative, cross-process, within a tick
+
+session.transcript(include_children: true)
+# the whole conversation, each child's log spliced at its link entry and
+# origin-tagged like the live stream: a reloading UI rebuilds its lanes
 ```
 
 ## Editing documents
@@ -405,8 +473,11 @@ Mistri.agent("claude-opus-4-8", provider_options: { cache: false })
 
 ## Testing
 
-`rake test` is hermetic and fast. `rake integration` runs every feature end
-to end against real provider APIs, once per model in the matrix: an
+`rake test` is hermetic and fast. The Fake provider streams like the real
+ones, tool-call arguments included: each delta's partial carries the
+in-progress call with arguments parsed so far, so a UI that renders tool
+input as it arrives tests headless. `rake integration` runs every feature
+end to end against real provider APIs, once per model in the matrix: an
 Anthropic, an OpenAI, and a Gemini model by default. Scenarios assert that
 coined codenames (a ghost of a word like `Wraithowyn` exists in no training
 data) flowed through tool results, summaries, and child agents: proof of

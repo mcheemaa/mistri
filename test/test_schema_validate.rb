@@ -3,7 +3,7 @@
 require_relative "test_helper"
 
 # Schema.violations and Schema.strict: the client-side halves of structured
-# output — validation everywhere, wire preparation for constrained decoding.
+# output: validation everywhere, wire preparation for constrained decoding.
 class TestSchemaValidate < Minitest::Test
   SCHEMA = {
     type: "object",
