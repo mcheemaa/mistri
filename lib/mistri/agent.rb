@@ -94,7 +94,7 @@ module Mistri
       executed = settle(open, signal, &emit)
       if executed.any? { |call| ends_turn?(call) }
         last = @session.messages.reverse_each.find(&:assistant?)
-        return finished(last, Usage.zero, signal)
+        return finished(last, Usage.zero, signal, handed_off: true)
       end
 
       loop_turns(signal, nil, &emit)
@@ -108,7 +108,9 @@ module Mistri
     #
     # A run that suspends for approval returns as-is: validation applies to
     # completed runs only, so resume the session and re-ask if that happens
-    # mid-task.
+    # mid-task. A run an ends_turn tool ended returns as-is too: the floor
+    # belongs to whoever answers, and re-prompting for JSON would steal it
+    # back. Ask again once the answer arrives.
     def task(input, schema:, images: [], signal: nil, fixes: 1, &emit)
       result = run(TaskOutput.prompt(input, schema), images: images, signal: signal,
                                                      output_schema: schema, &emit)
@@ -116,6 +118,7 @@ module Mistri
       fixes.downto(0) do |remaining|
         result = result.with(usage: spent)
         return result unless result.completed?
+        return result if result.handed_off?
 
         value = TaskOutput.parse(result.text)
         errors = TaskOutput.errors(value, schema)
@@ -165,7 +168,7 @@ module Mistri
         # transcript is unpairable and replay fails.
         parked, ended = last.tool_calls? ? run_tools(last, signal, &emit) : [[], false]
         return suspended(last, parked, usage) if parked.any?
-        return finished(last, usage, signal) if ended || done?(last, signal)
+        return finished(last, usage, signal, handed_off: ended) if ended || done?(last, signal)
       end
     end
 
@@ -375,12 +378,15 @@ module Mistri
 
     # A run stopped during its tool phase ends with a clean assistant
     # message, so the message's stop reason alone would read :completed;
-    # the signal is what knows the user stopped it.
-    def finished(message, usage, signal = nil)
+    # the signal is what knows the user stopped it. handed_off marks a run
+    # an ends_turn tool ended, and only a genuinely completed one: a run
+    # aborted during that same tool phase handed nothing to anyone.
+    def finished(message, usage, signal = nil, handed_off: false)
       status = { StopReason::ABORTED => :aborted, StopReason::BUDGET => :budget,
                  StopReason::ERROR => :error }.fetch(message.stop_reason, :completed)
       status = :aborted if status == :completed && signal&.aborted?
-      Result.new(message: message, status: status, usage: usage)
+      Result.new(message: message, status: status, usage: usage,
+                 handed_off: handed_off && status == :completed)
     end
 
     def suspended(message, parked, usage)

@@ -105,6 +105,7 @@ class TestEndsTurn < Minitest::Test
     resumed = agent.resume
 
     assert_predicate resumed, :completed?
+    assert_predicate resumed, :handed_off?
     assert_equal [:asked], asked
     refute_nil resumed.message, "the result carries the asking turn's message"
   end
@@ -133,6 +134,33 @@ class TestEndsTurn < Minitest::Test
     result = Mistri::Agent.new(provider:, tools: [plain]).run("go")
 
     refute_predicate plain, :ends_turn?
+    refute_predicate result, :handed_off?
     assert_equal "Kept the floor.", result.text
+  end
+
+  def test_the_result_says_the_floor_was_handed_off
+    provider = fake({ tool_calls: [{ name: "ask_user",
+                                     arguments: { "question" => "Proceed?" } }] })
+
+    result = Mistri::Agent.new(provider:, tools: [ask_user]).run("go")
+
+    assert_predicate result, :handed_off?, "hosts route on this instead of sniffing messages"
+    assert_predicate result, :completed?
+  end
+
+  def test_task_mode_preserves_the_handoff_instead_of_revalidating
+    schema = { "type" => "object", "properties" => { "answer" => { "type" => "string" } },
+               "required" => ["answer"] }
+    # One scripted turn and none to spare: if task mode tried to fix the
+    # "invalid" JSON, the provider would raise; if it burned the fix budget,
+    # SchemaError would. Neither may happen while a human holds the floor.
+    provider = fake({ tool_calls: [{ name: "ask_user",
+                                     arguments: { "question" => "Which city?" } }] })
+
+    result = Mistri::Agent.new(provider:, tools: [ask_user])
+                          .task("Find the HQ.", schema: schema, fixes: 0)
+
+    assert_predicate result, :handed_off?
+    assert_nil result.output, "no validated value yet; ask again once the answer arrives"
   end
 end

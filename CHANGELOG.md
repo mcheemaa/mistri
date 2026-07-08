@@ -12,7 +12,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   arrived in still executes and is answered; a blocked or denied call
   never executed, so the model keeps the floor; a parked approval outranks
   it (the run suspends, and an approved ends_turn call ends the resumed
-  run). A pending steer stays queued for the next run.
+  run). A pending steer stays queued for the next run. The Result says it
+  happened (Result#handed_off?), so hosts route on the handoff instead of
+  sniffing messages, and task mode returns the handoff as-is rather than
+  re-prompting for JSON while a human holds the floor.
 - Session#transcript reads the whole conversation back from the store:
   entries with image bytes stripped, and with include_children every
   sub-agent's log spliced in after its link entry, tagged with an
