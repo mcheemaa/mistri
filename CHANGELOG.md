@@ -5,6 +5,12 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+- Sinks::Coalesced is origin-aware and thread-safe: a background worker's
+  deltas no longer merge into the parent's (or another worker's) event at
+  the same content index, and concurrent emitters serialize on an
+  internal mutex instead of racing the buffer. One uncontended mutex
+  acquire per event, at coalesced rate; nothing changes on the token
+  path.
 - OpenAI response.failed events classify by their error code instead of
   all reading as a retryable truncated stream: rate limits and server
   errors stay retryable, timeouts retry, and permanent rejections

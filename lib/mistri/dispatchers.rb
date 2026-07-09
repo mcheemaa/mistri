@@ -16,7 +16,9 @@ module Mistri
   # The runner closes over the spawn-time event sink, so in-process
   # children keep streaming to whoever watched the spawn; that sink must
   # outlive the parent's turn (a broadcast lambda does, a request-scoped
-  # object may not).
+  # object may not) and hears from the worker's thread, concurrently with
+  # the parent's own events. The gem's sinks tolerate that; a custom one
+  # must too.
   module Dispatchers
     # Runs the child synchronously inside the spawn call and still answers
     # in receipt form: background degrades gracefully where no concurrency
