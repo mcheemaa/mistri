@@ -88,6 +88,58 @@ class TestGeminiAssembler < Minitest::Test
     assert_in_delta 0.0, unknown.finish.usage.cost.total
   end
 
+  # Verdict finish reasons are the provider's ruling on the content; the
+  # loop must fail fast instead of re-rolling against the filter. Fumbles
+  # (the model botched its own output) stay retryable.
+  def test_blocked_finish_reasons_classify_as_verdicts_or_fumbles
+    policy = Mistri::RetryPolicy.new
+    %w[SAFETY RECITATION LANGUAGE BLOCKLIST PROHIBITED_CONTENT SPII OTHER].each do |reason|
+      message = drive([], [
+                        { "candidates" => [{ "content" => { "parts" => [{ "text" => "par" }] } }] },
+                        { "candidates" => [{ "finishReason" => reason }] }
+                      ])
+
+      assert_equal :error, message.stop_reason, "#{reason} must not read as a clean stop"
+      assert_equal "InvalidRequestError", message.error["type"], "#{reason} misclassified"
+      assert_includes message.error_message, reason
+      assert_equal "par", message.text, "partial content stays readable for the host"
+      refute policy.retryable?(message.error), "#{reason} is a verdict, never retried"
+    end
+
+    fumble = drive([], [{ "candidates" => [{ "finishReason" => "MALFORMED_FUNCTION_CALL" }] }])
+
+    assert_equal :error, fumble.stop_reason
+    assert_equal "ProviderError", fumble.error["type"]
+    assert policy.retryable?(fumble.error), "a fumbled function call retries"
+  end
+
+  def test_a_blocked_prompt_fails_fast_instead_of_reading_as_truncation
+    message = drive([], [{ "promptFeedback" => { "blockReason" => "SAFETY" } }])
+
+    assert_equal :error, message.stop_reason
+    assert_equal "InvalidRequestError", message.error["type"]
+    assert_includes message.error_message, "SAFETY"
+    refute Mistri::RetryPolicy.new.retryable?(message.error),
+           "a blocked prompt meets the same filter on every retry"
+
+    unspecified = drive([], [
+                          { "candidates" => [{ "content" => { "parts" => [{ "text" => "hi" }] } }],
+                            "promptFeedback" => { "blockReason" => "BLOCK_REASON_UNSPECIFIED" } },
+                          { "candidates" => [{ "finishReason" => "STOP" }] }
+                        ])
+
+    assert_equal :stop, unspecified.stop_reason, "the unused default value is not a block"
+  end
+
+  def test_an_undocumented_finish_reason_still_reads_as_stop
+    message = drive([], [
+                      { "candidates" => [{ "content" => { "parts" => [{ "text" => "hi" }] } }] },
+                      { "candidates" => [{ "finishReason" => "SOME_FUTURE_REASON" }] }
+                    ])
+
+    assert_equal :stop, message.stop_reason, "unknown wire values stay tolerated by contract"
+  end
+
   def test_a_stream_that_ends_without_a_finish_reason_is_an_error
     message = drive([], [
                       { "candidates" => [{ "content" => { "parts" => [{ "text" => "cut" }] } }] }

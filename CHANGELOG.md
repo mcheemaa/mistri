@@ -5,6 +5,21 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+- Refusals and content-filter stops surface honestly on every provider
+  instead of reading as clean stops or retryable truncations. Gemini's
+  verdict finish reasons (SAFETY, RECITATION, LANGUAGE, BLOCKLIST,
+  PROHIBITED_CONTENT, SPII, the image family, OTHER) and blocked prompts
+  (promptFeedback.blockReason, which previously read as a retryable
+  truncated stream) fail fast as Mistri::InvalidRequestError with the
+  wire word in the message; its model fumbles (MALFORMED_FUNCTION_CALL,
+  UNEXPECTED_TOOL_CALL, NO_IMAGE) error retryably. Anthropic's refusal
+  stop reason fails fast carrying stop_details' category and explanation
+  (the API's guidance is a different model, never a same-model retry),
+  and model_context_window_exceeded maps to :length per its guidance.
+  OpenAI's incomplete_details content_filter fails fast instead of
+  reading as a completed answer. Partial content stays on the errored
+  message for hosts to show. Undocumented future stop reasons still
+  tolerate as clean stops, unchanged.
 - Sinks::Coalesced is origin-aware and thread-safe: a background worker's
   deltas no longer merge into the parent's (or another worker's) event at
   the same content index, and concurrent emitters serialize on an

@@ -22,6 +22,17 @@ module Mistri
           @finish_reason = nil
         end
 
+        # Finish reasons that are the provider's verdict on the content
+        # itself: a retry of the same input meets the same filter, and a
+        # harness that re-rolls against a policy verdict is machinery for
+        # evading it, so these fail fast.
+        VERDICTS = %w[SAFETY RECITATION LANGUAGE BLOCKLIST PROHIBITED_CONTENT SPII
+                      IMAGE_SAFETY IMAGE_PROHIBITED_CONTENT IMAGE_RECITATION
+                      OTHER IMAGE_OTHER].freeze
+        # The model fumbled its own output (an invalid function call, a
+        # missing image): the input is fine and a regeneration usually lands.
+        FUMBLES = %w[MALFORMED_FUNCTION_CALL UNEXPECTED_TOOL_CALL NO_IMAGE].freeze
+
         def feed(record, &)
           if (error = record["error"])
             @error = ProviderError.new(error["message"] || "provider error",
@@ -29,6 +40,8 @@ module Mistri
             return
           end
 
+          block = record.dig("promptFeedback", "blockReason").to_s
+          @block_reason = block unless block.empty? || block == "BLOCK_REASON_UNSPECIFIED"
           candidate = record.dig("candidates", 0) || {}
           Array(candidate.dig("content", "parts")).each { |part| fold_part(part, &) }
           @finish_reason = candidate["finishReason"] if candidate["finishReason"]
@@ -39,6 +52,9 @@ module Mistri
         # cancelled: fail it so the loop can treat it as retryable.
         def finish(&emit)
           return fail_stream(@error, &emit) if @error
+          if (refused = blocked)
+            return fail_stream(refused, &emit)
+          end
           return fail_stream("stream ended without a finish reason", &emit) unless @finish_reason
 
           close_current(&emit)
@@ -123,6 +139,23 @@ module Mistri
           else
             Content::Thinking.new(thinking: @current.text, signature: @current.signature)
           end
+        end
+
+        # A blocked prompt arrives as promptFeedback with no candidates; a
+        # blocked candidate arrives as a verdict finishReason. Either way the
+        # error carries the wire word, so hosts tell SAFETY from RECITATION
+        # without parsing prose.
+        def blocked
+          if @block_reason
+            return InvalidRequestError.new("the prompt was blocked: #{@block_reason}")
+          end
+          return unless @finish_reason
+          if VERDICTS.include?(@finish_reason)
+            return InvalidRequestError.new("generation stopped: #{@finish_reason}")
+          end
+          return unless FUMBLES.include?(@finish_reason)
+
+          ProviderError.new("generation stopped: #{@finish_reason}")
         end
 
         def stop_reason

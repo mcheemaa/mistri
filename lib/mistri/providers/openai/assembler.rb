@@ -40,6 +40,7 @@ module Mistri
         # not cancelled: fail it so the loop can treat it as retryable.
         def finish(&emit)
           return fail_stream(@error, &emit) if @error
+          return fail_stream(filter_error, &emit) if @incomplete_reason == "content_filter"
           return fail_stream("stream ended without a terminal event", &emit) unless @status
 
           @message = assemble(stop_reason: stop_reason)
@@ -190,6 +191,11 @@ module Mistri
 
           StopReason::STOP
         end
+
+        # The spec's only other incomplete reason: a filter cut is a verdict
+        # on the content, not a truncation, so it never reads as a clean stop
+        # and never retries.
+        def filter_error = InvalidRequestError.new("the response was cut by the content filter")
 
         def terminal(reason, text, error: nil, &emit)
           @message = assemble(stop_reason: reason, error_message: text, error: error)
