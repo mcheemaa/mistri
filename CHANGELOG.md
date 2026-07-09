@@ -5,6 +5,9 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+- Directory workspaces reject existing symlinks in model-controlled paths and
+  omit symlinked files from listings. In a stable, host-controlled tree, reads,
+  writes, and deletes no longer follow a link outside the configured root.
 - Streamable HTTP no longer replays an MCP `tools/call` when its response cannot
   be confirmed. The server may already have committed the tool's side effect,
   so the call now raises `AmbiguousDeliveryError` with an explicit do-not-retry
