@@ -13,6 +13,7 @@ module Mistri
       class Assembler
         def initialize(model:)
           @model = model
+          @rates = Models.rates(model)
           @blocks = []
           @current = nil
           @usage = Usage.zero
@@ -22,7 +23,7 @@ module Mistri
 
         def feed(record, &)
           case record["type"]
-          when "message_start" then @usage = parse_usage(record.dig("message", "usage"))
+          when "message_start" then @usage = priced(parse_usage(record.dig("message", "usage")))
           when "content_block_start" then start_block(record, &)
           when "content_block_delta" then delta_block(record, &)
           when "content_block_stop" then stop_block(record, &)
@@ -138,7 +139,7 @@ module Mistri
           # message_delta usage is cumulative; merge output counts over the
           # opening snapshot rather than summing.
           output = record.dig("usage", "output_tokens")
-          @usage = @usage.with(output: output.to_i) if output
+          @usage = priced(@usage.with(output: output.to_i)) if output
         end
 
         def finalize_current
@@ -199,6 +200,8 @@ module Mistri
                     cache_write: raw["cache_creation_input_tokens"].to_i,
                     cache_write_1h: cache_creation["ephemeral_1h_input_tokens"].to_i)
         end
+
+        def priced(usage) = @rates ? usage.with_cost(@rates) : usage
       end
     end
   end

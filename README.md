@@ -445,7 +445,9 @@ the generator and stores duck-type into any app.
 signal = Mistri::AbortSignal.new
 agent.run("Draft a long essay.", signal: signal)
 
-# Ceilings are opt-in and off by default.
+# Ceilings are opt-in and off by default. Dollar cost is priced from the
+# model catalog's published rates; a model the catalog does not know
+# reports zero cost, so only the other ceilings can stop it.
 budget = Mistri::Budget.new(turns: 20, cost_usd: 2.00)
 
 # Transient failures (429, 5xx, timeouts) retry with backoff, invisibly to

@@ -15,6 +15,19 @@ class TestModels < Minitest::Test
     assert_nil Mistri::Models.find("claude-next-9000")
   end
 
+  def test_catalogued_models_carry_their_published_rates
+    rates = Mistri::Models.rates("claude-opus-4-8")
+
+    assert_in_delta 5.0, rates[:input]
+    assert_in_delta 25.0, rates[:output]
+    assert_in_delta 0.5, rates[:cache_read]
+    assert_predicate rates, :frozen?
+
+    assert_nil Mistri::Models.rates("claude-next-9000"), "unknown models carry no rates"
+    assert(Mistri::Models::CATALOG.each_value.all?(&:rates),
+           "every catalogued model carries verified rates")
+  end
+
   def test_the_provider_sends_the_model_ceiling_as_max_tokens
     server = Mistri::Test::StubServer.new do |socket, _request|
       server.start_sse(socket)

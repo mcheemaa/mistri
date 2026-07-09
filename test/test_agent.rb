@@ -78,6 +78,22 @@ class TestAgent < Minitest::Test
     assert_equal "budget_turns", message.error_message
   end
 
+  def test_a_cost_budget_stops_the_run_between_turns
+    priced = Mistri::Usage.new(input: 200_000, output: 10_000)
+                          .with_cost(input: 5.0, output: 25.0)
+    provider = Mistri::Providers::Fake.new(turns: Array.new(3) do
+      { tool_calls: [{ name: "loop", arguments: {} }], usage: priced }
+    end)
+    tool = Mistri::Tool.define("loop", "Loops.") { "again" }
+    agent = Mistri::Agent.new(provider:, tools: [tool],
+                              budget: Mistri::Budget.new(cost_usd: 1.00))
+
+    message = agent.run("go")
+
+    assert_equal :budget, message.stop_reason
+    assert_equal "budget_cost", message.error_message
+  end
+
   def test_empty_input_and_duplicate_tools_fail_loudly
     provider = Mistri::Providers::Fake.new
     ping = Mistri::Tool.define("ping", "Ping.") { "pong" }

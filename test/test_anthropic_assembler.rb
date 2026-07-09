@@ -89,6 +89,31 @@ class TestAnthropicAssembler < Minitest::Test
     assert_equal "opaque", message.content.first.signature
   end
 
+  def test_usage_prices_from_the_catalog_and_unknown_models_stay_zero
+    message = drive([], [
+                      { "type" => "message_start",
+                        "message" => { "usage" => { "input_tokens" => 1000,
+                                                    "cache_read_input_tokens" => 2000 } } },
+                      { "type" => "message_delta", "delta" => { "stop_reason" => "end_turn" },
+                        "usage" => { "output_tokens" => 500 } },
+                      { "type" => "message_stop" }
+                    ])
+    rates = Mistri::Models.rates("claude-opus-4-8")
+    expected = ((rates[:input] * 1000) + (rates[:cache_read] * 2000) +
+                (rates[:output] * 500)) / 1_000_000.0
+
+    assert_operator message.usage.cost.total, :>, 0
+    assert_in_delta expected, message.usage.cost.total,
+                    1e-9, "the delta's output count must be repriced, not left stale"
+
+    unknown = Mistri::Providers::Anthropic::Assembler.new(model: "claude-next-9000")
+    unknown.feed({ "type" => "message_start",
+                   "message" => { "usage" => { "input_tokens" => 1000 } } })
+    unknown.feed({ "type" => "message_stop" })
+
+    assert_in_delta 0.0, unknown.finish.usage.cost.total
+  end
+
   def test_a_provider_error_folds_with_its_status_and_body
     assembler = Mistri::Providers::Anthropic::Assembler.new(model: "claude-opus-4-8")
     error = Mistri::ServerError.new(status: 503, body: "upstream connect timeout")
