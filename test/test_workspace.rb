@@ -47,6 +47,77 @@ class TestWorkspace < Minitest::Test
     end
   end
 
+  def test_the_directory_backend_refuses_symlinks_to_outside_directories
+    Dir.mktmpdir do |root|
+      Dir.mktmpdir do |outside|
+        secret = File.join(outside, "secret.txt")
+        File.write(secret, "private")
+        File.symlink(outside, File.join(root, "linked"))
+        workspace = Mistri::Workspace::Directory.new(root)
+
+        assert_raises(Mistri::SchemaError) { workspace.read("linked/secret.txt") }
+        assert_raises(Mistri::SchemaError) { workspace.write("linked/new.txt", "hostile") }
+        assert_raises(Mistri::SchemaError) { workspace.delete("linked/secret.txt") }
+        assert_empty workspace.list
+        assert_equal "private", File.read(secret)
+        refute_path_exists File.join(outside, "new.txt")
+      end
+    end
+  end
+
+  def test_the_directory_backend_refuses_file_and_broken_symlinks
+    Dir.mktmpdir do |root|
+      Dir.mktmpdir do |outside|
+        secret = File.join(outside, "secret.txt")
+        missing = File.join(outside, "missing.txt")
+        File.write(secret, "private")
+        File.symlink(secret, File.join(root, "secret.txt"))
+        File.symlink(missing, File.join(root, "missing.txt"))
+        workspace = Mistri::Workspace::Directory.new(root)
+
+        assert_empty workspace.list
+        assert_raises(Mistri::SchemaError) { workspace.read("secret.txt") }
+        assert_raises(Mistri::SchemaError) { workspace.write("secret.txt", "hostile") }
+        assert_raises(Mistri::SchemaError) { workspace.write("missing.txt", "hostile") }
+        assert_raises(Mistri::SchemaError) { workspace.delete("secret.txt") }
+        assert_equal "private", File.read(secret)
+        refute_path_exists missing
+      end
+    end
+  end
+
+  def test_the_directory_backend_omits_safe_directory_symlinks
+    Dir.mktmpdir do |root|
+      workspace = Mistri::Workspace::Directory.new(root)
+      workspace.write("real/inside.txt", "inside")
+      File.symlink(File.join(root, "real"), File.join(root, "linked"))
+
+      assert_raises(Mistri::SchemaError) { workspace.read("linked/inside.txt") }
+      assert_equal ["real/inside.txt"], workspace.list
+    end
+  end
+
+  def test_the_directory_backend_accepts_children_of_the_filesystem_root
+    workspace = Mistri::Workspace::Directory.new(File::SEPARATOR)
+    missing = "mistri-workspace-missing-#{Process.pid}-#{object_id}"
+
+    assert_nil workspace.read(missing)
+  end
+
+  def test_the_directory_backend_treats_a_canonical_root_as_a_literal_path
+    Dir.mktmpdir do |parent|
+      root = File.join(parent, "workspace[1]")
+      FileUtils.mkdir_p(root)
+      link = File.join(parent, "workspace")
+      File.symlink(root, link)
+      workspace = Mistri::Workspace::Directory.new(link)
+
+      workspace.write("notes/one.txt", "one")
+
+      assert_equal ["notes/one.txt"], workspace.list
+    end
+  end
+
   private
 
   def each_workspace
