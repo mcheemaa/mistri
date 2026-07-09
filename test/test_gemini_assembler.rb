@@ -64,7 +64,7 @@ class TestGeminiAssembler < Minitest::Test
     assert_equal 500, failed.error["status"], "the wire code rides as a status"
   end
 
-  def test_usage_prices_from_the_catalog
+  def test_usage_prices_from_the_catalog_and_unknown_models_stay_zero
     message = drive([], [
                       { "candidates" => [{ "content" => { "parts" => [{ "text" => "hi" }] } }],
                         "usageMetadata" => { "promptTokenCount" => 1000,
@@ -79,6 +79,13 @@ class TestGeminiAssembler < Minitest::Test
 
     assert_operator message.usage.cost.total, :>, 0
     assert_in_delta expected, message.usage.cost.total, 1e-9
+
+    unknown = Mistri::Providers::Gemini::Assembler.new(model: "gemini-hypothetical")
+    unknown.feed({ "candidates" => [{ "finishReason" => "STOP" }],
+                   "usageMetadata" => { "promptTokenCount" => 1000,
+                                        "candidatesTokenCount" => 200 } })
+
+    assert_in_delta 0.0, unknown.finish.usage.cost.total
   end
 
   def test_a_stream_that_ends_without_a_finish_reason_is_an_error

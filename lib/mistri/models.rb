@@ -18,7 +18,7 @@ module Mistri
     # 200k input) are not modeled; those turns under-count.
     Model = Data.define(:id, :provider, :max_output, :context_window, :thinking, :rates) do
       def initialize(id:, provider:, max_output:, context_window:, thinking:, rates: nil)
-        super(id:, provider:, max_output:, context_window:, thinking:, rates: rates&.freeze)
+        super(id:, provider:, max_output:, context_window:, thinking:, rates: rates.freeze)
       end
     end
 

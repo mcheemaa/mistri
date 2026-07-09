@@ -120,7 +120,7 @@ class TestOpenAIAssembler < Minitest::Test
     assert_equal "server exploded", failed.error_message
   end
 
-  def test_usage_prices_from_the_catalog
+  def test_usage_prices_from_the_catalog_and_unknown_models_stay_zero
     message = drive([], [
                       { "type" => "response.completed",
                         "response" => {
@@ -136,6 +136,14 @@ class TestOpenAIAssembler < Minitest::Test
 
     assert_operator message.usage.cost.total, :>, 0
     assert_in_delta expected, message.usage.cost.total, 1e-9
+
+    unknown = Mistri::Providers::OpenAI::Assembler.new(model: "gpt-hypothetical")
+    unknown.feed({ "type" => "response.completed",
+                   "response" => { "status" => "completed",
+                                   "usage" => { "input_tokens" => 1000,
+                                                "output_tokens" => 200 } } })
+
+    assert_in_delta 0.0, unknown.finish.usage.cost.total
   end
 
   def test_a_stream_that_ends_without_a_terminal_event_is_an_error
