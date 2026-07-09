@@ -6,7 +6,8 @@ class TestErrors < Minitest::Test
   def test_every_error_rescues_as_mistri_error
     [Mistri::ConfigurationError, Mistri::ProviderError, Mistri::AuthenticationError,
      Mistri::RateLimitError, Mistri::OverloadedError, Mistri::ServerError,
-     Mistri::SchemaError, Mistri::AbortError, Mistri::BudgetError].each do |klass|
+     Mistri::InvalidRequestError, Mistri::SchemaError, Mistri::AbortError,
+     Mistri::BudgetError].each do |klass|
       assert_operator klass, :<, Mistri::Error
     end
   end

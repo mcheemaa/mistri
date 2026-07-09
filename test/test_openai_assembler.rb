@@ -117,7 +117,39 @@ class TestOpenAIAssembler < Minitest::Test
                    ])
 
     assert_equal :error, failed.stop_reason
-    assert_equal "server exploded", failed.error_message
+    assert_match(/server exploded/, failed.error_message)
+  end
+
+  # A failed response is the provider's verdict, not a dropped stream: its
+  # code decides retryability, and it must never read as TruncatedStream.
+  def test_failed_responses_classify_by_their_error_code
+    { "rate_limit_exceeded" => "RateLimitError",
+      "server_error" => "ServerError",
+      "vector_store_timeout" => "ProviderError",
+      "invalid_prompt" => "InvalidRequestError",
+      "image_content_policy_violation" => "InvalidRequestError" }.each do |code, type|
+      failed = drive([], [
+                       { "type" => "response.failed",
+                         "response" => { "status" => "failed",
+                                         "error" => { "code" => code, "message" => "no" } } }
+                     ])
+
+      assert_equal :error, failed.stop_reason
+      assert_equal type, failed.error["type"], "#{code} misclassified"
+      assert_includes failed.error_message, code
+    end
+
+    bare = drive([], [{ "type" => "response.failed",
+                        "response" => { "status" => "failed" } }])
+
+    assert_equal :error, bare.stop_reason, "failure without an error object is not a clean stop"
+    assert_equal "ProviderError", bare.error["type"]
+
+    terse = drive([], [{ "type" => "response.failed",
+                         "response" => { "status" => "failed",
+                                         "error" => { "code" => "invalid_prompt" } } }])
+
+    assert_includes terse.error_message, "the response failed"
   end
 
   def test_usage_prices_from_the_catalog_and_unknown_models_stay_zero
