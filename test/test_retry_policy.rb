@@ -18,7 +18,7 @@ class TestRetryPolicy < Minitest::Test
     %w[ProviderError RateLimitError OverloadedError ServerError TruncatedStream].each do |type|
       assert policy.retryable?({ "type" => type })
     end
-    %w[SchemaError RuntimeError Error NoMethodError].each do |type|
+    %w[SchemaError RuntimeError Error NoMethodError InvalidRequestError].each do |type|
       refute policy.retryable?({ "type" => type })
     end
     refute policy.retryable?(nil)

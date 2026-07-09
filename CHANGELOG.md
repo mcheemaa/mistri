@@ -5,6 +5,14 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+- OpenAI response.failed events classify by their error code instead of
+  all reading as a retryable truncated stream: rate limits and server
+  errors stay retryable, timeouts retry, and permanent rejections
+  (invalid_prompt, the image family) carry the new
+  Mistri::InvalidRequestError shape and fail fast, so the loop no longer
+  burns its retry budget on input the provider already ruled out. A
+  failed response without an error object now errors instead of reading
+  as a clean stop.
 - The model catalog carries each model's published API prices, and the
   assemblers price every turn's usage from them: message.usage.cost and
   Result#usage now report real dollars for catalogued models, and the

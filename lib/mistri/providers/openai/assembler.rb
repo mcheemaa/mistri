@@ -161,9 +161,27 @@ module Mistri
         def finish_response(response)
           @status = response["status"] || "completed"
           @incomplete_reason = response.dig("incomplete_details", "reason")
-          @error = response.dig("error", "message") if @status == "failed"
+          @error = failure_error(response["error"]) if @status == "failed"
           usage = response["usage"]
           @usage = priced(parse_usage(usage)) if usage
+        end
+
+        # A failed response is the provider's verdict on this input, not a
+        # transport accident: only its documented transient codes retry
+        # (rate limits, server errors, timeouts). Everything else, like
+        # invalid_prompt and the image family, cannot succeed on a retry.
+        def failure_error(error)
+          return ProviderError.new("the response failed without an error") unless error
+
+          code = error["code"].to_s
+          message = [code, error["message"] || "the response failed"]
+                    .reject(&:empty?).join(": ")
+          klass = if code.include?("rate_limit") then RateLimitError
+                  elsif code.include?("server") then ServerError
+                  elsif code.include?("timeout") then ProviderError
+                  else InvalidRequestError
+                  end
+          klass.new(message)
         end
 
         def stop_reason

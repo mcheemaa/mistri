@@ -57,6 +57,12 @@ module Mistri
     def self.default_message = "provider server error"
   end
 
+  # The provider rejected the request itself: an invalid prompt, a bad
+  # image, a policy violation. Never retried; the same input cannot succeed.
+  class InvalidRequestError < ProviderError
+    def self.default_message = "provider rejected the request"
+  end
+
   # Tool arguments or structured output that violate their declared schema.
   class SchemaError < Error; end
 
