@@ -90,10 +90,11 @@ class TestGeminiAssembler < Minitest::Test
 
   # Verdict finish reasons are the provider's ruling on the content; the
   # loop must fail fast instead of re-rolling against the filter. Fumbles
-  # (the model botched its own output) stay retryable.
+  # and unknown stops (OTHER is documented as "Unknown reason") accuse the
+  # input of nothing, so they error retryably instead.
   def test_blocked_finish_reasons_classify_as_verdicts_or_fumbles
     policy = Mistri::RetryPolicy.new
-    %w[SAFETY RECITATION LANGUAGE BLOCKLIST PROHIBITED_CONTENT SPII OTHER].each do |reason|
+    %w[SAFETY RECITATION LANGUAGE BLOCKLIST PROHIBITED_CONTENT SPII IMAGE_SAFETY].each do |reason|
       message = drive([], [
                         { "candidates" => [{ "content" => { "parts" => [{ "text" => "par" }] } }] },
                         { "candidates" => [{ "finishReason" => reason }] }
@@ -106,11 +107,13 @@ class TestGeminiAssembler < Minitest::Test
       refute policy.retryable?(message.error), "#{reason} is a verdict, never retried"
     end
 
-    fumble = drive([], [{ "candidates" => [{ "finishReason" => "MALFORMED_FUNCTION_CALL" }] }])
+    %w[MALFORMED_FUNCTION_CALL TOO_MANY_TOOL_CALLS OTHER].each do |reason|
+      fumble = drive([], [{ "candidates" => [{ "finishReason" => reason }] }])
 
-    assert_equal :error, fumble.stop_reason
-    assert_equal "ProviderError", fumble.error["type"]
-    assert policy.retryable?(fumble.error), "a fumbled function call retries"
+      assert_equal :error, fumble.stop_reason, "#{reason} must not read as a clean stop"
+      assert_equal "ProviderError", fumble.error["type"], "#{reason} misclassified"
+      assert policy.retryable?(fumble.error), "#{reason} accuses the input of nothing"
+    end
   end
 
   def test_a_blocked_prompt_fails_fast_instead_of_reading_as_truncation

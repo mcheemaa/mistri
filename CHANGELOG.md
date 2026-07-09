@@ -8,11 +8,13 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - Refusals and content-filter stops surface honestly on every provider
   instead of reading as clean stops or retryable truncations. Gemini's
   verdict finish reasons (SAFETY, RECITATION, LANGUAGE, BLOCKLIST,
-  PROHIBITED_CONTENT, SPII, the image family, OTHER) and blocked prompts
+  PROHIBITED_CONTENT, SPII, the image verdicts) and blocked prompts
   (promptFeedback.blockReason, which previously read as a retryable
   truncated stream) fail fast as Mistri::InvalidRequestError with the
-  wire word in the message; its model fumbles (MALFORMED_FUNCTION_CALL,
-  UNEXPECTED_TOOL_CALL, NO_IMAGE) error retryably. Anthropic's refusal
+  wire word in the message; its model fumbles and unknown stops
+  (MALFORMED_FUNCTION_CALL, UNEXPECTED_TOOL_CALL, TOO_MANY_TOOL_CALLS,
+  NO_IMAGE, and the catch-all OTHER pair, documented as unknown reasons
+  rather than rulings) error retryably. Anthropic's refusal
   stop reason fails fast carrying stop_details' category and explanation
   (the API's guidance is a different model, never a same-model retry),
   and model_context_window_exceeded maps to :length per its guidance.

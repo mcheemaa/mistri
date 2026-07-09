@@ -27,11 +27,13 @@ module Mistri
         # harness that re-rolls against a policy verdict is machinery for
         # evading it, so these fail fast.
         VERDICTS = %w[SAFETY RECITATION LANGUAGE BLOCKLIST PROHIBITED_CONTENT SPII
-                      IMAGE_SAFETY IMAGE_PROHIBITED_CONTENT IMAGE_RECITATION
-                      OTHER IMAGE_OTHER].freeze
-        # The model fumbled its own output (an invalid function call, a
-        # missing image): the input is fine and a regeneration usually lands.
-        FUMBLES = %w[MALFORMED_FUNCTION_CALL UNEXPECTED_TOOL_CALL NO_IMAGE].freeze
+                      IMAGE_SAFETY IMAGE_PROHIBITED_CONTENT IMAGE_RECITATION].freeze
+        # The model fumbled its own output (an invalid or runaway tool call,
+        # a missing image), or the API stopped for a reason it cannot name
+        # (OTHER is documented as "Unknown reason"). The input stands accused
+        # of nothing, so these error retryably; a regeneration usually lands.
+        FUMBLES = %w[MALFORMED_FUNCTION_CALL UNEXPECTED_TOOL_CALL TOO_MANY_TOOL_CALLS
+                     NO_IMAGE OTHER IMAGE_OTHER].freeze
 
         def feed(record, &)
           if (error = record["error"])
