@@ -27,8 +27,9 @@ module Mistri
 
         attr_writer :protocol_version
 
-        def call(payload, &)
-          meta = @transport.post_either(@path, body: payload, headers: request_headers, &)
+        def call(payload, replayable:, &)
+          meta = @transport.post_either(@path, body: payload, headers: request_headers,
+                                               replayable: replayable, &)
           capture_session(meta)
           nil
         end
@@ -79,7 +80,7 @@ module Mistri
           @pid = nil
         end
 
-        def call(payload)
+        def call(payload, **)
           spawn_server unless @pid
           write(payload)
           loop do

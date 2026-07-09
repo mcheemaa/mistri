@@ -14,7 +14,8 @@ module Mistri
       attr_reader :calls, :initializes
 
       def initialize(tools: {}, sse: true, session: nil, page_size: nil,
-                     require_token: nil, expire_after: nil, protocol: "2025-11-25")
+                     require_token: nil, expire_after: nil, protocol: "2025-11-25",
+                     drop_after: nil, malformed_after: nil, empty_after: nil)
         @tools = tools
         @sse = sse
         @session = session
@@ -22,6 +23,12 @@ module Mistri
         @require_token = require_token
         @expire_after = expire_after
         @protocol = protocol
+        @drop_after = drop_after
+        @malformed_after = malformed_after
+        @empty_after = empty_after
+        @dropped = false
+        @malformed = false
+        @emptied = false
         @calls = []
         @initializes = 0
         @served = 0
@@ -47,7 +54,22 @@ module Mistri
         @served += 1
         return @stub.respond_json(socket, "", status: 202) unless message["id"]
 
-        respond(socket, message["id"], result_for(message), headers: session_headers(message))
+        result = result_for(message)
+        if message["method"] == @drop_after && !@dropped
+          @dropped = true
+          return :close
+        end
+        if message["method"] == @malformed_after && !@malformed
+          @malformed = true
+          @stub.respond_json(socket, "{")
+          return :close
+        end
+        if message["method"] == @empty_after && !@emptied
+          @emptied = true
+          return @stub.respond_json(socket, "", status: 202)
+        end
+
+        respond(socket, message["id"], result, headers: session_headers(message))
         nil
       end
 

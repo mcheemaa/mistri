@@ -119,7 +119,9 @@ module Mistri
         payload = { jsonrpc: "2.0", id: id, method: method, params: params }
         result = nil
         responded = false
-        @wire.call(payload) do |record|
+        replayable = method != "tools/call"
+        # A tool may commit its external side effect before the connection dies.
+        @wire.call(payload, replayable: replayable) do |record|
           next unless record.is_a?(Hash) && record["id"] == id
 
           responded = true
@@ -127,7 +129,12 @@ module Mistri
 
           result = record["result"]
         end
-        raise Error, "the server sent no response to #{method}" unless responded
+        unless responded
+          detail = "the server sent no matching response to #{method}"
+          raise Error, detail if replayable
+
+          raise AmbiguousDeliveryError, "#{AmbiguousDeliveryError.default_message}: #{detail}"
+        end
 
         result
       rescue ProviderError => e

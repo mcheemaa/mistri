@@ -57,6 +57,14 @@ module Mistri
     def self.default_message = "provider server error"
   end
 
+  # A non-replayable request has no confirmed response, so execution is unknown.
+  class AmbiguousDeliveryError < ProviderError
+    def self.default_message
+      "connection failed before the response was confirmed; the operation may have completed; " \
+        "do not retry automatically; verify external state first"
+    end
+  end
+
   # The provider rejected the request itself: an invalid prompt, a bad
   # image, a policy violation. Never retried; the same input cannot succeed.
   class InvalidRequestError < ProviderError

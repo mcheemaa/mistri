@@ -66,6 +66,27 @@ class TestMcpBridge < Minitest::Test
     server.stop
   end
 
+  def test_an_ambiguous_delivery_warns_the_model_not_to_retry
+    tools = { "send" => { description: "Sends once.", handler: ->(_) { "sent" } } }
+    server = Mistri::Test::McpStubServer.new(tools: tools, drop_after: "tools/call")
+    client = Mistri::MCP::Client.new(url: server.url)
+    provider = Mistri::Providers::Fake.new(turns: [
+                                             { tool_calls: [{ name: "send", arguments: {} }] },
+                                             { text: "I will verify before retrying." }
+                                           ])
+    agent = Mistri::Agent.new(provider:, tools: Mistri::MCP.tools(client))
+
+    agent.run("send it")
+
+    result = agent.session.messages.find(&:tool?)
+
+    assert_match(/AmbiguousDeliveryError/, result.text)
+    assert_match(/do not retry automatically/, result.text)
+    assert_equal 1, server.calls.length
+  ensure
+    server&.stop
+  end
+
   def test_an_approval_gate_parks_a_bridged_tool_before_the_server_sees_it
     tools = { "send" => { description: "Sends.", handler: ->(_) { "sent" } } }
     server = Mistri::Test::McpStubServer.new(tools: tools)
