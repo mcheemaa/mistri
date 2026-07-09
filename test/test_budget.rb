@@ -15,8 +15,9 @@ class TestBudget < Minitest::Test
 
     assert_equal :turns, Mistri::Budget.new(turns: 3).exceeded(turns: 3, usage: usage)
     assert_equal :tokens, Mistri::Budget.new(tokens: 1000).exceeded(turns: 0, usage: usage)
+    assert_equal :cost, Mistri::Budget.new(cost_usd: 0.005).exceeded(turns: 0, usage: usage)
     assert_equal :wall_clock,
                  Mistri::Budget.new(wall_clock: 60).exceeded(turns: 0, usage: usage, elapsed: 61)
-    assert_nil Mistri::Budget.new(turns: 4).exceeded(turns: 3, usage: usage)
+    assert_nil Mistri::Budget.new(turns: 4, cost_usd: 0.006).exceeded(turns: 3, usage: usage)
   end
 end

@@ -64,6 +64,23 @@ class TestGeminiAssembler < Minitest::Test
     assert_equal 500, failed.error["status"], "the wire code rides as a status"
   end
 
+  def test_usage_prices_from_the_catalog
+    message = drive([], [
+                      { "candidates" => [{ "content" => { "parts" => [{ "text" => "hi" }] } }],
+                        "usageMetadata" => { "promptTokenCount" => 1000,
+                                             "cachedContentTokenCount" => 400,
+                                             "candidatesTokenCount" => 100,
+                                             "thoughtsTokenCount" => 50 } },
+                      { "candidates" => [{ "finishReason" => "STOP" }] }
+                    ])
+    rates = Mistri::Models.rates("gemini-2.5-flash")
+    expected = ((rates[:input] * 600) + (rates[:cache_read] * 400) +
+                (rates[:output] * 150)) / 1_000_000.0
+
+    assert_operator message.usage.cost.total, :>, 0
+    assert_in_delta expected, message.usage.cost.total, 1e-9
+  end
+
   def test_a_stream_that_ends_without_a_finish_reason_is_an_error
     message = drive([], [
                       { "candidates" => [{ "content" => { "parts" => [{ "text" => "cut" }] } }] }

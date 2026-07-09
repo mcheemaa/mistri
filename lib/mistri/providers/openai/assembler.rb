@@ -14,6 +14,7 @@ module Mistri
       class Assembler
         def initialize(model:)
           @model = model
+          @rates = Models.rates(model)
           @blocks = []
           @current = nil
           @usage = Usage.zero
@@ -162,7 +163,7 @@ module Mistri
           @incomplete_reason = response.dig("incomplete_details", "reason")
           @error = response.dig("error", "message") if @status == "failed"
           usage = response["usage"]
-          @usage = parse_usage(usage) if usage
+          @usage = priced(parse_usage(usage)) if usage
         end
 
         def stop_reason
@@ -209,6 +210,8 @@ module Mistri
                     output: raw["output_tokens"].to_i, cache_read: cache_read,
                     reasoning: output_details["reasoning_tokens"].to_i)
         end
+
+        def priced(usage) = @rates ? usage.with_cost(@rates) : usage
       end
     end
   end

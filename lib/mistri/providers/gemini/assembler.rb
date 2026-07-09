@@ -15,6 +15,7 @@ module Mistri
       class Assembler
         def initialize(model:)
           @model = model
+          @rates = Models.rates(model)
           @blocks = []
           @current = nil
           @usage = Usage.zero
@@ -31,7 +32,7 @@ module Mistri
           candidate = record.dig("candidates", 0) || {}
           Array(candidate.dig("content", "parts")).each { |part| fold_part(part, &) }
           @finish_reason = candidate["finishReason"] if candidate["finishReason"]
-          @usage = parse_usage(record["usageMetadata"]) if record["usageMetadata"]
+          @usage = priced(parse_usage(record["usageMetadata"])) if record["usageMetadata"]
         end
 
         # A stream that ended without a finishReason was truncated, not
@@ -157,6 +158,8 @@ module Mistri
                     output: raw["candidatesTokenCount"].to_i + reasoning,
                     cache_read: cache_read, reasoning: reasoning)
         end
+
+        def priced(usage) = @rates ? usage.with_cost(@rates) : usage
       end
     end
   end

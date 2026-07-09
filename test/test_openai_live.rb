@@ -22,6 +22,7 @@ class TestOpenAILive < Minitest::Test
     assert_match(/mistri lives/i, message.text)
     assert(events.any? { |e| e.type == :text_delta })
     assert_operator message.usage.output, :>, 0
+    assert_operator message.usage.cost.total, :>, 0, "catalog pricing must ride live usage"
   ensure
     provider&.close
   end

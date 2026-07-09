@@ -3,6 +3,17 @@
 All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [Unreleased]
+
+- The model catalog carries each model's published API prices, and the
+  assemblers price every turn's usage from them: message.usage.cost and
+  Result#usage now report real dollars for catalogued models, and the
+  Budget cost_usd ceiling actually stops a run. It never could before:
+  nothing computed cost, so the comparison always saw zero. Uncatalogued
+  models still report zero cost and only the other ceilings stop them.
+  Long-context premium tiers (Gemini Pro and GPT past 200k input) are not
+  modeled; those turns under-count.
+
 ## [0.5.0] - 2026-07-08
 
 - The children registry: Session#children lists every sub-agent a session
