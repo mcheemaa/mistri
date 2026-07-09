@@ -114,6 +114,54 @@ class TestAnthropicAssembler < Minitest::Test
     assert_in_delta 0.0, unknown.finish.usage.cost.total
   end
 
+  # The API's own guidance for a refusal is a different model, never a
+  # retry of this one; the machine-readable type keeps the loop from
+  # re-rolling against a policy verdict.
+  def test_a_refusal_fails_fast_with_its_policy_category
+    events = []
+    message = drive(events, [
+                      { "type" => "content_block_start", "index" => 0,
+                        "content_block" => { "type" => "text" } },
+                      { "type" => "content_block_delta", "index" => 0,
+                        "delta" => { "type" => "text_delta", "text" => "I can" } },
+                      { "type" => "content_block_stop", "index" => 0 },
+                      { "type" => "message_delta",
+                        "delta" => { "stop_reason" => "refusal",
+                                     "stop_details" => { "category" => "harmful_content",
+                                                         "explanation" => "Declined." } },
+                        "usage" => { "output_tokens" => 2 } },
+                      { "type" => "message_stop" }
+                    ])
+
+    assert_equal :error, message.stop_reason
+    assert_equal "InvalidRequestError", message.error["type"]
+    assert_includes message.error_message, "harmful_content"
+    assert_includes message.error_message, "Declined."
+    assert_equal "I can", message.text, "partial content stays readable for the host"
+    refute Mistri::RetryPolicy.new.retryable?(message.error)
+    assert_predicate events.last, :error?
+
+    bare = drive([], [
+                   { "type" => "message_delta", "delta" => { "stop_reason" => "refusal" },
+                     "usage" => {} },
+                   { "type" => "message_stop" }
+                 ])
+
+    assert_match(/refused to respond/, bare.error_message,
+                 "a refusal without stop_details still reads as a refusal")
+  end
+
+  def test_a_filled_context_window_reads_as_length
+    message = drive([], [
+                      { "type" => "message_delta",
+                        "delta" => { "stop_reason" => "model_context_window_exceeded" },
+                        "usage" => { "output_tokens" => 9 } },
+                      { "type" => "message_stop" }
+                    ])
+
+    assert_equal :length, message.stop_reason, "the API says treat the response as truncated"
+  end
+
   def test_a_provider_error_folds_with_its_status_and_body
     assembler = Mistri::Providers::Anthropic::Assembler.new(model: "claude-opus-4-8")
     error = Mistri::ServerError.new(status: 503, body: "upstream connect timeout")

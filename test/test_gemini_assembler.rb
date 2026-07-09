@@ -88,6 +88,61 @@ class TestGeminiAssembler < Minitest::Test
     assert_in_delta 0.0, unknown.finish.usage.cost.total
   end
 
+  # Verdict finish reasons are the provider's ruling on the content; the
+  # loop must fail fast instead of re-rolling against the filter. Fumbles
+  # and unknown stops (OTHER is documented as "Unknown reason") accuse the
+  # input of nothing, so they error retryably instead.
+  def test_blocked_finish_reasons_classify_as_verdicts_or_fumbles
+    policy = Mistri::RetryPolicy.new
+    %w[SAFETY RECITATION LANGUAGE BLOCKLIST PROHIBITED_CONTENT SPII IMAGE_SAFETY].each do |reason|
+      message = drive([], [
+                        { "candidates" => [{ "content" => { "parts" => [{ "text" => "par" }] } }] },
+                        { "candidates" => [{ "finishReason" => reason }] }
+                      ])
+
+      assert_equal :error, message.stop_reason, "#{reason} must not read as a clean stop"
+      assert_equal "InvalidRequestError", message.error["type"], "#{reason} misclassified"
+      assert_includes message.error_message, reason
+      assert_equal "par", message.text, "partial content stays readable for the host"
+      refute policy.retryable?(message.error), "#{reason} is a verdict, never retried"
+    end
+
+    %w[MALFORMED_FUNCTION_CALL TOO_MANY_TOOL_CALLS OTHER].each do |reason|
+      fumble = drive([], [{ "candidates" => [{ "finishReason" => reason }] }])
+
+      assert_equal :error, fumble.stop_reason, "#{reason} must not read as a clean stop"
+      assert_equal "ProviderError", fumble.error["type"], "#{reason} misclassified"
+      assert policy.retryable?(fumble.error), "#{reason} accuses the input of nothing"
+    end
+  end
+
+  def test_a_blocked_prompt_fails_fast_instead_of_reading_as_truncation
+    message = drive([], [{ "promptFeedback" => { "blockReason" => "SAFETY" } }])
+
+    assert_equal :error, message.stop_reason
+    assert_equal "InvalidRequestError", message.error["type"]
+    assert_includes message.error_message, "SAFETY"
+    refute Mistri::RetryPolicy.new.retryable?(message.error),
+           "a blocked prompt meets the same filter on every retry"
+
+    unspecified = drive([], [
+                          { "candidates" => [{ "content" => { "parts" => [{ "text" => "hi" }] } }],
+                            "promptFeedback" => { "blockReason" => "BLOCK_REASON_UNSPECIFIED" } },
+                          { "candidates" => [{ "finishReason" => "STOP" }] }
+                        ])
+
+    assert_equal :stop, unspecified.stop_reason, "the unused default value is not a block"
+  end
+
+  def test_an_undocumented_finish_reason_still_reads_as_stop
+    message = drive([], [
+                      { "candidates" => [{ "content" => { "parts" => [{ "text" => "hi" }] } }] },
+                      { "candidates" => [{ "finishReason" => "SOME_FUTURE_REASON" }] }
+                    ])
+
+    assert_equal :stop, message.stop_reason, "unknown wire values stay tolerated by contract"
+  end
+
   def test_a_stream_that_ends_without_a_finish_reason_is_an_error
     message = drive([], [
                       { "candidates" => [{ "content" => { "parts" => [{ "text" => "cut" }] } }] }

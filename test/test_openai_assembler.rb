@@ -99,6 +99,21 @@ class TestOpenAIAssembler < Minitest::Test
     assert_equal({ "q" => "ru" }, mid.arguments)
   end
 
+  def test_a_content_filter_cut_fails_fast_instead_of_reading_complete
+    message = drive([], [
+                      { "type" => "response.incomplete",
+                        "response" => {
+                          "status" => "incomplete",
+                          "incomplete_details" => { "reason" => "content_filter" }
+                        } }
+                    ])
+
+    assert_equal :error, message.stop_reason
+    assert_equal "InvalidRequestError", message.error["type"]
+    refute Mistri::RetryPolicy.new.retryable?(message.error),
+           "a filter verdict is not a truncation"
+  end
+
   def test_incomplete_and_failed_responses_map_to_stop_reasons
     incomplete = drive([], [
                          { "type" => "response.incomplete",

@@ -39,6 +39,7 @@ module Mistri
         # reading as a cancellation.
         def finish(&emit)
           return fail_stream(@error, &emit) if @error
+          return fail_stream(refusal_error, &emit) if @refused
           return fail_stream("stream ended without message_stop", &emit) unless @done
 
           @message = assemble(stop_reason: @stop_reason || StopReason::STOP)
@@ -136,6 +137,10 @@ module Mistri
         def message_delta(record)
           reason = record.dig("delta", "stop_reason")
           @stop_reason = map_stop_reason(reason) if reason
+          if reason == "refusal"
+            @refused = true
+            @refusal = record.dig("delta", "stop_details")
+          end
           # message_delta usage is cumulative; merge output counts over the
           # opening snapshot rather than summing.
           output = record.dig("usage", "output_tokens")
@@ -183,12 +188,24 @@ module Mistri
                             usage: @usage, **meta)
         end
 
-        # pause_turn (a server tool paused a long turn) maps to tool_use so the
-        # loop continues the turn rather than ending it.
+        # pause_turn (a server tool paused a long turn) maps to tool_use so
+        # the loop continues the turn rather than ending it; a filled context
+        # window is a truncation, per the API's own guidance.
         def map_stop_reason(reason)
           { "end_turn" => StopReason::STOP, "stop_sequence" => StopReason::STOP,
             "max_tokens" => StopReason::LENGTH, "tool_use" => StopReason::TOOL_USE,
+            "model_context_window_exceeded" => StopReason::LENGTH,
             "pause_turn" => StopReason::TOOL_USE }.fetch(reason, StopReason::STOP)
+        end
+
+        # The API's guidance for a refusal is a different model, never a
+        # retry of this one, so it fails fast; stop_details names the policy
+        # category when the API provides one.
+        def refusal_error
+          details = [@refusal&.dig("category"), @refusal&.dig("explanation")].compact.join(": ")
+          text = +"the model refused to respond"
+          text << " (#{details})" unless details.empty?
+          InvalidRequestError.new(text)
         end
 
         def parse_usage(raw)
