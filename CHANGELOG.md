@@ -5,6 +5,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+- Streamable HTTP no longer replays an MCP `tools/call` when its response cannot
+  be confirmed. The server may already have committed the tool's side effect,
+  so the call now raises `AmbiguousDeliveryError` with an explicit do-not-retry
+  warning instead of transparently executing twice.
 - Refusals and content-filter stops surface honestly on every provider
   instead of reading as clean stops or retryable truncations. Gemini's
   verdict finish reasons (SAFETY, RECITATION, LANGUAGE, BLOCKLIST,

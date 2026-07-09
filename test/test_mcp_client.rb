@@ -105,6 +105,80 @@ class TestMcpClient < Minitest::Test
     end
   end
 
+  def test_a_dropped_tool_response_does_not_replay_the_call
+    with_server(drop_after: "tools/call") do |server|
+      client = Mistri::MCP::Client.new(url: server.url)
+
+      error = assert_raises(Mistri::AmbiguousDeliveryError) do
+        client.call_tool("echo", { "text" => "once" })
+      end
+
+      assert_match(/may have completed/, error.message)
+      assert_match(/do not retry automatically/, error.message)
+      assert_equal 1, server.calls.length
+    end
+  end
+
+  def test_a_dropped_replayable_request_reconnects_once
+    with_server(drop_after: "tools/list") do |server|
+      client = Mistri::MCP::Client.new(url: server.url)
+      names = client.tools.map { |tool| tool["name"] }
+      list_calls = server.bodies.count { |body| body["method"] == "tools/list" }
+
+      assert_equal ["echo"], names
+      assert_equal 2, list_calls
+    end
+  end
+
+  def test_a_malformed_tool_response_is_ambiguous
+    with_server(malformed_after: "tools/call") do |server|
+      client = Mistri::MCP::Client.new(url: server.url)
+
+      error = assert_raises(Mistri::AmbiguousDeliveryError) do
+        client.call_tool("echo", { "text" => "once" })
+      end
+
+      assert_match(/may have completed/, error.message)
+      assert_equal 1, server.calls.length
+    end
+  end
+
+  def test_a_malformed_replayable_response_is_not_replayed
+    with_server(malformed_after: "tools/list") do |server|
+      client = Mistri::MCP::Client.new(url: server.url)
+
+      assert_raises(Mistri::ProviderError) { client.tools }
+      list_calls = server.bodies.count { |body| body["method"] == "tools/list" }
+
+      assert_equal 1, list_calls
+      assert_empty server.calls
+    end
+  end
+
+  def test_a_missing_tool_response_is_ambiguous
+    with_server(empty_after: "tools/call") do |server|
+      client = Mistri::MCP::Client.new(url: server.url)
+
+      error = assert_raises(Mistri::AmbiguousDeliveryError) do
+        client.call_tool("echo", { "text" => "once" })
+      end
+
+      assert_match(/no matching response/, error.message)
+      assert_equal 1, server.calls.length
+    end
+  end
+
+  def test_a_missing_replayable_response_remains_a_protocol_error
+    with_server(empty_after: "tools/list") do |server|
+      client = Mistri::MCP::Client.new(url: server.url)
+
+      error = assert_raises(Mistri::MCP::Error) { client.tools }
+
+      assert_match(/no matching response/, error.message)
+      assert_empty server.calls
+    end
+  end
+
   def test_an_unsupported_protocol_version_fails_loudly
     with_server(protocol: "1999-01-01") do |server|
       client = Mistri::MCP::Client.new(url: server.url)

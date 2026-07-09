@@ -1,6 +1,7 @@
 # frozen_string_literal: true
 
 require "net/http"
+require "openssl"
 require "json"
 require "uri"
 
@@ -47,10 +48,9 @@ module Mistri
 
     # POST for Streamable-HTTP endpoints (the MCP shape) that answer either
     # a JSON body or an SSE stream: yields each JSON record either way and
-    # returns the response headers, downcased. Retries only a dead idle
-    # socket that failed before any response started, so a side-effecting
-    # call can never run twice.
-    def post_either(path, body:, headers: {}, &block)
+    # returns the response headers, downcased. A replayable request retries
+    # once when a dead idle socket fails before any response starts.
+    def post_either(path, body:, headers: {}, replayable: true, &block)
       @mutex.synchronize do
         retried = false
         begin
@@ -63,8 +63,12 @@ module Mistri
             read_either(response, &block)
           end
           response_headers
-        rescue IOError, SocketError, SystemCallError, Timeout::Error => e
+        rescue IOError, SocketError, SystemCallError, Timeout::Error, JSON::ParserError,
+               Net::HTTPBadResponse, OpenSSL::SSL::SSLError => e
           teardown
+          unless replayable
+            raise AmbiguousDeliveryError, "#{AmbiguousDeliveryError.default_message}: #{e.message}"
+          end
           if started || retried || e.is_a?(Timeout::Error)
             raise ProviderError, "connection failed: #{e.message}"
           end

@@ -6,8 +6,8 @@ class TestErrors < Minitest::Test
   def test_every_error_rescues_as_mistri_error
     [Mistri::ConfigurationError, Mistri::ProviderError, Mistri::AuthenticationError,
      Mistri::RateLimitError, Mistri::OverloadedError, Mistri::ServerError,
-     Mistri::InvalidRequestError, Mistri::SchemaError, Mistri::AbortError,
-     Mistri::BudgetError].each do |klass|
+     Mistri::AmbiguousDeliveryError, Mistri::InvalidRequestError, Mistri::SchemaError,
+     Mistri::AbortError, Mistri::BudgetError].each do |klass|
       assert_operator klass, :<, Mistri::Error
     end
   end
@@ -25,5 +25,12 @@ class TestErrors < Minitest::Test
 
     assert_in_delta 12.5, error.retry_after
     assert_equal 429, error.status
+  end
+
+  def test_ambiguous_delivery_error_warns_against_an_automatic_retry
+    error = Mistri::AmbiguousDeliveryError.new
+
+    assert_match(/operation may have completed/, error.message)
+    assert_match(/do not retry automatically/, error.message)
   end
 end
