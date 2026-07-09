@@ -6,8 +6,8 @@ require "stringio"
 # Sinks bridge the event stream to a transport: SSE frames, Action Cable
 # broadcasts, and a coalescer that merges delta bursts to UI speed.
 class TestSinks < Minitest::Test
-  def delta(text, index: 0)
-    Mistri::Event.new(type: :text_delta, content_index: index, delta: text)
+  def delta(text, index: 0, origin: nil)
+    Mistri::Event.new(type: :text_delta, content_index: index, delta: text, origin: origin)
   end
 
   def test_coalesced_merges_a_burst_into_one_delta
@@ -44,6 +44,47 @@ class TestSinks < Minitest::Test
 
     assert_equal %i[start text_delta tool_result], seen.map(&:type),
                  "the buffered delta flushes before the next non-delta event"
+  end
+
+  def test_coalesced_never_merges_across_origins
+    seen = []
+    sink = Mistri::Sinks::Coalesced.new(->(event) { seen << event }, interval: 60)
+
+    sink.call(delta("parent says "))
+    sink.call(delta("child says ", origin: "Corgi#ab12cd34"))
+    sink.call(delta("hello", origin: "Corgi#ab12cd34"))
+    sink.call(Mistri::Event.new(type: :done, reason: :stop))
+
+    deltas = seen.select { |event| event.type == :text_delta }
+
+    assert_equal ["parent says ", "child says hello"], deltas.map(&:delta),
+                 "a lane keeps its own bytes even at the same content index"
+    assert_equal [nil, "Corgi#ab12cd34"], deltas.map(&:origin)
+  end
+
+  # A background worker emits from its own thread while the parent streams;
+  # the coalescer must serialize them. Exact chunking is timing-dependent,
+  # so the assertions are the invariants: every lane's bytes arrive intact,
+  # in order, and never inside another lane's event.
+  def test_coalesced_is_safe_under_concurrent_emitters
+    seen = []
+    sink = Mistri::Sinks::Coalesced.new(->(event) { seen << event }, interval: 60)
+    lanes = { nil => "the parent narrates its own turn",
+              "Corgi#1" => "corgi reports pricing findings",
+              "Husky#2" => "husky reports founder findings" }
+
+    lanes.map do |origin, text|
+      Thread.new { text.chars.each { |char| sink.call(delta(char, origin: origin)) } }
+    end.each(&:join)
+    sink.call(Mistri::Event.new(type: :done, reason: :stop))
+
+    lanes.each do |origin, text|
+      arrived = seen.select { |e| e.type == :text_delta && e.origin == origin }
+                    .map(&:delta).join
+
+      assert_equal text, arrived, "lane #{origin.inspect} lost or mixed bytes"
+    end
+    assert_equal :done, seen.last.type, "the terminal still flushes and forwards last"
   end
 
   def test_coalesced_with_zero_interval_flushes_every_delta
