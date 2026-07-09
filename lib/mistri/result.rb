@@ -10,7 +10,7 @@ module Mistri
   # Reads delegate to the final message, so result.text works whether the run
   # completed or suspended.
   # output is a task's validated value, nil on plain runs. usage is the
-  # run's own accounting: every persisted turn plus compaction calls, summed
+  # run's own accounting: every provider attempt plus compaction calls, summed
   # (a resumed run counts from the resume; task sums across its fix passes).
   # handed_off marks a run that ended because an ends_turn tool executed:
   # complete, but the final word was the tool's, and whatever comes next (a

@@ -445,15 +445,45 @@ the generator and stores duck-type into any app.
 signal = Mistri::AbortSignal.new
 agent.run("Draft a long essay.", signal: signal)
 
-# Ceilings are opt-in and off by default. Dollar cost is priced from the
-# model catalog's published rates; a model the catalog does not know
-# reports zero cost, so only the other ceilings can stop it.
+# Ceilings are opt-in and off by default. Dollar cost uses each request's
+# published paid-list rate, including long-context tiers and dated changes.
 budget = Mistri::Budget.new(turns: 20, cost_usd: 2.00)
+
+# Anthropic and OpenAI need an explicit standard tier for a cost budget.
+agent = Mistri.agent("gpt-5.5", budget: budget,
+                     provider_options: { service_tier: "default" })
 
 # Transient failures (429, 5xx, timeouts) retry with backoff, invisibly to
 # the model. On by default; retries: false disables.
 policy = Mistri::RetryPolicy.new(attempts: 3)
 ```
+
+Cost is explicit: `result.usage.cost.known?` is false when Mistri cannot
+price every turn. Constructing an agent with `cost_usd` therefore requires a
+catalogued model, a list-priced origin, and deterministic standard-tier policy
+instead of treating unknown cost as free. Anthropic uses `standard_only`;
+OpenAI uses `default`; Gemini's omitted tier is standard by contract. All
+ceilings are checked between model-visible turns, so the final turn, including
+its provider retry attempts, can exceed one. If an attempted request has no
+trustworthy usage, the run raises `BudgetError` and does not retry it. The
+error exposes `usage` and `provider_message`, and the session records an
+`unpriced_attempt` entry for reconciliation. Reported dollars are standard paid
+direct-API list-price estimates; contracted or regional uplifts and separately
+billed provider tools are outside this total.
+Gemini free-tier usage is conservatively valued at the paid rate.
+
+Built-in providers disable catalog pricing for a custom `origin:`. Pass
+`catalog_pricing: true` only when that route bills the same published rates.
+Pricing never changes service-tier policy. Anthropic and OpenAI usage is known
+only when the response reports their standard tier; Priority, Flex, or a
+missing tier stays unknown. A host that needs deterministic list-price
+budgeting can select it explicitly with `provider_options: { service_tier:
+"standard_only" }` for Anthropic or `"default"` for OpenAI. Gemini observes
+`usageMetadata.serviceTier`; Flex and Priority are unpriced by this catalog.
+A custom provider can support cost ceilings by returning true from
+`prices_usage?` and attaching a known cost to every response, commonly with
+`Mistri::Usage#with_cost`; missing or partial pricing then fails closed at
+runtime.
 
 Retries are invisible to the model but not to your UI: each backoff emits a
 `:retry` event carrying `attempt`, `max_attempts`, and `delay`, so a sink can

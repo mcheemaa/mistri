@@ -64,20 +64,21 @@ class TestGeminiAssembler < Minitest::Test
     assert_equal 500, failed.error["status"], "the wire code rides as a status"
   end
 
-  def test_usage_prices_from_the_catalog_and_unknown_models_stay_zero
+  def test_usage_prices_from_the_catalog_and_unknown_models_stay_unknown
     message = drive([], [
-                      { "candidates" => [{ "content" => { "parts" => [{ "text" => "hi" }] } }],
+                      { "candidates" => [{ "content" => { "parts" => [{ "text" => "hi" }] },
+                                           "finishReason" => "STOP" }],
                         "usageMetadata" => { "promptTokenCount" => 1000,
                                              "cachedContentTokenCount" => 400,
                                              "candidatesTokenCount" => 100,
-                                             "thoughtsTokenCount" => 50 } },
-                      { "candidates" => [{ "finishReason" => "STOP" }] }
+                                             "thoughtsTokenCount" => 50 } }
                     ])
     rates = Mistri::Models.rates("gemini-2.5-flash")
     expected = ((rates[:input] * 600) + (rates[:cache_read] * 400) +
                 (rates[:output] * 150)) / 1_000_000.0
 
     assert_operator message.usage.cost.total, :>, 0
+    assert_predicate message.usage.cost, :known?
     assert_in_delta expected, message.usage.cost.total, 1e-9
 
     unknown = Mistri::Providers::Gemini::Assembler.new(model: "gemini-hypothetical")
@@ -85,7 +86,62 @@ class TestGeminiAssembler < Minitest::Test
                    "usageMetadata" => { "promptTokenCount" => 1000,
                                         "candidatesTokenCount" => 200 } })
 
-    assert_in_delta 0.0, unknown.finish.usage.cost.total
+    refute_predicate unknown.finish.usage.cost, :known?
+
+    unpriced = Mistri::Providers::Gemini::Assembler.new(model: "gemini-2.5-flash",
+                                                        catalog_pricing: false)
+    unpriced.feed({ "candidates" => [{ "finishReason" => "STOP" }],
+                    "usageMetadata" => { "promptTokenCount" => 1000,
+                                         "candidatesTokenCount" => 200 } })
+
+    refute_predicate unpriced.finish.usage.cost, :known?
+
+    missing = Mistri::Providers::Gemini::Assembler.new(model: "gemini-2.5-flash")
+    missing.feed({ "candidates" => [{ "finishReason" => "STOP" }] })
+
+    refute_predicate missing.finish.usage.cost, :known?
+  end
+
+  def test_pro_usage_is_priced_at_the_higher_request_tier
+    assembler = Mistri::Providers::Gemini::Assembler.new(model: "gemini-2.5-pro")
+    assembler.feed({ "candidates" => [{ "finishReason" => "STOP" }],
+                     "usageMetadata" => { "promptTokenCount" => 200_001,
+                                          "candidatesTokenCount" => 100 } })
+    usage = assembler.finish.usage
+
+    assert_in_delta 0.5000025, usage.cost.input, 1e-9
+    assert_in_delta 0.0015, usage.cost.output, 1e-9
+  end
+
+  def test_nonstandard_service_tier_usage_is_unknown
+    assembler = Mistri::Providers::Gemini::Assembler.new(model: "gemini-2.5-flash")
+    assembler.feed({ "candidates" => [{ "finishReason" => "STOP" }],
+                     "usageMetadata" => { "promptTokenCount" => 1000,
+                                          "candidatesTokenCount" => 100,
+                                          "serviceTier" => "priority" } })
+
+    refute_predicate assembler.finish.usage.cost, :known?
+
+    requested = Mistri::Providers::Gemini::Assembler.new(model: "gemini-2.5-flash",
+                                                         service_tier: "flex")
+    requested.feed({ "candidates" => [{ "finishReason" => "STOP" }],
+                     "usageMetadata" => { "promptTokenCount" => 1000,
+                                          "candidatesTokenCount" => 100 } })
+
+    refute_predicate requested.finish.usage.cost, :known?
+  end
+
+  def test_a_truncated_stream_keeps_partial_dollars_but_marks_them_unknown
+    assembler = Mistri::Providers::Gemini::Assembler.new(model: "gemini-2.5-flash")
+    assembler.feed({ "usageMetadata" => { "promptTokenCount" => 1000,
+                                          "candidatesTokenCount" => 100,
+                                          "serviceTier" => "standard" } })
+
+    message = assembler.finish
+
+    assert_equal :error, message.stop_reason
+    assert_operator message.usage.cost.total, :>, 0
+    refute_predicate message.usage.cost, :known?
   end
 
   # Verdict finish reasons are the provider's ruling on the content; the

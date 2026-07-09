@@ -26,9 +26,14 @@ module Mistri
 
       def initialize(turns: [], chunk_size: 12)
         @turns = turns.map { |turn| turn.transform_keys(&:to_sym) }
+        @prices_usage = @turns.all? do |turn|
+          !turn[:usage] || turn[:usage].cost.known?
+        end
         @chunk_size = [chunk_size, 1].max
         @requests = []
       end
+
+      def prices_usage? = @prices_usage
 
       def stream(messages: [], **options, &emit)
         # Snapshot the array: the loop appends replies to it in place.
@@ -104,7 +109,7 @@ module Mistri
       def finish_error(turn, blocks, emit)
         error = { "type" => turn.fetch(:error_type, "Error") }
         error["status"] = turn[:status] if turn[:status]
-        message = assemble(blocks, usage: Usage.zero, stop_reason: StopReason::ERROR,
+        message = assemble(blocks, usage: turn[:usage] || Usage.zero, stop_reason: StopReason::ERROR,
                                    error_message: turn[:error], error: error)
         emit&.call(Event.new(type: :error, reason: StopReason::ERROR, message:,
                              error_message: turn[:error]))

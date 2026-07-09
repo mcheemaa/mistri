@@ -10,7 +10,8 @@ class TestOpenAILive < Minitest::Test
   end
 
   def test_a_text_turn_streams_and_lands
-    provider = Mistri::Providers::OpenAI.new(api_key: ENV.fetch("OPENAI_API_KEY"))
+    provider = Mistri::Providers::OpenAI.new(api_key: ENV.fetch("OPENAI_API_KEY"),
+                                             service_tier: "default")
     events = []
 
     message = provider.stream(
@@ -23,6 +24,7 @@ class TestOpenAILive < Minitest::Test
     assert(events.any? { |e| e.type == :text_delta })
     assert_operator message.usage.output, :>, 0
     assert_operator message.usage.cost.total, :>, 0, "catalog pricing must ride live usage"
+    assert_predicate message.usage.cost, :known?
   ensure
     provider&.close
   end
@@ -31,7 +33,8 @@ class TestOpenAILive < Minitest::Test
   # items must round-trip through our signatures, or the second request 400s
   # on broken pairing.
   def test_a_tool_turn_replays_cleanly_into_a_final_answer
-    provider = Mistri::Providers::OpenAI.new(api_key: ENV.fetch("OPENAI_API_KEY"))
+    provider = Mistri::Providers::OpenAI.new(api_key: ENV.fetch("OPENAI_API_KEY"),
+                                             service_tier: "default")
     weather = { name: "get_weather", description: "Current weather for a city.",
                 input_schema: { type: "object", properties: { city: { type: "string" } },
                                 required: ["city"], additionalProperties: false } }

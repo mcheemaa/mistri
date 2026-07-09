@@ -13,12 +13,14 @@ module Mistri
       # Thought signatures ride on individual parts and are captured onto the
       # block they arrived with, verbatim, for replay.
       class Assembler
-        def initialize(model:)
+        def initialize(model:, catalog_pricing: true, service_tier: nil)
           @model = model
-          @rates = Models.rates(model)
+          @catalog_pricing = catalog_pricing
+          @service_tier = service_tier
+          @pricing_at = Time.now
           @blocks = []
           @current = nil
-          @usage = Usage.zero
+          @usage = Usage.new
           @finish_reason = nil
         end
 
@@ -47,7 +49,11 @@ module Mistri
           candidate = record.dig("candidates", 0) || {}
           Array(candidate.dig("content", "parts")).each { |part| fold_part(part, &) }
           @finish_reason = candidate["finishReason"] if candidate["finishReason"]
-          @usage = priced(parse_usage(record["usageMetadata"])) if record["usageMetadata"]
+          if (raw_usage = record["usageMetadata"])
+            @service_tier = raw_usage["serviceTier"] if raw_usage.key?("serviceTier")
+            @usage = priced(parse_usage(raw_usage))
+            @usage_authoritative = true if @finish_reason || @block_reason
+          end
         end
 
         # A stream that ended without a finishReason was truncated, not
@@ -55,11 +61,12 @@ module Mistri
         def finish(&emit)
           return fail_stream(@error, &emit) if @error
           if (refused = blocked)
-            return fail_stream(refused, &emit)
+            return fail_stream(refused, usage_known: @usage_authoritative, &emit)
           end
           return fail_stream("stream ended without a finish reason", &emit) unless @finish_reason
 
           close_current(&emit)
+          invalidate_cost unless @usage_authoritative
           @message = assemble(stop_reason: stop_reason)
           emit&.call(Event.new(type: :done, reason: @message.stop_reason, message: @message))
           @message
@@ -67,11 +74,13 @@ module Mistri
 
         def abort(&)
           close_current
+          invalidate_cost
           terminal(StopReason::ABORTED, "aborted", &)
         end
 
-        def fail_stream(reason, &)
+        def fail_stream(reason, usage_known: false, &)
           close_current
+          invalidate_cost unless usage_known
           text = case reason
                  when ProviderError then "#{reason.class}: #{reason.describe}"
                  when Exception then "#{reason.class}: #{reason.message}"
@@ -194,7 +203,19 @@ module Mistri
                     cache_read: cache_read, reasoning: reasoning)
         end
 
-        def priced(usage) = @rates ? usage.with_cost(@rates) : usage
+        def priced(usage)
+          return usage unless @catalog_pricing
+
+          standard = @service_tier.nil? || %w[unspecified standard].include?(@service_tier.to_s)
+          return usage unless standard
+
+          rates = Models.rates(@model, usage:, at: @pricing_at)
+          rates ? usage.with_cost(rates) : usage
+        end
+
+        def invalidate_cost
+          @usage = @usage.with(cost: @usage.cost.with(known: false))
+        end
       end
     end
   end

@@ -19,7 +19,7 @@ module Mistri
   # queues a user message from any process while the loop runs; it folds
   # into the transcript at the next turn boundary, and a background child's
   # report arrives through the same inbox.
-  class Agent
+  class Agent # rubocop:disable Metrics/ClassLength -- lifecycle order is the class contract
     # compaction defaults on so long sessions survive their context window;
     # pass false to disable, or a tuned Compaction. It only ever triggers
     # when the model's window is known (catalog or Compaction#window).
@@ -45,6 +45,7 @@ module Mistri
       raise ConfigurationError, "duplicate tool names" if @tools_by_name.length != @tools.length
 
       @budget = budget || Budget.new
+      @budget.validate_provider!(@provider)
       @max_concurrency = max_concurrency
       @transform_context = Array(transform_context)
       @compaction = compaction || nil
@@ -159,10 +160,16 @@ module Mistri
 
         fold_inbox
         compacted = auto_compact(&emit)
-        usage += compacted[:usage] if compacted&.dig(:usage)
-        last = run_turn(signal, output_schema, &emit)
+        if compacted
+          compaction_usage = compacted[:usage] || Usage.new
+          validate_usage!(compaction_usage, kind: "compaction", &emit)
+          usage += compaction_usage
+          reason = @budget.exceeded(turns:, usage:, elapsed: monotonic_now - started)
+          return stop_for_budget(reason, usage, &emit) if reason
+        end
+        last, turn_usage = run_turn(signal, output_schema, &emit)
         turns += 1
-        usage += last.usage if last.usage
+        usage += turn_usage
 
         # Any tool call the turn made must be answered or parked, or the
         # transcript is unpairable and replay fails.
@@ -193,8 +200,8 @@ module Mistri
       return nil unless @compaction.needed?(tokens, context_window)
 
       Compactor.call(session: @session, provider: @provider, settings: @compaction, &)
-    rescue CompactionError
-      nil
+    rescue CompactionError => e
+      { usage: e.usage || Usage.new }
     end
 
     def context_window
@@ -229,12 +236,16 @@ module Mistri
         transform.call(messages)
       end
       attempt = 0
+      usage = Usage.zero
       loop do
         held = nil
         gate = emit && ->(event) { event.terminal? ? held = event : emit.call(event) }
         message = @provider.stream(messages: history, system: @system,
                                    tools: @tools.map(&:spec), signal: signal,
                                    output_schema: output_schema, &gate)
+        attempt_usage = message.usage || Usage.new
+        validate_usage!(attempt_usage, message:, kind: "turn", &emit)
+        usage += attempt_usage
         attempt += 1
         error = @retries&.error_for(message)
         if retry_turn?(error, attempt, signal)
@@ -245,7 +256,7 @@ module Mistri
         end
         emit&.call(held) if held
         @session.append_message(message)
-        return message
+        return [message, usage]
       end
     end
 
@@ -257,13 +268,30 @@ module Mistri
     end
 
     def record_retry(message, error, attempt, pause, &emit)
-      @session.append("retry", "attempt" => attempt, "error" => error,
-                               "delay" => pause.round(2))
+      entry = { "attempt" => attempt, "error" => error, "delay" => pause.round(2) }
+      entry["usage"] = (message.usage || Usage.new).to_h
+      @session.append("retry", entry)
       note = format("attempt %<attempt>d failed; retrying in %<pause>.1fs",
                     attempt: attempt, pause: pause)
       emit&.call(Event.new(type: :retry, content: note, attempt: attempt,
                            max_attempts: @retries.attempts, delay: pause.round(2),
                            message: message))
+    end
+
+    def validate_usage!(usage, kind:, message: nil, &emit)
+      @budget.validate_usage!(usage)
+    rescue BudgetError => e
+      entry = { "kind" => kind, "usage" => usage.to_h }
+      entry["message"] = message.to_h if message
+      @session.append("unpriced_attempt", entry)
+      error = BudgetError.new(e.message, usage: e.usage || usage, provider_message: message)
+      stopped = Message.assistant(content: "Run stopped: cost could not be determined.",
+                                  stop_reason: StopReason::BUDGET,
+                                  error_message: "budget_cost_unknown")
+      @session.append_message(stopped)
+      emit&.call(Event.new(type: :error, reason: StopReason::BUDGET, message: stopped,
+                           error_message: error.message))
+      raise error
     end
 
     # Backoff that an abort can cut short.
@@ -404,5 +432,5 @@ module Mistri
     end
 
     def monotonic_now = Process.clock_gettime(Process::CLOCK_MONOTONIC)
-  end
+  end # rubocop:enable Metrics/ClassLength
 end

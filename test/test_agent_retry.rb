@@ -39,6 +39,75 @@ class TestAgentRetry < Minitest::Test
            "the failed attempt never becomes a message")
   end
 
+  def test_retry_attempt_usage_is_included_in_the_run_total
+    failed = Mistri::Usage.new(input: 1_000_000).with_cost(input: 1.0)
+    recovered = Mistri::Usage.new(input: 1_000_000).with_cost(input: 1.0)
+    provider = Mistri::Providers::Fake.new(turns: [
+                                             { error: "overloaded", status: 529, usage: failed },
+                                             { text: "recovered", usage: recovered }
+                                           ])
+    agent = Mistri::Agent.new(provider:, retries: FAST,
+                              budget: Mistri::Budget.new(cost_usd: 1.50))
+
+    result = agent.run("go")
+    retry_entry = agent.session.entries.find { |entry| entry["type"] == "retry" }
+
+    assert_predicate result, :completed?, "the ceiling is soft through the completed turn"
+    assert_in_delta 2.0, result.usage.cost.total
+    assert_in_delta 1.0, retry_entry.dig("usage", "cost", "total")
+  end
+
+  def test_a_retry_without_usage_records_that_its_cost_is_unknown
+    turns = [
+      Mistri::Message.assistant(stop_reason: :error, error_message: "overloaded",
+                                error: { "type" => "OverloadedError" }),
+      Mistri::Message.assistant(content: "recovered", stop_reason: :stop,
+                                usage: Mistri::Usage.zero)
+    ]
+    provider = Mistri::Providers::Fake.new
+    provider.define_singleton_method(:stream) { |**_options| turns.shift }
+    agent = Mistri::Agent.new(provider:, retries: FAST)
+
+    result = agent.run("go")
+    retry_entry = agent.session.entries.find { |entry| entry["type"] == "retry" }
+
+    refute_predicate result.usage.cost, :known?
+    refute retry_entry.dig("usage", "cost", "known")
+  end
+
+  def test_a_cost_budget_does_not_retry_an_unmetered_failure
+    calls = 0
+    turns = [
+      Mistri::Message.assistant(stop_reason: :error, error_message: "overloaded",
+                                error: { "type" => "OverloadedError" }),
+      Mistri::Message.assistant(content: "must not run", stop_reason: :stop,
+                                usage: Mistri::Usage.zero)
+    ]
+    provider = Mistri::Providers::Fake.new
+    provider.define_singleton_method(:stream) do |**_options|
+      calls += 1
+      turns.shift
+    end
+    agent = Mistri::Agent.new(provider:, retries: FAST,
+                              budget: Mistri::Budget.new(cost_usd: 1.00))
+    events = []
+
+    error = assert_raises(Mistri::BudgetError) do
+      agent.run("go") { |event| events << event }
+    end
+    entry = agent.session.entries.find { |item| item["type"] == "unpriced_attempt" }
+
+    assert_match(/not retrying/, error.message)
+    assert_equal "overloaded", error.provider_message.error_message
+    refute_predicate error.usage.cost, :known?
+    assert_equal "turn", entry["kind"]
+    assert_equal 1, events.count(&:terminal?)
+    assert_equal Mistri::StopReason::BUDGET, events.last.reason
+    assert_equal Mistri::StopReason::BUDGET, agent.session.messages.last.stop_reason
+    assert_equal 1, calls
+    refute(agent.session.entries.any? { |entry| entry["type"] == "retry" })
+  end
+
   # Providers intermittently finish with an empty candidate: no text, no
   # tool calls, nothing. That is never a real answer, so it retries like a
   # transient failure instead of ending the run in silence.

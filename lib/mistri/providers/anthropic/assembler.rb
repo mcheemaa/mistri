@@ -11,19 +11,20 @@ module Mistri
       # Unknown event and block types are skipped by contract: the API adds
       # types over time and a live stream must survive them.
       class Assembler
-        def initialize(model:)
+        def initialize(model:, catalog_pricing: true)
           @model = model
-          @rates = Models.rates(model)
+          @catalog_pricing = catalog_pricing
+          @pricing_at = Time.now
           @blocks = []
           @current = nil
-          @usage = Usage.zero
+          @usage = Usage.new
           @stop_reason = nil
           @done = false
         end
 
         def feed(record, &)
           case record["type"]
-          when "message_start" then @usage = priced(parse_usage(record.dig("message", "usage")))
+          when "message_start" then message_start(record)
           when "content_block_start" then start_block(record, &)
           when "content_block_delta" then delta_block(record, &)
           when "content_block_stop" then stop_block(record, &)
@@ -39,9 +40,13 @@ module Mistri
         # reading as a cancellation.
         def finish(&emit)
           return fail_stream(@error, &emit) if @error
-          return fail_stream(refusal_error, &emit) if @refused
+          if @refused
+            return fail_stream(refusal_error,
+                               usage_known: @done && @usage_authoritative, &emit)
+          end
           return fail_stream("stream ended without message_stop", &emit) unless @done
 
+          invalidate_cost unless @usage_authoritative
           @message = assemble(stop_reason: @stop_reason || StopReason::STOP)
           emit&.call(Event.new(type: :done, reason: @message.stop_reason, message: @message))
           @message
@@ -49,6 +54,7 @@ module Mistri
 
         def abort(&emit)
           finalize_current
+          invalidate_cost
           @message = assemble(stop_reason: StopReason::ABORTED, error_message: "aborted")
           emit&.call(Event.new(type: :error, reason: StopReason::ABORTED, message: @message,
                                error_message: "aborted"))
@@ -63,8 +69,9 @@ module Mistri
           klass.new(message)
         end
 
-        def fail_stream(reason, &emit)
+        def fail_stream(reason, usage_known: false, &emit)
           finalize_current
+          invalidate_cost unless usage_known
           text = case reason
                  when ProviderError then "#{reason.class}: #{reason.describe}"
                  when Exception then "#{reason.class}: #{reason.message}"
@@ -82,6 +89,12 @@ module Mistri
         Builder = Struct.new(:kind, :index, :text, :json, :signature, :id, :name, :redacted)
 
         private
+
+        def message_start(record)
+          raw = record.dig("message", "usage")
+          @service_tier = raw&.fetch("service_tier", nil)
+          @usage = priced(parse_usage(raw))
+        end
 
         def start_block(record, &)
           block = record["content_block"] || {}
@@ -144,7 +157,10 @@ module Mistri
           # message_delta usage is cumulative; merge output counts over the
           # opening snapshot rather than summing.
           output = record.dig("usage", "output_tokens")
-          @usage = priced(@usage.with(output: output.to_i)) if output
+          return unless output
+
+          @usage = priced(@usage.with(output: output.to_i))
+          @usage_authoritative = true
         end
 
         def finalize_current
@@ -209,7 +225,7 @@ module Mistri
         end
 
         def parse_usage(raw)
-          return Usage.zero unless raw
+          return Usage.new unless raw
 
           cache_creation = raw["cache_creation"] || {}
           Usage.new(input: raw["input_tokens"].to_i, output: raw["output_tokens"].to_i,
@@ -218,7 +234,17 @@ module Mistri
                     cache_write_1h: cache_creation["ephemeral_1h_input_tokens"].to_i)
         end
 
-        def priced(usage) = @rates ? usage.with_cost(@rates) : usage
+        def priced(usage)
+          return usage unless @catalog_pricing
+          return usage unless @service_tier == "standard"
+
+          rates = Models.rates(@model, usage:, at: @pricing_at)
+          rates ? usage.with_cost(rates) : usage
+        end
+
+        def invalidate_cost
+          @usage = @usage.with(cost: @usage.cost.with(known: false))
+        end
       end
     end
   end

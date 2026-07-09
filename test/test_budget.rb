@@ -8,6 +8,7 @@ class TestBudget < Minitest::Test
 
     assert_predicate budget, :none?
     assert_nil budget.exceeded(turns: 999, usage: Mistri::Usage.zero, elapsed: 99_999)
+    refute_predicate budget, :cost?
   end
 
   def test_each_ceiling_reports_its_own_reason
@@ -19,5 +20,14 @@ class TestBudget < Minitest::Test
     assert_equal :wall_clock,
                  Mistri::Budget.new(wall_clock: 60).exceeded(turns: 0, usage: usage, elapsed: 61)
     assert_nil Mistri::Budget.new(turns: 4, cost_usd: 0.006).exceeded(turns: 3, usage: usage)
+    assert_predicate Mistri::Budget.new(cost_usd: 1), :cost?
+  end
+
+  def test_a_cost_ceiling_rejects_unknown_cost
+    budget = Mistri::Budget.new(cost_usd: 1)
+
+    assert_raises(Mistri::BudgetError) do
+      budget.exceeded(turns: 0, usage: Mistri::Usage.new(input: 1))
+    end
   end
 end

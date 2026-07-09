@@ -43,14 +43,26 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   burns its retry budget on input the provider already ruled out. A
   failed response without an error object now errors instead of reading
   as a clean stop.
-- The model catalog carries each model's published API prices, and the
-  assemblers price every turn's usage from them: message.usage.cost and
-  Result#usage now report real dollars for catalogued models, and the
+- The model catalog carries each model's published standard paid direct-API
+  prices. Assemblers price every turn's usage from them: message.usage.cost and
+  Result#usage now report list-price dollar estimates for catalogued models, and the
   Budget cost_usd ceiling actually stops a run. It never could before:
-  nothing computed cost, so the comparison always saw zero. Uncatalogued
-  models still report zero cost and only the other ceilings stop them.
-  Long-context premium tiers (Gemini Pro and GPT past 200k input) are not
-  modeled; those turns under-count.
+  nothing computed cost, so the comparison always saw zero. Pricing is
+  selected per request, including GPT-5.4/5.5 and Gemini Pro long-context
+  tiers and Sonnet 5's September 2026 rate change. Unpriced usage is marked
+  unknown instead of free. A cost ceiling rejects an unknown model or origin
+  at construction and fails closed when a request's pricing is unknown at
+  runtime. Catalog pricing requires an explicit `catalog_pricing:` opt-in on
+  custom origins and observes service-tier policy without changing it;
+  nonstandard or unreported tiers stay unknown. A deterministic standard tier
+  is required up front for cost-budgeted Anthropic and OpenAI agents; Gemini's
+  reported standard, Flex, or Priority tier is honored rather than assuming
+  standard. Cost ceilings remain soft and are checked between model-visible
+  turns. An unmetered attempt raises Mistri::BudgetError instead of retrying
+  under false certainty; the error and an unpriced_attempt session entry retain
+  its partial accounting. Run usage includes every retry and compaction attempt,
+  and retry session entries now carry their own usage. Truncated streams preserve
+  partial token counts but mark their dollar total unknown.
 
 ## [0.5.0] - 2026-07-08
 

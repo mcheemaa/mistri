@@ -10,33 +10,40 @@ module Mistri
     # raising: the loop decides whether to retry, and the host always gets a
     # message back.
     class Anthropic
+      DEFAULT_ORIGIN = "https://api.anthropic.com"
       VERSION_HEADER = "2023-06-01"
       DEFAULT_THINKING = { type: "adaptive", display: "summarized" }.freeze
 
       # Messages API parameters passed through verbatim from a stream override.
-      PASSTHROUGH = %i[temperature top_p top_k stop_sequences metadata
-                       tool_choice service_tier].freeze
+      PASSTHROUGH = %i[temperature top_p top_k stop_sequences metadata tool_choice].freeze
       # The ceiling for an uncatalogued model: high enough for headroom, low
       # enough that every current model accepts it. Catalog a model to unlock
       # its real output limit.
       UNKNOWN_MODEL_MAX_TOKENS = 64_000
 
-      def initialize(api_key:, model: "claude-opus-4-8", origin: "https://api.anthropic.com",
+      def initialize(api_key:, model: "claude-opus-4-8", origin: DEFAULT_ORIGIN,
                      max_tokens: nil, thinking: DEFAULT_THINKING, cache: true,
+                     service_tier: nil, catalog_pricing: nil,
                      **transport_options)
         @api_key = api_key
         @model = model
         @max_tokens = max_tokens
         @thinking = thinking
         @cache = cache
+        @service_tier = service_tier
+        @catalog_pricing = catalog_pricing.nil? ? official_origin?(origin) : catalog_pricing
         @transport = Transport.new(origin: origin, **transport_options)
       end
 
       attr_reader :model
 
+      def prices_usage?
+        @catalog_pricing && Models.priced?(model) && @service_tier.to_s == "standard_only"
+      end
+
       def stream(messages:, system: nil, tools: [], signal: nil, **overrides, &emit)
         model = overrides.fetch(:model, @model)
-        assembler = Anthropic::Assembler.new(model: model)
+        assembler = Anthropic::Assembler.new(model: model, catalog_pricing: @catalog_pricing)
         body = build_body(model, messages, system, tools, overrides)
         outcome = @transport.stream_post("/v1/messages", body: body, headers: headers,
                                                          signal: signal) do |record|
@@ -53,6 +60,8 @@ module Mistri
 
       private
 
+      def official_origin?(origin) = origin.to_s.delete_suffix("/") == DEFAULT_ORIGIN
+
       def build_body(model, messages, system, tools, overrides)
         body = {
           model: model,
@@ -63,6 +72,8 @@ module Mistri
         system_blocks = Serializer.system_blocks(system, cache: @cache)
         body[:system] = system_blocks if system_blocks
         body[:tools] = Serializer.tools(tools) if tools.any?
+        service_tier = overrides.fetch(:service_tier, @service_tier)
+        body[:service_tier] = service_tier if service_tier
         thinking = thinking_for(model, overrides)
         body[:thinking] = thinking if thinking
         if (schema = overrides[:output_schema])

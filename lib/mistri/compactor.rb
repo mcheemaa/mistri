@@ -145,7 +145,10 @@ module Mistri
         prompt << (previous ? UPDATE_PROMPT : CHECKPOINT_PROMPT)
         prompt << "\nAdditional focus: #{instructions}\n" if instructions
         reply = provider.stream(messages: [Message.user(prompt)], system: SUMMARIZER_SYSTEM)
-        raise CompactionError, "summarization failed: #{reply.error_message}" unless usable?(reply)
+        unless usable?(reply)
+          raise CompactionError.new("summarization failed: #{reply.error_message}",
+                                    usage: reply.usage)
+        end
 
         reply
       end
