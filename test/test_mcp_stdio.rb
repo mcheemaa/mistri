@@ -17,10 +17,21 @@ class TestMcpStdio < Minitest::Test
           file.puts([Process.pid, message["method"], message.dig("params", "name")].compact.join(":"))
         end
       end
+      if ENV["STUB_EXIT_AFTER_INIT"] && message["method"] == "notifications/initialized"
+        File.write(ENV.fetch("STUB_EXIT_AFTER_INIT"), Process.pid.to_s)
+        exit
+      end
       next unless message["id"]
       tool = message.dig("params", "name")
       exit if tool == "die"
       puts "not json at all" if tool == "corrupt"
+      if message["method"] == "tools/call" && tool == "eof"
+        result = { "content" => [{ "type" => "text", "text" => "tail" }] }
+        response = { "jsonrpc" => "2.0", "id" => message["id"], "result" => result }
+        STDOUT.write(JSON.generate(response))
+        STDOUT.flush
+        exit
+      end
       if message["method"] == "tools/call" && tool == "stall"
         STDOUT.write("{")
         STDOUT.flush
@@ -121,6 +132,42 @@ class TestMcpStdio < Minitest::Test
     assert_match(/non-protocol/, error.message)
   ensure
     stdio.close
+  end
+
+  def test_a_valid_final_stdio_record_may_end_at_eof
+    stdio = client
+
+    result = stdio.call_tool("eof", {})
+
+    assert_equal "tail", result.dig("content", 0, "text")
+  ensure
+    stdio.close
+  end
+
+  def test_a_child_that_exits_before_the_tool_write_is_ambiguous
+    Dir.mktmpdir do |directory|
+      marker = File.join(directory, "exited")
+      stdio = client(env: { "STUB_EXIT_AFTER_INIT" => marker })
+      stdio.connect
+      deadline = Process.clock_gettime(Process::CLOCK_MONOTONIC) + 2
+      until File.exist?(marker) || Process.clock_gettime(Process::CLOCK_MONOTONIC) >= deadline
+        sleep 0.01
+      end
+
+      assert_path_exists marker
+
+      pid = File.read(marker).to_i
+      Process.waitpid(pid)
+
+      error = assert_raises(Mistri::AmbiguousDeliveryError) do
+        stdio.call_tool("echo", {})
+      end
+
+      assert_kind_of Mistri::MCP::Error, error.cause
+      assert_match(/closed its input/, error.message)
+    ensure
+      stdio&.close
+    end
   end
 
   def test_accepts_a_stdio_record_at_the_exact_byte_limit
@@ -237,6 +284,12 @@ class TestMcpStdio < Minitest::Test
     assert_raises(Mistri::ConfigurationError) { Mistri::MCP::Client.new }
     assert_raises(Mistri::ConfigurationError) do
       Mistri::MCP::Client.new(url: "https://x.example/mcp", command: ["ruby"])
+    end
+  end
+
+  def test_the_stdio_wire_validates_its_direct_record_limit
+    assert_raises(Mistri::ConfigurationError) do
+      Mistri::MCP::Wires::Stdio.new(command: ["unused"], max_record_bytes: 0)
     end
   end
 end
