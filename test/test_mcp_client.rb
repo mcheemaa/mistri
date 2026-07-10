@@ -100,8 +100,8 @@ class TestMcpClient < Minitest::Test
     end
   end
 
-  def test_tool_discovery_limits_must_be_positive_integers
-    [[:max_tool_pages, 0], [:max_tools, 1.5]].each do |name, value|
+  def test_client_limits_must_be_positive_integers
+    [[:max_tool_pages, 0], [:max_tools, 1.5], [:max_record_bytes, nil]].each do |name, value|
       error = assert_raises(Mistri::ConfigurationError) do
         Mistri::MCP::Client.new(command: ["unused"], name => value)
       end
@@ -181,6 +181,25 @@ class TestMcpClient < Minitest::Test
 
       assert_equal "echo: two", result.dig("content", 0, "text")
       assert_equal 2, server.initializes, "the client started a fresh session"
+    end
+  end
+
+  def test_close_discards_the_http_session_before_reconnecting
+    with_server(session: "sess") do |server|
+      client = remote_client(server)
+      client.connect
+      client.close
+
+      assert_nil client.server_info
+
+      client.connect
+      initialize_requests = server.requests.select do |request|
+        JSON.parse(request[:body])["method"] == "initialize"
+      end
+
+      assert_equal 2, server.initializes
+      assert_nil initialize_requests.last[:headers]["mcp-session-id"]
+      assert_nil initialize_requests.last[:headers]["mcp-protocol-version"]
     end
   end
 

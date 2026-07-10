@@ -20,6 +20,8 @@ module Mistri
     # re-initializes, per spec.
     # Remote URLs default to public HTTPS. allow_non_public: is consulted only
     # for otherwise blocked addresses and plain HTTP remains loopback-only.
+    # max_record_bytes bounds one JSON body, SSE line, or stdio record without
+    # imposing a lifetime limit on an SSE stream.
     #
     # One client serializes its calls; parallel tool calls against one
     # server queue rather than interleave.
@@ -30,20 +32,24 @@ module Mistri
 
       def initialize(url: nil, command: nil, env: {}, token: nil, headers: {},
                      client_name: "mistri", open_timeout: 15, read_timeout: 120,
-                     allow_non_public: nil, max_tool_pages: 100, max_tools: 10_000)
+                     allow_non_public: nil, max_tool_pages: 100, max_tools: 10_000,
+                     max_record_bytes: DEFAULT_MAX_RECORD_BYTES)
         if [url, command].compact.length != 1
           raise ConfigurationError, "pass exactly one of url: or command:"
         end
 
         validate_limit(:max_tool_pages, max_tool_pages)
         validate_limit(:max_tools, max_tools)
+        validate_limit(:max_record_bytes, max_record_bytes)
 
         @wire = if url
                   Wires::Http.new(url: url, token: token, headers: headers,
                                   open_timeout: open_timeout, read_timeout: read_timeout,
-                                  allow_non_public: allow_non_public)
+                                  allow_non_public: allow_non_public,
+                                  max_record_bytes: max_record_bytes)
                 else
-                  Wires::Stdio.new(command: command, env: env, read_timeout: read_timeout)
+                  Wires::Stdio.new(command: command, env: env, read_timeout: read_timeout,
+                                   max_record_bytes: max_record_bytes)
                 end
         @client_name = client_name
         @mutex = Mutex.new
@@ -72,8 +78,7 @@ module Mistri
       end
 
       def close
-        @wire.close
-        @connected = false
+        @mutex.synchronize { reset_wire }
         nil
       end
 
@@ -96,6 +101,9 @@ module Mistri
         @server_info = result["serverInfo"]
         @wire.notify({ jsonrpc: "2.0", method: "notifications/initialized" })
         @connected = true
+      rescue Mistri::Error
+        reset_wire
+        raise
       end
 
       def request(method, params, reconnected: false, refreshed: false)
@@ -137,6 +145,20 @@ module Mistri
         end
 
         result
+      rescue ResponseTooLargeError, WireError => e
+        reset_wire
+        raise if replayable
+        return result if responded
+
+        message = "the request was sent but its tool outcome could not be confirmed: " \
+                  "#{e.message}; the operation may have completed; do not retry automatically; " \
+                  "verify external state first"
+        raise AmbiguousDeliveryError, message
+      rescue AmbiguousDeliveryError
+        reset_wire
+        return result if responded
+
+        raise
       rescue ProviderError => e
         raise SessionExpired if e.status == 404 && @wire.session?
 
@@ -172,6 +194,13 @@ module Mistri
         return if value.is_a?(Integer) && value.positive?
 
         raise ConfigurationError, "#{name}: must be a positive integer"
+      end
+
+      def reset_wire
+        @wire.close
+        @wire.reset_session
+        @connected = false
+        @server_info = nil
       end
 
       def rpc_error(error)
