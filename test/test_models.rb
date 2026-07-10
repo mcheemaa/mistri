@@ -12,6 +12,30 @@ class TestModels < Minitest::Test
                  Mistri::Models::Model.members
   end
 
+  def test_catalogued_models_carry_their_published_context_windows
+    million = %w[claude-fable-5 claude-opus-4-8 claude-opus-4-7 claude-opus-4-6
+                 claude-sonnet-5 claude-sonnet-4-6]
+
+    million.each { |model| assert_equal 1_000_000, Mistri::Models.find(model).context_window }
+
+    assert_equal 200_000, Mistri::Models.find("claude-haiku-4-5").context_window
+    assert_equal 1_050_000, Mistri::Models.find("gpt-5.5").context_window
+    assert_equal 1_050_000, Mistri::Models.find("gpt-5.4").context_window
+    assert_equal 400_000, Mistri::Models.find("gpt-5-nano").context_window
+    %w[gemini-3.5-flash gemini-3.1-pro-preview gemini-2.5-pro gemini-2.5-flash].each do |model|
+      assert_equal 1_048_576, Mistri::Models.find(model).context_window
+    end
+    assert_equal 1_000_000,
+                 Mistri::Models.find("claude-opus-4-8-20260701").context_window
+  end
+
+  def test_only_shared_context_windows_reserve_output_capacity
+    assert_equal 128_000, Mistri::Models.shared_output("gpt-5.5")
+    assert_equal 128_000, Mistri::Models.shared_output("claude-opus-4-8")
+    assert_nil Mistri::Models.shared_output("gemini-3.1-pro-preview")
+    assert_nil Mistri::Models.shared_output("future-model")
+  end
+
   def test_pricing_participates_in_model_value_semantics_and_marshalling
     model = Mistri::Models.find("gpt-5.5")
     unpriced = model.with(pricing: [])

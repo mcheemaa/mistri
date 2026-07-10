@@ -32,6 +32,10 @@ module Mistri
     # model decides), :budget (a token budget), or :effort. It is what keeps
     # a provider from sending an unsupported thinking shape that 400s.
     #
+    # context_window is the provider's published context or input limit.
+    # Anthropic and OpenAI share it with the next output; Gemini publishes a
+    # separate inputTokenLimit and outputTokenLimit.
+    #
     # Pricing is selected per request from its prompt size. Rates are paid
     # standard direct-API list prices. cache_write is the 5-minute write rate;
     # Usage applies the 1-hour rate separately.
@@ -94,26 +98,26 @@ module Mistri
     private_class_method :price
 
     CATALOG = [
-      ["claude-fable-5", :anthropic, 128_000, 200_000, :adaptive,
+      ["claude-fable-5", :anthropic, 128_000, 1_000_000, :adaptive,
        [price(input: 10.0, output: 50.0, cache_read: 1.0, cache_write: 12.5)]],
-      ["claude-opus-4-8", :anthropic, 128_000, 200_000, :adaptive,
+      ["claude-opus-4-8", :anthropic, 128_000, 1_000_000, :adaptive,
        [price(input: 5.0, output: 25.0, cache_read: 0.5, cache_write: 6.25)]],
-      ["claude-opus-4-7", :anthropic, 128_000, 200_000, :adaptive,
+      ["claude-opus-4-7", :anthropic, 128_000, 1_000_000, :adaptive,
        [price(input: 5.0, output: 25.0, cache_read: 0.5, cache_write: 6.25)]],
-      ["claude-opus-4-6", :anthropic, 128_000, 200_000, :adaptive,
+      ["claude-opus-4-6", :anthropic, 128_000, 1_000_000, :adaptive,
        [price(input: 5.0, output: 25.0, cache_read: 0.5, cache_write: 6.25)]],
-      ["claude-sonnet-5", :anthropic, 128_000, 200_000, :adaptive,
+      ["claude-sonnet-5", :anthropic, 128_000, 1_000_000, :adaptive,
        [price(input: 2.0, output: 10.0, cache_read: 0.2, cache_write: 2.5),
         price({ input: 3.0, output: 15.0, cache_read: 0.3, cache_write: 3.75 },
               from: Time.utc(2026, 9, 1))]],
-      ["claude-sonnet-4-6", :anthropic, 128_000, 200_000, :adaptive,
+      ["claude-sonnet-4-6", :anthropic, 128_000, 1_000_000, :adaptive,
        [price(input: 3.0, output: 15.0, cache_read: 0.3, cache_write: 3.75)]],
       ["claude-haiku-4-5", :anthropic, 64_000, 200_000, :budget,
        [price(input: 1.0, output: 5.0, cache_read: 0.1, cache_write: 1.25)]],
-      ["gpt-5.5", :openai, 128_000, 400_000, :effort,
+      ["gpt-5.5", :openai, 128_000, 1_050_000, :effort,
        [price({ input: 5.0, output: 30.0, cache_read: 0.5 },
               above: 272_000, higher: { input: 10.0, output: 45.0, cache_read: 1.0 })]],
-      ["gpt-5.4", :openai, 128_000, 400_000, :effort,
+      ["gpt-5.4", :openai, 128_000, 1_050_000, :effort,
        [price({ input: 2.5, output: 15.0, cache_read: 0.25 },
               above: 272_000, higher: { input: 5.0, output: 22.5, cache_read: 0.5 })]],
       ["gpt-5-nano", :openai, 128_000, 400_000, :effort,
@@ -140,6 +144,13 @@ module Mistri
     end
 
     def self.max_output(id) = find(id)&.max_output
+
+    # Output capacity that occupies the published context limit. Gemini's
+    # output limit is independent, so its compaction headroom is input-only.
+    def self.shared_output(id)
+      model = find(id)
+      model&.max_output unless model&.provider == :gemini
+    end
 
     def self.thinking(id) = find(id)&.thinking
 

@@ -203,18 +203,34 @@ store = Mistri::Stores::ActiveRecord.new(AgentEntry)
 ## Compaction
 
 Long sessions survive their context window: when the conversation grows into
-the reserve headroom, the provider writes a visible structured summary and
-replay continues from it. The full history stays in your store for
+the model's safe headroom, the provider writes a visible structured summary
+and replay continues from it. The full history stays exact in your store for
 transcript views. On by default whenever the model's window is known;
 `compaction: false` disables it.
 
+For a catalogued model, Mistri automatically reserves its full output capacity
+plus 4,096 tokens for framing and estimation when input and output share one
+context window. Gemini publishes independent input and output limits, so its
+automatic input reserve remains 16,384 tokens. An uncatalogued model with a
+host-supplied `window:` also uses that 16,384-token fallback; set `reserve:`
+explicitly when the deployment needs different output headroom. An explicit
+reserve is also a useful quality policy when you prefer an earlier checkpoint
+to counter context rot.
+
 ```ruby
-agent.context_usage   # => { tokens: 141_000, window: 200_000, fraction: 0.705 }
+agent.context_usage   # => { tokens: 141_000, window: 1_000_000, fraction: 0.141 }
 agent.compact         # the manual button
+
+Mistri::Compaction.new(reserve: 64_000) # explicit quality policy
 ```
 
 `:compacting` and `:compaction` events carry the summary, so users see
-exactly what the model still remembers.
+exactly what the model still remembers. A single run can compact between tool
+turns without splitting a tool call from its results. Very large tool results
+are shortened only in the request sent to the summarizer. That shortening
+never mutates the durable result or an ordinary request that still replays it.
+Once compaction commits, replay intentionally becomes the visible summary plus
+its kept tail.
 
 ## Task mode
 

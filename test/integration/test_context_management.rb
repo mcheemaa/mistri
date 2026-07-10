@@ -1,27 +1,77 @@
 # frozen_string_literal: true
 
+require "securerandom"
 require_relative "../support/integration"
 
-# Long-run survival: compaction preserves generated facts through its own
-# summary, skills load on demand, and memory persists what it is told.
+# Long-run survival: compaction preserves generated state across tool turns,
+# skills load on demand, and memory persists what it is told.
 class TestContextManagementIntegration < Minitest::Test
-  Integration.scenario(self, :compaction_preserves_facts_through_the_summary) do |model|
-    title = Integration.codename
+  Integration.scenario(self, :one_run_survives_two_compactions) do |model|
+    secret = Integration.codename
+    token = "continue-#{SecureRandom.hex(12)}"
+    padding = ("checkpoint context " * 80).strip
+    opened = 0
+    closed_with = []
+    open_checkpoint = Mistri::Tool.define(
+      "open_checkpoint",
+      "Call first and exactly once. Returns a secret and continuation token."
+    ) do
+      opened += 1
+      "CHECKPOINT_SECRET=#{secret}\nCONTINUATION_TOKEN=#{token}\n#{padding}"
+    end
+    close_checkpoint = Mistri::Tool.define(
+      "close_checkpoint",
+      "Call after open_checkpoint with its exact continuation token.",
+      schema: -> { string :token, "Exact continuation token", required: true }
+    ) do |args|
+      closed_with << args["token"]
+      state = args["token"] == token ? "CHECKPOINT_CLOSED=true" : "CHECKPOINT_CLOSED=false"
+      "#{state}\n#{padding}"
+    end
     session = Mistri::Session.new(store: Mistri::Stores::Memory.new)
     settings = Mistri::Compaction.new(window: 600, reserve: 550, keep_recent: 20)
+    protocol = <<~PROMPT
+      Complete this protocol in order:
+      1. Call open_checkpoint exactly once and by itself.
+      2. Call close_checkpoint exactly once and by itself, passing the exact
+         CONTINUATION_TOKEN returned by open_checkpoint.
+      3. After close_checkpoint succeeds, answer with only the exact
+         CHECKPOINT_SECRET returned by open_checkpoint.
+      Never call both tools in one turn. Never call open_checkpoint again.
+    PROMPT
     agent = Mistri::Agent.new(provider: Mistri.provider(model), session:,
-                              compaction: settings, system: "You keep project notes. Be brief.")
+                              tools: [open_checkpoint, close_checkpoint], max_concurrency: 1,
+                              budget: Mistri::Budget.new(turns: 4), compaction: settings,
+                              system: protocol)
+    events = []
 
-    notes = "Project notes: the launch playlist is titled #{title}, the venue is " \
-            "Aurora Hall, and the sponsor is Kestrel Labs. Acknowledge briefly."
-    agent.run(notes)
-    result = agent.run("Quick check: what is the launch playlist titled?")
+    result = agent.run("Begin the checkpoint protocol now.") { |event| events << event }
 
-    assert session.entries.any? { |e| e["type"] == "compaction" }, "compaction never fired"
-    assert(session.messages.none? { |m| m.text == notes },
-           "the original message should have left the replay")
-    assert Integration.saw?(result.text, title),
-           "the fact did not survive compaction: #{result.text}"
+    compactions = session.entries.select { |entry| entry["type"] == "compaction" }
+
+    assert_predicate result, :completed?
+    assert_equal 1, opened, "open_checkpoint did not execute exactly once"
+    assert_equal [token], closed_with, "close_checkpoint did not receive the exact token"
+    assert_equal 2, compactions.length, "the run did not cross two compaction boundaries"
+    assert_equal(2, events.count { |event| event.type == :compaction })
+    refute_includes compactions.first["summary"], secret
+    assert_includes compactions.last["summary"], secret
+    assert Integration.saw?(result.text, secret),
+           "the final answer lost the secret: #{result.text.inspect}"
+
+    durable = session.entries.find do |entry|
+      entry["type"] == "message" && entry.dig("message", "tool_name") == "open_checkpoint"
+    end
+
+    assert_includes Mistri::Message.from_h(durable["message"]).text, secret
+
+    replay_before_answer = session.messages[0...-1]
+    carriers = replay_before_answer.select do |message|
+      JSON.generate(message.to_h).include?(secret)
+    end
+
+    assert_equal [replay_before_answer.first], carriers,
+                 "the compacted replay should carry the secret only in its visible summary"
   end
 
   Integration.scenario(self, :skills_load_on_demand_and_bind) do |model|

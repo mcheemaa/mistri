@@ -63,6 +63,23 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   its partial accounting. Run usage includes every retry and compaction attempt,
   and retry session entries now carry their own usage. Truncated streams preserve
   partial token counts but mark their dollar total unknown.
+- Compaction now uses the published 1M context windows for catalogued Fable,
+  Opus, and Sonnet models and the 1.05M windows for GPT-5.4 and GPT-5.5.
+  Automatic headroom protects a full next output plus framing slack when the
+  provider shares input and output capacity; Gemini's separately published
+  input limit keeps input-only headroom. An explicit `reserve:` still wins as
+  host policy.
+  `Compaction#automatic_reserve?` lets hosts distinguish the default mode from
+  an explicit 16,384-token policy without changing `Compaction#reserve`.
+  Usage reported before the latest compaction no longer makes a fresh summary
+  appear full. A single run can compact repeatedly across tool turns while
+  keeping parallel calls paired with every result. Large tool results are
+  bounded only on the lossy summarizer wire, with their beginning and end
+  retained. That shortening never mutates the stored result or an ordinary
+  request that still replays it. Compacted replay intentionally remains
+  summary plus tail. The live
+  provider harness now proves two compactions, an exact tool-token handoff,
+  and final fact recall inside one run.
 
 ## [0.5.0] - 2026-07-08
 
