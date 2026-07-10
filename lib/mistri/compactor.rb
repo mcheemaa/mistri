@@ -9,10 +9,12 @@ module Mistri
   # transcript UIs; only what the model sees shrinks. Callable from any
   # process (a UI button, a job), with or without a running agent.
   #
-  # Cuts land only on user messages, so a tool call and its result always
-  # stay on the same side, and a parked approval's turn is never cut away
-  # from the resume that must answer it.
+  # Cuts land on user messages or assistant tool-call turns, never results,
+  # so every call/result set stays on one side. A parked approval's turn is
+  # never cut away from the resume that must answer it.
   class Compactor
+    TOOL_RESULT_MAX_CHARS = 2_000
+
     SUMMARIZER_SYSTEM = <<~PROMPT
       You are a context summarization assistant. Read the conversation and
       produce only the structured summary you are asked for. Do not continue
@@ -43,8 +45,8 @@ module Mistri
       ## Critical Context
       - [Data, names, or references needed to continue, or "(none)"]
 
-      Keep each section concise. Preserve exact identifiers, names, and error
-      messages.
+      Keep each section concise. Preserve exact identifiers, names, paths,
+      URLs, commands, numbers, and error messages.
     FORMAT
 
     CHECKPOINT_PROMPT = <<~PROMPT.freeze
@@ -82,7 +84,7 @@ module Mistri
         return nil if head.empty?
 
         emit&.call(Event.new(type: :compacting))
-        tokens_before = Compaction.context_tokens(replay.map(&:first))
+        tokens_before = session.context_tokens
         reply = summarize(provider, head, previous, settings.instructions)
         session.append("compaction", "summary" => reply.text,
                                      "kept_from" => cut, "tokens_before" => tokens_before)
@@ -95,7 +97,9 @@ module Mistri
         boundary = keep_boundary(replay, settings.keep_recent)
         return nil unless boundary
 
-        candidates = replay.filter_map { |(message, index)| index if index && message.user? }
+        candidates = replay.filter_map do |message, index|
+          index if index && cut_candidate?(message)
+        end
         cut = candidates.find { |index| index >= boundary } || candidates.last
         cut = clamp_to_open_approvals(cut, session)
         return nil unless cut
@@ -104,8 +108,12 @@ module Mistri
         first && cut > first ? cut : nil
       end
 
+      def cut_candidate?(message)
+        message.user? || (message.assistant? && message.tool_calls?)
+      end
+
       # Walk back from the tail until the keep budget is spent; the cut then
-      # snaps forward to a user message, so replay keeps at most about
+      # snaps to the next safe turn boundary, so replay keeps at most about
       # keep_recent tokens of recent turns.
       def keep_boundary(replay, keep_recent)
         kept = 0
@@ -158,7 +166,7 @@ module Mistri
       end
 
       def finish(session, reply, tokens_before, &emit)
-        tokens_after = Compaction.context_tokens(session.messages)
+        tokens_after = session.context_tokens
         emit&.call(Event.new(type: :compaction, content: reply.text))
         { summary: reply.text, tokens_before: tokens_before,
           tokens_after: tokens_after, usage: reply.usage }
@@ -172,13 +180,25 @@ module Mistri
       end
 
       def text_of(message)
-        message.content.filter_map do |block|
+        text = message.content.filter_map do |block|
           case block
           when Content::Text then block.text
           when Content::Image then "[image]"
           when ToolCall then "[called #{block.name} with #{JSON.generate(block.arguments)}]"
           end
         end.join("\n")
+        message.tool? ? truncate_tool_result(text) : text
+      end
+
+      # Large tool output remains durable and unchanged on ordinary model
+      # requests; only the lossy summary wire is bounded, with both ends kept.
+      def truncate_tool_result(text)
+        return text if text.length <= TOOL_RESULT_MAX_CHARS
+
+        marker = "\n[tool result truncated; original length: #{text.length} characters]\n"
+        visible = TOOL_RESULT_MAX_CHARS - marker.length
+        head = (visible * 0.75).floor
+        "#{text[0, head]}#{marker}#{text[-(visible - head), visible - head]}"
       end
     end
   end

@@ -135,7 +135,7 @@ module Mistri
     # meters and near-limit warnings from this; window is nil for models the
     # catalog does not know unless Compaction#window supplies one.
     def context_usage
-      tokens = Compaction.context_tokens(@session.messages)
+      tokens = @session.context_tokens
       window = context_window
       { tokens: tokens, window: window,
         fraction: window && (tokens.to_f / window).round(3) }
@@ -196,8 +196,9 @@ module Mistri
     def auto_compact(&)
       return nil unless @compaction
 
-      tokens = Compaction.context_tokens(@session.messages)
-      return nil unless @compaction.needed?(tokens, context_window)
+      tokens = @session.context_tokens
+      return nil unless @compaction.needed?(tokens, context_window,
+                                            max_output: Models.shared_output(@provider.model))
 
       Compactor.call(session: @session, provider: @provider, settings: @compaction, &)
     rescue CompactionError => e

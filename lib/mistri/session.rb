@@ -51,15 +51,22 @@ module Mistri
     # brick every later turn with a provider rejection, so unsettled calls
     # get a synthesized interrupted result. Calls parked for human approval
     # stay open; resume owns those.
-    def replay
+    def replay = replay_from(entries)
+
+    # Context accounting ignores provider usage reported before the latest
+    # compaction: those prompt counts describe the larger, pre-summary replay.
+    # Until a post-compaction assistant turn reports fresh usage, the compacted
+    # replay is estimated directly.
+    def context_tokens
       log = entries
-      compaction = log.reverse_each.find { |entry| entry["type"] == "compaction" }
-      from = compaction ? compaction["kept_from"] : 0
-      pairs = log.each_with_index.filter_map do |entry, index|
-        [Message.from_h(entry["message"]), index] if index >= from && entry["type"] == "message"
-      end
-      pairs = heal(pairs, parked_call_ids(log))
-      compaction ? [[summary_message(compaction["summary"]), nil], *pairs] : pairs
+      replay = replay_from(log)
+      compacted_at = log.rindex { |entry| entry["type"] == "compaction" }
+      usage_from = if compacted_at
+                     replay.index { |(_, index)| index && index > compacted_at } || replay.length
+                   else
+                     0
+                   end
+      Compaction.context_tokens(replay.map(&:first), usage_from:)
     end
 
     def last_compaction
@@ -167,6 +174,16 @@ module Mistri
     end
 
     private
+
+    def replay_from(log)
+      compaction = log.reverse_each.find { |entry| entry["type"] == "compaction" }
+      from = compaction ? compaction["kept_from"] : 0
+      pairs = log.each_with_index.filter_map do |entry, index|
+        [Message.from_h(entry["message"]), index] if index >= from && entry["type"] == "message"
+      end
+      pairs = heal(pairs, parked_call_ids(log))
+      compaction ? [[summary_message(compaction["summary"]), nil], *pairs] : pairs
+    end
 
     def heal(pairs, parked)
       answered = pairs.map(&:first).select(&:tool?).to_set(&:tool_call_id)

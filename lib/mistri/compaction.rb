@@ -14,6 +14,7 @@ module Mistri
   class Compaction
     DEFAULT_RESERVE = 16_384
     DEFAULT_KEEP_RECENT = 20_000
+    OUTPUT_SAFETY = 4_096
     IMAGE_CHARS = 4_800
 
     SUMMARY_PREFACE = "The earlier conversation was compacted. This summary replaces it:"
@@ -21,28 +22,43 @@ module Mistri
     attr_reader :reserve, :keep_recent, :window, :instructions
 
     # window overrides the model catalog's context window (required for
-    # models the catalog does not know). instructions add a host-specific
-    # focus to the summary prompt.
-    def initialize(reserve: DEFAULT_RESERVE, keep_recent: DEFAULT_KEEP_RECENT,
+    # models the catalog does not know). A nil reserve selects automatic
+    # headroom; a number is explicit host policy. instructions add a
+    # host-specific focus to the summary prompt.
+    def initialize(reserve: nil, keep_recent: DEFAULT_KEEP_RECENT,
                    window: nil, instructions: nil)
-      @reserve = reserve
+      @automatic_reserve = reserve.nil?
+      @reserve = reserve || DEFAULT_RESERVE
       @keep_recent = keep_recent
       @window = window
       @instructions = instructions
     end
 
-    # Compact when the context has grown into the reserve headroom. An
-    # unknown window never triggers.
-    def needed?(tokens, window)
-      window ? tokens > window - reserve : false
+    def automatic_reserve? = @automatic_reserve
+
+    # Automatic headroom fits output that shares the context window, plus
+    # estimation and framing slack. An explicit reserve remains host policy.
+    # An unknown window never triggers.
+    def needed?(tokens, window, max_output: nil)
+      window ? tokens > window - effective_reserve(max_output) : false
+    end
+
+    private
+
+    def effective_reserve(max_output)
+      return reserve unless automatic_reserve?
+
+      max_output ? [max_output + OUTPUT_SAFETY, reserve].max : reserve
     end
 
     class << self
       # Context size for a replay: the last healthy turn's reported tokens
       # (prompt, cache, and output all sit in context next turn) plus an
       # estimate of every message after it.
-      def context_tokens(messages)
-        index = messages.rindex { |message| reported(message) }
+      def context_tokens(messages, usage_from: 0)
+        index = (usage_from...messages.length).reverse_each.find do |position|
+          reported(messages[position])
+        end
         base = index ? reported(messages[index]) : 0
         messages.drop(index ? index + 1 : 0).sum(base) { |message| estimate(message) }
       end
