@@ -5,6 +5,21 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+- Provider and MCP JSON bodies, individual SSE lines, and stdio JSON records
+  now default to an 8 MiB ceiling, configurable with `max_record_bytes:`.
+  Successful bodies are counted incrementally, declared oversized bodies fail
+  before reading, streaming remains unlimited across individually safe records,
+  and error responses retain at most a 500-byte valid UTF-8 preview. Requests
+  use identity encoding so compressed expansion cannot bypass the boundary.
+  Overflow closes the connection or child process; an oversized MCP
+  `tools/call` response remains explicitly ambiguous and is never replayed.
+  Stdio timeouts now cover the complete record instead of only its first byte;
+  any in-flight stdio wire failure after `tools/call` is ambiguous, reaps the
+  child, and requires a clean handshake before the next operation. Explicitly
+  closing and reusing an MCP client also clears its session, negotiated
+  protocol version, and server information before the fresh handshake.
+  The hot path adds one byte-count addition and comparison per JSON socket
+  fragment or SSE line fragment, with no per-token work.
 - Remote MCP and server-side OAuth requests now default to public HTTPS and
   direct connections. Every DNS answer is checked against the IANA
   special-purpose registries, including embedded NAT64 destinations; one unsafe

@@ -6,8 +6,9 @@ class TestErrors < Minitest::Test
   def test_every_error_rescues_as_mistri_error
     [Mistri::ConfigurationError, Mistri::ProviderError, Mistri::AuthenticationError,
      Mistri::RateLimitError, Mistri::OverloadedError, Mistri::ServerError,
-     Mistri::AmbiguousDeliveryError, Mistri::InvalidRequestError, Mistri::SchemaError,
-     Mistri::AbortError, Mistri::BudgetError].each do |klass|
+     Mistri::ResponseTooLargeError, Mistri::AmbiguousDeliveryError,
+     Mistri::InvalidRequestError, Mistri::SchemaError, Mistri::AbortError,
+     Mistri::BudgetError].each do |klass|
       assert_operator klass, :<, Mistri::Error
     end
   end
@@ -32,5 +33,13 @@ class TestErrors < Minitest::Test
 
     assert_match(/operation may have completed/, error.message)
     assert_match(/do not retry automatically/, error.message)
+  end
+
+  def test_response_too_large_error_carries_only_boundary_metadata
+    error = Mistri::ResponseTooLargeError.new(kind: :json_body, limit: 1024)
+
+    assert_equal :json_body, error.kind
+    assert_equal 1024, error.limit
+    assert_equal "json body exceeded max_record_bytes (1024 bytes)", error.message
   end
 end

@@ -57,6 +57,18 @@ module Mistri
     def self.default_message = "provider server error"
   end
 
+  # An inbound body or protocol record crossed its configured byte boundary.
+  class ResponseTooLargeError < Error
+    attr_reader :kind, :limit
+
+    def initialize(kind:, limit:)
+      @kind = kind
+      @limit = limit
+      label = kind.to_s.tr("_", " ")
+      super("#{label} exceeded max_record_bytes (#{limit} bytes)")
+    end
+  end
+
   # A non-replayable request has no confirmed response, so execution is unknown.
   class AmbiguousDeliveryError < ProviderError
     def self.default_message
@@ -115,6 +127,9 @@ module Mistri
       when RateLimitError
         { "type" => "RateLimitError", "status" => reason.status,
           "retry_after" => reason.retry_after }.compact
+      when ResponseTooLargeError
+        { "type" => "ResponseTooLargeError", "kind" => reason.kind.to_s,
+          "limit" => reason.limit }
       when ProviderError
         { "type" => reason.class.name.split("::").last, "status" => reason.status }.compact
       when Exception then { "type" => reason.class.name }

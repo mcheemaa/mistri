@@ -16,7 +16,7 @@ module Mistri
       def initialize(tools: {}, sse: true, session: nil, page_size: nil,
                      require_token: nil, expire_after: nil, protocol: "2025-11-25",
                      drop_after: nil, malformed_after: nil, empty_after: nil,
-                     next_cursor: nil)
+                     next_cursor: nil, trailing_after: nil)
         @tools = tools
         @sse = sse
         @session = session
@@ -27,6 +27,8 @@ module Mistri
         @drop_after = drop_after
         @malformed_after = malformed_after
         @empty_after = empty_after
+        @trailing_after = trailing_after
+        @trailed = false
         @next_cursor = next_cursor
         @dropped = false
         @malformed = false
@@ -71,7 +73,8 @@ module Mistri
           return @stub.respond_json(socket, "", status: 202)
         end
 
-        respond(socket, message["id"], result, headers: session_headers(message))
+        respond(socket, message["id"], result, headers: session_headers(message),
+                                               method: message["method"])
         nil
       end
 
@@ -115,7 +118,7 @@ module Mistri
         result
       end
 
-      def respond(socket, id, result, headers: {})
+      def respond(socket, id, result, method:, headers: {})
         payload = { "jsonrpc" => "2.0", "id" => id, "result" => result }
         return @stub.respond_json(socket, payload, headers: headers) unless @sse
 
@@ -123,6 +126,10 @@ module Mistri
                 "Transfer-Encoding: chunked", *headers.map { |k, v| "#{k}: #{v}" }]
         socket.write("#{head.join("\r\n")}\r\n\r\n")
         @stub.chunk(socket, "data: #{JSON.generate(payload)}\n\n")
+        if method == @trailing_after && !@trailed
+          @trailed = true
+          @stub.chunk(socket, "data: #{"x" * 2000}")
+        end
         @stub.finish_sse(socket)
       end
 

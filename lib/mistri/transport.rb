@@ -18,8 +18,12 @@ module Mistri
   # An address_resolver supplies a fresh validated set for each connection
   # cycle; candidates are tried before the request is sent while the original
   # hostname still owns Host, SNI, and TLS validation.
+  # JSON bodies and individual SSE lines share one configurable byte ceiling;
+  # a stream may contain any number of individually safe lines.
   class Transport
     KEEP_ALIVE_SECONDS = 30
+    ERROR_PREVIEW_BYTES = 500
+    BLANK_BODY = /\A[[:space:]]*\z/
     CONNECT_ERRORS = [IOError, SocketError, SystemCallError, Timeout::Error,
                       Net::HTTPBadResponse, OpenSSL::SSL::SSLError].freeze
 
@@ -56,16 +60,21 @@ module Mistri
         @open_timeout = original_timeout if original_timeout
       end
     end
-    private_constant :ResolvedHTTP, :CONNECT_ERRORS
+    private_constant :ResolvedHTTP, :CONNECT_ERRORS, :BLANK_BODY
 
     def initialize(origin:, open_timeout: 15, read_timeout: 300, write_timeout: 60,
-                   address_resolver: nil)
+                   address_resolver: nil, max_record_bytes: DEFAULT_MAX_RECORD_BYTES)
+      unless max_record_bytes.is_a?(Integer) && max_record_bytes.positive?
+        raise ConfigurationError, "max_record_bytes: must be a positive integer"
+      end
+
       @origin = origin.to_s.chomp("/")
       @uri = URI(@origin)
       @open_timeout = open_timeout
       @read_timeout = read_timeout
       @write_timeout = write_timeout
       @address_resolver = address_resolver
+      @max_record_bytes = max_record_bytes
       @mutex = Mutex.new
       @connection = nil
     end
@@ -73,11 +82,19 @@ module Mistri
     # POST and decode a JSON response body. Retries once on a dead idle
     # socket, so it suits idempotent endpoints.
     def post(path, body:, headers: {})
-      response = @mutex.synchronize do
-        with_retry { connection.request(build_request(path, body, headers)) }
+      @mutex.synchronize do
+        with_retry do
+          parsed = nil
+          connection.request(build_request(path, body, headers)) do |response|
+            raise_for_status(response)
+            parsed = JSON.parse(read_json_body(response))
+          end
+          parsed
+        end
+      rescue ResponseTooLargeError, ProviderError, JSON::ParserError
+        teardown
+        raise
       end
-      raise_for_status(response)
-      JSON.parse(response.body)
     end
 
     # POST and stream the SSE response, yielding each decoded data record.
@@ -93,32 +110,7 @@ module Mistri
     # returns the response headers, downcased. A replayable request retries
     # once when a dead idle socket fails before any response starts.
     def post_either(path, body:, headers: {}, replayable: true, &block)
-      @mutex.synchronize do
-        retried = false
-        begin
-          started = false
-          response_headers = nil
-          connection.request(build_request(path, body, headers, streaming: true)) do |response|
-            started = true
-            raise_for_status(response)
-            response_headers = response.to_hash.transform_values(&:first)
-            read_either(response, &block)
-          end
-          response_headers
-        rescue IOError, SocketError, SystemCallError, Timeout::Error, JSON::ParserError,
-               Net::HTTPBadResponse, OpenSSL::SSL::SSLError => e
-          teardown
-          unless replayable
-            raise AmbiguousDeliveryError, "#{AmbiguousDeliveryError.default_message}: #{e.message}"
-          end
-          if started || retried || e.is_a?(Timeout::Error)
-            raise ProviderError, "connection failed: #{e.message}"
-          end
-
-          retried = true
-          retry
-        end
-      end
+      @mutex.synchronize { post_either_locked(path, body, headers, replayable, &block) }
     end
 
     def close
@@ -127,14 +119,44 @@ module Mistri
 
     private
 
+    def post_either_locked(path, body, headers, replayable, &block)
+      retried = false
+      begin
+        started = false
+        response_headers = nil
+        connection.request(build_request(path, body, headers, streaming: true)) do |response|
+          started = true
+          raise_for_status(response)
+          response_headers = response.to_hash.transform_values(&:first)
+          read_either(response, &block)
+        end
+        response_headers
+      rescue ResponseTooLargeError, ProviderError
+        teardown
+        raise
+      rescue IOError, SocketError, SystemCallError, Timeout::Error, JSON::ParserError,
+             Net::HTTPBadResponse, OpenSSL::SSL::SSLError => e
+        teardown
+        unless replayable
+          raise AmbiguousDeliveryError, "#{AmbiguousDeliveryError.default_message}: #{e.message}"
+        end
+        if started || retried || e.is_a?(Timeout::Error)
+          raise ProviderError, "connection failed: #{e.message}"
+        end
+
+        retried = true
+        retry
+      end
+    end
+
     def read_either(response, &block)
       if response["content-type"].to_s.include?("text/event-stream")
-        sse = SSE.new
+        sse = SSE.new(max_record_bytes: @max_record_bytes)
         response.read_body { |chunk| sse.feed(chunk, &block) }
         sse.finish(&block)
       else
-        raw = response.read_body
-        block.call(JSON.parse(raw)) unless raw.to_s.strip.empty?
+        raw = read_json_body(response)
+        block.call(JSON.parse(raw)) unless BLANK_BODY.match?(raw)
       end
     end
 
@@ -161,6 +183,9 @@ module Mistri
         # than let the next request read stale frames.
         teardown if aborted
         aborted ? :aborted : nil
+      rescue ResponseTooLargeError, ProviderError
+        teardown
+        raise
       rescue IOError, SocketError, SystemCallError, Timeout::Error => e
         teardown
         return :aborted if signal&.aborted?
@@ -176,7 +201,7 @@ module Mistri
     end
 
     def read_stream(response, signal, &block)
-      sse = SSE.new
+      sse = SSE.new(max_record_bytes: @max_record_bytes)
       aborted = false
       response.read_body do |fragment|
         if signal&.aborted?
@@ -192,15 +217,30 @@ module Mistri
     def build_request(path, body, headers, streaming: false)
       request = Net::HTTP::Post.new(URI("#{@origin}#{path}"))
       request["Content-Type"] = "application/json"
-      if streaming
-        request["Accept"] = "text/event-stream"
-        # Net::HTTP silently negotiates gzip, and its inflater buffers the
-        # whole stream, delivering "live" events in one burst at the end.
-        request["Accept-Encoding"] = "identity"
-      end
+      request["Accept"] = "text/event-stream" if streaming
       headers.each { |key, value| request[key] = value }
+      # Identity keeps the byte ceiling meaningful before an untrusted
+      # compressed expansion and preserves immediate SSE delivery.
+      request["Accept-Encoding"] = "identity"
       request.body = JSON.generate(body)
       request
+    end
+
+    def read_json_body(response)
+      declared = response["content-length"]
+      if declared&.match?(/\A\d+\z/) && declared.to_i > @max_record_bytes
+        raise ResponseTooLargeError.new(kind: :json_body, limit: @max_record_bytes)
+      end
+
+      body = +""
+      response.read_body do |fragment|
+        if body.bytesize + fragment.bytesize > @max_record_bytes
+          raise ResponseTooLargeError.new(kind: :json_body, limit: @max_record_bytes)
+        end
+
+        body << fragment
+      end
+      body
     end
 
     def with_retry
@@ -258,10 +298,21 @@ module Mistri
       status = response.code.to_i
       return if (200..299).cover?(status)
 
+      preview = +""
+      response.read_body do |fragment|
+        remaining = ERROR_PREVIEW_BYTES - preview.bytesize
+        preview << fragment.byteslice(0, remaining) if remaining.positive?
+        raise status_error(response, status, preview) if preview.bytesize >= ERROR_PREVIEW_BYTES
+      end
+      raise status_error(response, status, preview)
+    end
+
+    def status_error(response, status, preview)
       klass = error_class(status)
-      options = { status: status, body: response.read_body.to_s[0, 500] }
+      body = preview.dup.force_encoding(Encoding::UTF_8).scrub("?")
+      options = { status: status, body: body }
       options[:retry_after] = retry_after(response) if klass == RateLimitError
-      raise klass.new(**options)
+      klass.new(**options)
     end
 
     def error_class(status)

@@ -18,7 +18,8 @@ class TestRetryPolicy < Minitest::Test
     %w[ProviderError RateLimitError OverloadedError ServerError TruncatedStream].each do |type|
       assert policy.retryable?({ "type" => type })
     end
-    %w[SchemaError RuntimeError Error NoMethodError InvalidRequestError].each do |type|
+    %w[SchemaError RuntimeError Error NoMethodError InvalidRequestError
+       ResponseTooLargeError].each do |type|
       refute policy.retryable?({ "type" => type })
     end
     refute policy.retryable?(nil)
@@ -48,6 +49,10 @@ class TestRetryPolicy < Minitest::Test
                  Mistri::ErrorData.for(rate))
     assert_equal({ "type" => "ServerError", "status" => 500 },
                  Mistri::ErrorData.for(Mistri::ServerError.new("boom", status: 500)))
+    too_large = Mistri::ResponseTooLargeError.new(kind: :json_body, limit: 1024)
+
+    assert_equal({ "type" => "ResponseTooLargeError", "kind" => "json_body", "limit" => 1024 },
+                 Mistri::ErrorData.for(too_large))
     assert_equal({ "type" => "RuntimeError" }, Mistri::ErrorData.for(RuntimeError.new("x")))
     assert_equal({ "type" => "TruncatedStream" },
                  Mistri::ErrorData.for("stream ended without message_stop"))

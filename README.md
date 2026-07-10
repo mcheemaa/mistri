@@ -437,12 +437,24 @@ let a host set explicit limits. `prefix:` namespaces local names
 (`linear__create_issue`) because duplicate tool names raise at `Agent.new`:
 collisions fail loud instead of one server's tool silently shadowing another's.
 
+Inbound JSON bodies, individual SSE lines, and stdio JSON records default to an
+8 MiB `max_record_bytes:` ceiling. It limits one atomic record, not the total
+length of a stream. Oversized responses close the transport; for `tools/call`,
+the error explicitly says the operation may have completed and must not be
+retried automatically. For a trusted server, configure a larger explicit limit.
+Other paths surface `ResponseTooLargeError`; its `kind` and `limit` also ride a
+provider error turn as machine-readable data.
+Large tool output is better stored by the server or host and returned as an MCP
+`resource_link`; Mistri renders its URI for the model and never fetches the
+target itself.
+
 Local stdio servers spawn as child processes, credentials in their
 environment. That is also the whole "give the agent a browser" story:
 
 ```ruby
 browser = Mistri::MCP::Client.new(
   command: ["npx", "-y", "@playwright/mcp@latest", "--browser", "chrome", "--headless"],
+  max_record_bytes: 16 * 1024 * 1024, # explicit trust for larger screenshots
 )
 agent = Mistri.agent("claude-opus-4-8",
                      tools: Mistri::MCP.tools(browser, allow: %w[browser_navigate browser_snapshot]))
@@ -581,6 +593,8 @@ agent.run("What trend does this chart show?", images: [photo])
 
 Mistri.agent("gpt-5.6", provider_options: { reasoning: { effort: "high" } })
 Mistri.agent("claude-opus-4-8", provider_options: { cache: false })
+Mistri.agent("gemini-3.1-pro-preview",
+             provider_options: { max_record_bytes: 16 * 1024 * 1024 })
 ```
 
 ## Testing

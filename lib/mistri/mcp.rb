@@ -28,6 +28,9 @@ module Mistri
       end
     end
 
+    # The stdio peer failed while a protocol message was in flight.
+    class WireError < Error; end
+
     # The server expired this client's session (a 404 with a session
     # attached); the spec says start a fresh one, and Client does.
     class SessionExpired < Error; end
@@ -99,4 +102,4 @@ require_relative "mcp/wires"
 require_relative "mcp/client"
 require_relative "mcp/oauth"
 
-Mistri::MCP.private_constant :Egress
+Mistri::MCP.private_constant :Egress, :WireError

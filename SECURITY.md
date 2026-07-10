@@ -33,3 +33,8 @@ Notes worth knowing when assessing reports:
   OAuth response bodies are read incrementally with a 256 KiB limit and
   compression disabled; server-controlled descriptions are not copied into
   token errors.
+- Provider and MCP JSON bodies, individual SSE lines, and stdio records default
+  to an 8 MiB `max_record_bytes:` ceiling. The total size of an SSE stream is
+  not capped when each record remains within that boundary. Error responses
+  retain at most a 500-byte valid UTF-8 preview. HTTP status, header, chunk-size,
+  and trailer lines are parsed by Net::HTTP before this body boundary applies.
