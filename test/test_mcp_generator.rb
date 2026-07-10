@@ -25,10 +25,17 @@ if defined?(Mistri::Generators::McpGenerator)
         assert_match(/class ToolConnection < ApplicationRecord/, model)
         assert_match(/encrypts :access_token, :refresh_token, :client_secret/, model)
         assert_match(/Mistri::MCP::OAuth\.start/, model)
+        assert_match(/def self\.mcp_allow_non_public = nil/, model)
+        assert_match(/scope: nil, issuer: nil/, model)
+        assert_match(/issuer: issuer/, model)
+        assert_match(/issuer: flow\["issuer"\]/, model)
+        assert_equal 4, model.scan("allow_non_public:").length
         assert_match(/def tools/, model)
       end
       assert_migration "db/migrate/create_tool_connections.rb" do |migration|
         assert_match(/t\.string :state/, migration)
+        assert_match(/t\.string :issuer/, migration)
+        refute_match(/t\.string :token_endpoint/, migration)
         assert_match(/t\.text :access_token/, migration)
         assert_match(/add_index :tool_connections, :state, unique: true/, migration)
       end

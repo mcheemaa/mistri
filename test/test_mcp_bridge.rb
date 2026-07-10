@@ -6,6 +6,11 @@ require_relative "support/mcp_stub_server"
 # The bridge: MCP tools become Mistri tools, results become model-readable
 # content, and the harness's own features compose on top.
 class TestMcpBridge < Minitest::Test
+  def remote_client(server)
+    Mistri::MCP::Client.new(url: server.url,
+                            allow_non_public: Mistri::Test::ALLOW_LOOPBACK)
+  end
+
   def test_tools_map_with_prefix_filters_and_gates
     listed = [{ "name" => "create", "description" => "Creates.",
                 "inputSchema" => { "type" => "object",
@@ -49,7 +54,7 @@ class TestMcpBridge < Minitest::Test
     tools = { "lookup" => { description: "Looks up facts.",
                             handler: ->(args) { "fact: #{args["q"]} is 42" } } }
     server = Mistri::Test::McpStubServer.new(tools: tools, session: "s")
-    client = Mistri::MCP::Client.new(url: server.url)
+    client = remote_client(server)
     provider = Mistri::Providers::Fake.new(turns: [
                                              { tool_calls: [{ name: "kb__lookup",
                                                               arguments: { "q" => "answer" } }] },
@@ -69,7 +74,7 @@ class TestMcpBridge < Minitest::Test
   def test_an_ambiguous_delivery_warns_the_model_not_to_retry
     tools = { "send" => { description: "Sends once.", handler: ->(_) { "sent" } } }
     server = Mistri::Test::McpStubServer.new(tools: tools, drop_after: "tools/call")
-    client = Mistri::MCP::Client.new(url: server.url)
+    client = remote_client(server)
     provider = Mistri::Providers::Fake.new(turns: [
                                              { tool_calls: [{ name: "send", arguments: {} }] },
                                              { text: "I will verify before retrying." }
@@ -90,7 +95,7 @@ class TestMcpBridge < Minitest::Test
   def test_an_approval_gate_parks_a_bridged_tool_before_the_server_sees_it
     tools = { "send" => { description: "Sends.", handler: ->(_) { "sent" } } }
     server = Mistri::Test::McpStubServer.new(tools: tools)
-    client = Mistri::MCP::Client.new(url: server.url)
+    client = remote_client(server)
     bridged = Mistri::MCP.tools(client, gates: { "send" => true })
     provider = Mistri::Providers::Fake.new(turns: [
                                              { tool_calls: [{ name: "send", arguments: {} }] }

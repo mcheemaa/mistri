@@ -38,3 +38,9 @@ end
 
 require "mistri"
 require "minitest/autorun"
+
+module Mistri
+  module Test
+    ALLOW_LOOPBACK = ->(_uri, address) { address.loopback? }
+  end
+end

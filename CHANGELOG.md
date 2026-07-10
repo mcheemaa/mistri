@@ -5,6 +5,39 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+- Remote MCP and server-side OAuth requests now default to public HTTPS and
+  direct connections. Every DNS answer is checked against the IANA
+  special-purpose registries, including embedded NAT64 destinations; one unsafe
+  answer rejects the whole set. Approved addresses are pinned without changing
+  Host, SNI, or certificate identity, alternates are tried only before request
+  transmission, and every connection cycle resolves and validates a fresh DNS
+  set, including Net::HTTP's internal reconnect cycles. Redirects and ambient
+  proxies cannot bypass the boundary. `allow_non_public:` is a narrow host
+  callback for approved internal HTTPS and explicit loopback development.
+  Client construction remains DNS-free; a reused socket adds no request-path
+  work. A new connection cycle pays one validated DNS lookup, with approved
+  candidates tried only before request transmission.
+- MCP custom headers are copied at client construction and transport-owned
+  headers are rejected; a token callable remains the dynamic authentication
+  path. Tool discovery rejects repeated cursors and defaults to at most 100
+  pages and 10,000 tools; hosts can adjust either ceiling.
+- MCP OAuth discovery now follows the required protected-resource and
+  authorization-server candidate order, uses exact candidate-aware resource and
+  issuer binding, honors challenge scope, requires S256 PKCE, and never adds
+  `offline_access` as gem policy. OAuth response bodies are uncompressed and
+  bounded to 256 KiB; token error descriptions cannot reflect credentials into
+  exceptions. A pre-registered client now requires its exact trusted `issuer:`,
+  and completion and refresh rediscover the token endpoint from that persisted
+  issuer instead of trusting a stored endpoint. New confidential flows persist
+  an explicit authentication method; legacy rows with a secret and no method
+  retain their previous `client_secret_post` behavior.
+- The MCP Rails generator now persists `issuer` instead of `token_endpoint` and
+  exposes `mcp_allow_non_public` as the host's shared egress-policy hook. Existing
+  generated models must add and pass an issuer, restart pending OAuth flows,
+  and thread their non-public policy through the client and all OAuth
+  operations. Existing connected rows must reconnect unless the application
+  independently recorded their exact historical issuer. An issuer must never
+  be inferred from a token endpoint.
 - GPT-5.6 Sol, Terra, and Luna are catalogued with their 1.05M-token context,
   128K-token output ceiling, and standard paid pricing above and below the
   272K long-context boundary. The `gpt-5.6` alias resolves to Sol. OpenAI usage

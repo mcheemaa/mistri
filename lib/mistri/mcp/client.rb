@@ -1,7 +1,5 @@
 # frozen_string_literal: true
 
-require "uri"
-
 module Mistri
   module MCP
     # A Model Context Protocol client: the initialize handshake, tools/list
@@ -20,30 +18,30 @@ module Mistri
     # re-resolving, so a host's refresh logic lives in one lambda. A session
     # the server expires (404 with a session attached) transparently
     # re-initializes, per spec.
+    # Remote URLs default to public HTTPS. allow_non_public: is consulted only
+    # for otherwise blocked addresses and plain HTTP remains loopback-only.
     #
     # One client serializes its calls; parallel tool calls against one
     # server queue rather than interleave.
     class Client
       PROTOCOL_VERSION = "2025-11-25"
       SUPPORTED_VERSIONS = %w[2025-11-25 2025-06-18 2025-03-26 2024-11-05].freeze
-      LOOPBACK = %w[localhost 127.0.0.1 ::1].freeze
-
       attr_reader :server_info
 
       def initialize(url: nil, command: nil, env: {}, token: nil, headers: {},
-                     client_name: "mistri", open_timeout: 15, read_timeout: 120)
+                     client_name: "mistri", open_timeout: 15, read_timeout: 120,
+                     allow_non_public: nil, max_tool_pages: 100, max_tools: 10_000)
         if [url, command].compact.length != 1
           raise ConfigurationError, "pass exactly one of url: or command:"
         end
 
-        if url && token && URI(url).scheme == "http" && !LOOPBACK.include?(URI(url).host)
-          raise ConfigurationError,
-                "refusing to send a bearer token over plain HTTP to #{URI(url).host}"
-        end
+        validate_limit(:max_tool_pages, max_tool_pages)
+        validate_limit(:max_tools, max_tools)
 
         @wire = if url
                   Wires::Http.new(url: url, token: token, headers: headers,
-                                  open_timeout: open_timeout, read_timeout: read_timeout)
+                                  open_timeout: open_timeout, read_timeout: read_timeout,
+                                  allow_non_public: allow_non_public)
                 else
                   Wires::Stdio.new(command: command, env: env, read_timeout: read_timeout)
                 end
@@ -51,6 +49,8 @@ module Mistri
         @mutex = Mutex.new
         @serial = 0
         @connected = false
+        @max_tool_pages = max_tool_pages
+        @max_tools = max_tools
       end
 
       # The server's tools as it describes them: hashes with "name",
@@ -146,13 +146,32 @@ module Mistri
       def list_tools
         collected = []
         cursor = nil
-        loop do
+        seen_cursors = {}
+        @max_tool_pages.times do
           result = request("tools/list", cursor ? { cursor: cursor } : {})
-          collected.concat(Array(result["tools"]))
+          raise Error, "tools/list returned a malformed result" unless result.is_a?(Hash)
+
+          page = result["tools"]
+          raise Error, "tools/list returned a malformed tools collection" unless page.is_a?(Array)
+          if collected.length + page.length > @max_tools
+            raise Error, "tool discovery exceeded #{@max_tools} tools"
+          end
+
+          collected.concat(page)
           cursor = result["nextCursor"]
-          break unless cursor
+          return collected if cursor.nil?
+          raise Error, "tools/list returned a malformed cursor" unless cursor.is_a?(String)
+          raise Error, "tools/list repeated a cursor" if seen_cursors[cursor]
+
+          seen_cursors[cursor] = true
         end
-        collected
+        raise Error, "tool discovery exceeded #{@max_tool_pages} pages"
+      end
+
+      def validate_limit(name, value)
+        return if value.is_a?(Integer) && value.positive?
+
+        raise ConfigurationError, "#{name}: must be a positive integer"
       end
 
       def rpc_error(error)

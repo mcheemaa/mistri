@@ -15,7 +15,8 @@ module Mistri
 
       def initialize(tools: {}, sse: true, session: nil, page_size: nil,
                      require_token: nil, expire_after: nil, protocol: "2025-11-25",
-                     drop_after: nil, malformed_after: nil, empty_after: nil)
+                     drop_after: nil, malformed_after: nil, empty_after: nil,
+                     next_cursor: nil)
         @tools = tools
         @sse = sse
         @session = session
@@ -26,6 +27,7 @@ module Mistri
         @drop_after = drop_after
         @malformed_after = malformed_after
         @empty_after = empty_after
+        @next_cursor = next_cursor
         @dropped = false
         @malformed = false
         @emptied = false
@@ -104,7 +106,12 @@ module Mistri
         start = cursor.to_i
         slice = specs[start, @page_size] || []
         result = { "tools" => slice }
-        result["nextCursor"] = (start + @page_size).to_s if start + @page_size < specs.length
+        next_cursor = if @next_cursor
+                        @next_cursor.call(cursor)
+                      elsif start + @page_size < specs.length
+                        (start + @page_size).to_s
+                      end
+        result["nextCursor"] = next_cursor unless next_cursor.nil?
         result
       end
 
