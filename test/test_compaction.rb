@@ -46,6 +46,7 @@ class TestCompaction < Minitest::Test
     compaction = Mistri::Compaction.new
     boundaries = [["claude-opus-4-8", 867_904],
                   ["claude-haiku-4-5", 131_904],
+                  ["gpt-5.6", 917_904],
                   ["gpt-5.5", 917_904],
                   ["gpt-5-nano", 267_904],
                   ["gemini-3.1-pro-preview", 1_032_192]]

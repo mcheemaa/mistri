@@ -7,6 +7,7 @@ require_relative "support/stub_server"
 class TestModels < Minitest::Test
   def test_known_models_carry_their_output_ceiling
     assert_equal 128_000, Mistri::Models.max_output("claude-opus-4-8")
+    assert_equal 128_000, Mistri::Models.max_output("gpt-5.6")
     assert_equal 64_000, Mistri::Models.max_output("claude-haiku-4-5")
     assert_equal %i[id provider max_output context_window thinking],
                  Mistri::Models::Model.members
@@ -19,8 +20,9 @@ class TestModels < Minitest::Test
     million.each { |model| assert_equal 1_000_000, Mistri::Models.find(model).context_window }
 
     assert_equal 200_000, Mistri::Models.find("claude-haiku-4-5").context_window
-    assert_equal 1_050_000, Mistri::Models.find("gpt-5.5").context_window
-    assert_equal 1_050_000, Mistri::Models.find("gpt-5.4").context_window
+    %w[gpt-5.6 gpt-5.6-sol gpt-5.6-terra gpt-5.6-luna gpt-5.5 gpt-5.4].each do |model|
+      assert_equal 1_050_000, Mistri::Models.find(model).context_window
+    end
     assert_equal 400_000, Mistri::Models.find("gpt-5-nano").context_window
     %w[gemini-3.5-flash gemini-3.1-pro-preview gemini-2.5-pro gemini-2.5-flash].each do |model|
       assert_equal 1_048_576, Mistri::Models.find(model).context_window
@@ -30,6 +32,7 @@ class TestModels < Minitest::Test
   end
 
   def test_only_shared_context_windows_reserve_output_capacity
+    assert_equal 128_000, Mistri::Models.shared_output("gpt-5.6")
     assert_equal 128_000, Mistri::Models.shared_output("gpt-5.5")
     assert_equal 128_000, Mistri::Models.shared_output("claude-opus-4-8")
     assert_nil Mistri::Models.shared_output("gemini-3.1-pro-preview")
@@ -45,7 +48,12 @@ class TestModels < Minitest::Test
     assert_equal model, Marshal.load(Marshal.dump(model))
   end
 
-  def test_dated_aliases_resolve_and_unknown_ids_pass_through
+  def test_provider_aliases_and_dated_ids_resolve_while_unknown_ids_pass_through
+    sol = Mistri::Models.find("gpt-5.6-sol")
+
+    assert_equal sol, Mistri::Models.find("gpt-5.6")
+    assert_equal "gpt-5.6-sol", Mistri::Models.find("gpt-5.6").id
+    assert_equal :effort, Mistri::Models.thinking("gpt-5.6")
     assert_equal 128_000, Mistri::Models.max_output("claude-sonnet-5-20260201")
     assert_nil Mistri::Models.find("claude-next-9000")
   end
@@ -78,6 +86,31 @@ class TestModels < Minitest::Test
       assert_in_delta cache_read, rates[:cache_read]
       assert_in_delta output, rates[:output]
     end
+  end
+
+  def test_gpt_5_6_pricing_includes_cache_writes_on_both_context_tiers
+    boundary = Mistri::Usage.new(input: 100_000, cache_read: 100_000, cache_write: 72_000)
+    over = boundary.with(cache_write: 72_001)
+    prices = {
+      "gpt-5.6-sol" => [
+        { input: 5.0, output: 30.0, cache_read: 0.5, cache_write: 6.25 },
+        { input: 10.0, output: 45.0, cache_read: 1.0, cache_write: 12.5 }
+      ],
+      "gpt-5.6-terra" => [
+        { input: 2.5, output: 15.0, cache_read: 0.25, cache_write: 3.125 },
+        { input: 5.0, output: 22.5, cache_read: 0.5, cache_write: 6.25 }
+      ],
+      "gpt-5.6-luna" => [
+        { input: 1.0, output: 6.0, cache_read: 0.1, cache_write: 1.25 },
+        { input: 2.0, output: 9.0, cache_read: 0.2, cache_write: 2.5 }
+      ]
+    }
+
+    prices.each do |model, (standard, higher)|
+      assert_equal standard, Mistri::Models.rates(model, usage: boundary)
+      assert_equal higher, Mistri::Models.rates(model, usage: over)
+    end
+    assert_equal Mistri::Models.rates("gpt-5.6-sol"), Mistri::Models.rates("gpt-5.6")
   end
 
   def test_gemini_pro_long_context_pricing_starts_above_200k
@@ -213,6 +246,7 @@ class TestModels < Minitest::Test
     standard.stream(messages: [Mistri::Message.user("hi")])
     automatic_body, standard_body = server.requests.map { |request| JSON.parse(request[:body]) }
 
+    assert_equal "gpt-5.5", automatic_body["model"], "the public provider default stays stable"
     refute automatic_body.key?("service_tier"), "catalog pricing must not choose host policy"
     assert_equal "default", standard_body["service_tier"]
   ensure
