@@ -2,6 +2,7 @@
 
 require "fileutils"
 require "open3"
+require "rbconfig"
 require "tmpdir"
 require_relative "test_helper"
 require_relative "../script/verify_release"
@@ -9,6 +10,7 @@ require_relative "../script/verify_release"
 class TestReleaseVerifier < Minitest::Test
   VERSION = "1.2.3"
   TAG = "v#{VERSION}".freeze
+  SCRIPT = File.expand_path("../script/verify_release.rb", __dir__).freeze
 
   def setup
     @root = Dir.mktmpdir("mistri-release")
@@ -33,6 +35,27 @@ class TestReleaseVerifier < Minitest::Test
     assert_equal "- Ship the release.", notes
   end
 
+  def test_script_exits_successfully_for_a_tagged_release
+    stdout, stderr, status = run_script
+
+    assert_predicate status, :success?
+    assert_empty stdout
+    assert_equal "Verified #{TAG} from origin/main\n", stderr
+  end
+
+  def test_script_fails_closed_for_a_hostile_trigger
+    stdout, stderr, status = run_script(
+      "GITHUB_EVENT_NAME" => "workflow_dispatch",
+      "GITHUB_REF_NAME" => "main",
+      "GITHUB_REF_TYPE" => "branch"
+    )
+
+    refute_predicate status, :success?
+    assert_equal 1, status.exitstatus
+    assert_empty stdout
+    assert_match(/Release verification failed: release requires a tag push/, stderr)
+  end
+
   def test_rejects_a_manual_or_non_tag_trigger
     error = assert_raises(Mistri::ReleaseVerifier::Error) do
       verifier(event_name: "workflow_dispatch", ref_type: "branch").verify!
@@ -50,6 +73,25 @@ class TestReleaseVerifier < Minitest::Test
     File.write(File.join(@root, "mistri.gemspec"), gemspec("1.2.4"))
     error = assert_raises(Mistri::ReleaseVerifier::Error) { verifier.verify! }
     assert_match(/gemspec version/, error.message)
+  end
+
+  def test_rejects_an_unstable_version
+    error = assert_raises(Mistri::ReleaseVerifier::Error) do
+      verifier(tag: "v01.2.3", version: "01.2.3").verify!
+    end
+
+    assert_match(/not a stable version/, error.message)
+  end
+
+  def test_rejects_an_unloadable_or_misnamed_gemspec
+    path = File.join(@root, "mistri.gemspec")
+    FileUtils.rm(path)
+    error = assert_raises(Mistri::ReleaseVerifier::Error) { verifier.verify! }
+    assert_match(/could not be loaded/, error.message)
+
+    File.write(path, gemspec(VERSION, name: "another-gem"))
+    error = assert_raises(Mistri::ReleaseVerifier::Error) { verifier.verify! }
+    assert_match(/gemspec name/, error.message)
   end
 
   def test_rejects_missing_empty_or_duplicate_release_notes
@@ -74,6 +116,16 @@ class TestReleaseVerifier < Minitest::Test
     CHANGELOG
     error = assert_raises(Mistri::ReleaseVerifier::Error) { verifier.verify! }
     assert_match(/exactly one/, error.message)
+
+    File.write(changelog, <<~CHANGELOG)
+      # Changelog
+
+      ## [#{VERSION}] - 2026-02-30
+
+      - An impossible date.
+    CHANGELOG
+    error = assert_raises(Mistri::ReleaseVerifier::Error) { verifier.verify! }
+    assert_match(/release date.*invalid/, error.message)
   end
 
   def test_rejects_a_checkout_other_than_the_tag
@@ -109,23 +161,41 @@ class TestReleaseVerifier < Minitest::Test
     assert_match(/not reachable/, error.message)
   end
 
+  def test_reports_a_git_resolution_failure
+    error = assert_raises(Mistri::ReleaseVerifier::Error) do
+      verifier(main_ref: "origin/missing").verify!
+    end
+
+    assert_match(/git rev-parse.*failed/, error.message)
+  end
+
   private
 
-  def verifier(tag: TAG, event_name: "push", ref_type: "tag")
+  def verifier(tag: TAG, main_ref: "origin/main", event_name: "push", ref_type: "tag",
+               version: VERSION)
     Mistri::ReleaseVerifier.new(
       root: @root,
       tag: tag,
-      main_ref: "origin/main",
+      main_ref: main_ref,
       event_name: event_name,
       ref_type: ref_type,
-      version: VERSION
+      version: version
     )
   end
 
   def write_fixture
-    FileUtils.mkdir_p(File.join(@root, "lib"))
+    FileUtils.mkdir_p(File.join(@root, "lib", "mistri"))
+    FileUtils.mkdir_p(File.join(@root, "script"))
     File.write(File.join(@root, "README.md"), "fixture\n")
     File.write(File.join(@root, "mistri.gemspec"), gemspec(VERSION))
+    File.write(File.join(@root, "lib", "mistri", "version.rb"), <<~RUBY)
+      # frozen_string_literal: true
+
+      module Mistri
+        VERSION = "#{VERSION}"
+      end
+    RUBY
+    FileUtils.cp(SCRIPT, File.join(@root, "script", "verify_release.rb"))
     File.write(File.join(@root, "CHANGELOG.md"), <<~CHANGELOG)
       # Changelog
 
@@ -137,16 +207,34 @@ class TestReleaseVerifier < Minitest::Test
     CHANGELOG
   end
 
-  def gemspec(version)
+  def gemspec(version, name: "mistri")
     <<~RUBY
       Gem::Specification.new do |spec|
-        spec.name = "mistri"
+        spec.name = "#{name}"
         spec.version = "#{version}"
         spec.authors = ["Test"]
         spec.summary = "Test gem"
         spec.files = []
       end
     RUBY
+  end
+
+  def run_script(overrides = {})
+    environment = {
+      "GITHUB_EVENT_NAME" => "push",
+      "GITHUB_REF_NAME" => TAG,
+      "GITHUB_REF_TYPE" => "tag",
+      "GIT_CONFIG_GLOBAL" => File::NULL,
+      "GIT_CONFIG_NOSYSTEM" => "1",
+      "HOME" => @root,
+      "PATH" => ENV.fetch("PATH"),
+      "RELEASE_MAIN_REF" => "origin/main",
+      "XDG_CONFIG_HOME" => @root
+    }.merge(overrides)
+    Open3.capture3(
+      environment, RbConfig.ruby, File.join(@root, "script", "verify_release.rb"),
+      chdir: @root, unsetenv_others: true
+    )
   end
 
   def git!(*arguments)

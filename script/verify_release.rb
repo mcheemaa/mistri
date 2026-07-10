@@ -105,6 +105,8 @@ module Mistri
   end
 end
 
+# The subprocess tests exercise this exit contract; SimpleCov cannot merge child coverage.
+# :nocov:
 if $PROGRAM_NAME == __FILE__
   verifier = Mistri::ReleaseVerifier.new(
     root: File.expand_path("..", __dir__),
@@ -124,3 +126,4 @@ if $PROGRAM_NAME == __FILE__
     exit 1
   end
 end
+# :nocov:
