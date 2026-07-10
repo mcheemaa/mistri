@@ -167,11 +167,12 @@ class TestOpenAIAssembler < Minitest::Test
     assert_includes terse.error_message, "the response failed"
   end
 
-  def test_usage_prices_from_the_catalog_and_unknown_models_stay_zero
+  def test_usage_prices_from_the_catalog_and_unknown_models_stay_unknown
     message = drive([], [
                       { "type" => "response.completed",
                         "response" => {
                           "status" => "completed",
+                          "service_tier" => "default",
                           "usage" => { "input_tokens" => 1000,
                                        "input_tokens_details" => { "cached_tokens" => 400 },
                                        "output_tokens" => 200 }
@@ -182,6 +183,7 @@ class TestOpenAIAssembler < Minitest::Test
                 (rates[:output] * 200)) / 1_000_000.0
 
     assert_operator message.usage.cost.total, :>, 0
+    assert_predicate message.usage.cost, :known?
     assert_in_delta expected, message.usage.cost.total, 1e-9
 
     unknown = Mistri::Providers::OpenAI::Assembler.new(model: "gpt-hypothetical")
@@ -190,7 +192,49 @@ class TestOpenAIAssembler < Minitest::Test
                                    "usage" => { "input_tokens" => 1000,
                                                 "output_tokens" => 200 } } })
 
-    assert_in_delta 0.0, unknown.finish.usage.cost.total
+    refute_predicate unknown.finish.usage.cost, :known?
+
+    unpriced = Mistri::Providers::OpenAI::Assembler.new(model: "gpt-5.5",
+                                                        catalog_pricing: false)
+    unpriced.feed({ "type" => "response.completed",
+                    "response" => { "status" => "completed",
+                                    "usage" => { "input_tokens" => 1000,
+                                                 "output_tokens" => 200 } } })
+
+    refute_predicate unpriced.finish.usage.cost, :known?
+
+    missing = Mistri::Providers::OpenAI::Assembler.new(model: "gpt-5.5")
+    missing.feed({ "type" => "response.completed", "response" => { "status" => "completed" } })
+
+    refute_predicate missing.finish.usage.cost, :known?
+
+    flex = Mistri::Providers::OpenAI::Assembler.new(model: "gpt-5.5")
+    flex.feed({ "type" => "response.completed",
+                "response" => { "status" => "completed", "service_tier" => "flex",
+                                "usage" => { "input_tokens" => 1000, "output_tokens" => 200 } } })
+
+    refute_predicate flex.finish.usage.cost, :known?
+  end
+
+  def test_long_context_usage_is_priced_at_the_higher_request_tier
+    assembler = Mistri::Providers::OpenAI::Assembler.new(model: "gpt-5.5")
+    assembler.feed({ "type" => "response.completed",
+                     "response" => { "status" => "completed", "service_tier" => "default",
+                                     "usage" => { "input_tokens" => 272_001,
+                                                  "output_tokens" => 100 } } })
+    usage = assembler.finish.usage
+
+    assert_in_delta 2.72001, usage.cost.input, 1e-9
+    assert_in_delta 0.0045, usage.cost.output, 1e-9
+  end
+
+  def test_usage_without_a_reported_service_tier_is_unknown
+    assembler = Mistri::Providers::OpenAI::Assembler.new(model: "gpt-5.5")
+    assembler.feed({ "type" => "response.completed",
+                     "response" => { "status" => "completed",
+                                     "usage" => { "input_tokens" => 1000 } } })
+
+    refute_predicate assembler.finish.usage.cost, :known?
   end
 
   def test_a_stream_that_ends_without_a_terminal_event_is_an_error

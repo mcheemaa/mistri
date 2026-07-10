@@ -23,6 +23,7 @@ class TestGeminiLive < Minitest::Test
     assert(events.any? { |e| e.type == :text_delta })
     assert_operator message.usage.output, :>, 0
     assert_operator message.usage.cost.total, :>, 0, "catalog pricing must ride live usage"
+    assert_predicate message.usage.cost, :known?
   ensure
     provider&.close
   end

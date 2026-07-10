@@ -11,22 +11,32 @@ module Mistri
     # maxOutputTokens is omitted for the same reason: the API defaults to the
     # model's ceiling.
     class Gemini
+      DEFAULT_ORIGIN = "https://generativelanguage.googleapis.com"
       DEFAULT_THINKING = { includeThoughts: true }.freeze
 
       def initialize(api_key:, model: "gemini-2.5-flash",
-                     origin: "https://generativelanguage.googleapis.com",
-                     thinking: DEFAULT_THINKING, **transport_options)
+                     origin: DEFAULT_ORIGIN, thinking: DEFAULT_THINKING,
+                     service_tier: nil, catalog_pricing: nil, **transport_options)
         @api_key = api_key
         @model = model
         @thinking = thinking
+        @service_tier = service_tier
+        @catalog_pricing = catalog_pricing.nil? ? official_origin?(origin) : catalog_pricing
         @transport = Transport.new(origin: origin, **transport_options)
       end
 
       attr_reader :model
 
+      def prices_usage?
+        tier_known = @service_tier.nil? || %w[unspecified standard].include?(@service_tier.to_s)
+        @catalog_pricing && Models.priced?(model) && tier_known
+      end
+
       def stream(messages:, system: nil, tools: [], signal: nil, **overrides, &emit)
         model = overrides.fetch(:model, @model)
-        assembler = Gemini::Assembler.new(model: model)
+        service_tier = overrides.fetch(:service_tier, @service_tier)
+        assembler = Gemini::Assembler.new(model: model, catalog_pricing: @catalog_pricing,
+                                          service_tier:)
         body = build_body(messages, system, tools, overrides)
         path = "/v1beta/models/#{model}:streamGenerateContent?alt=sse"
         outcome = @transport.stream_post(path, body: body, headers: headers,
@@ -43,11 +53,15 @@ module Mistri
 
       private
 
+      def official_origin?(origin) = origin.to_s.delete_suffix("/") == DEFAULT_ORIGIN
+
       def build_body(messages, system, tools, overrides)
         body = { contents: Serializer.contents(messages) }
         instruction = Serializer.system_instruction(system)
         body[:systemInstruction] = instruction if instruction
         body[:tools] = Serializer.tools(tools) if tools.any?
+        service_tier = overrides.fetch(:service_tier, @service_tier)
+        body[:serviceTier] = service_tier if service_tier
         config = {}
         thinking = overrides.fetch(:thinking, @thinking)
         config[:thinkingConfig] = thinking if thinking

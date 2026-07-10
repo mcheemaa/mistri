@@ -77,14 +77,31 @@ module Mistri
   # A run cancelled by the host, raised only when the caller opts into raising.
   class AbortError < Error; end
 
-  # A run stopped by its turn, token, cost, or wall-clock budget.
-  class BudgetError < Error; end
+  # A cost-budgeted request returned without trustworthy accounting. Usage and
+  # provider_message preserve the uncertain attempt for host reconciliation.
+  class BudgetError < Error
+    attr_reader :usage, :provider_message
+
+    def initialize(message = nil, usage: nil, provider_message: nil)
+      @usage = usage
+      @provider_message = provider_message
+      super(message)
+    end
+  end
 
   # A text edit that did not match uniquely, or overlapped another edit.
   class EditError < Error; end
 
-  # Compaction could not produce a usable summary.
-  class CompactionError < Error; end
+  # Compaction could not produce a usable summary. Usage preserves any billed
+  # provider attempt even though no checkpoint was written.
+  class CompactionError < Error
+    attr_reader :usage
+
+    def initialize(message = nil, usage: nil)
+      @usage = usage
+      super(message)
+    end
+  end
 
   # The machine-readable shape of a stream failure, carried on errored
   # assistant messages so retry policies and hosts can classify without

@@ -12,12 +12,13 @@ module Mistri
       #
       # Unknown event and item types are skipped by contract.
       class Assembler
-        def initialize(model:)
+        def initialize(model:, catalog_pricing: true)
           @model = model
-          @rates = Models.rates(model)
+          @catalog_pricing = catalog_pricing
+          @pricing_at = Time.now
           @blocks = []
           @current = nil
-          @usage = Usage.zero
+          @usage = Usage.new
           @status = nil
           @incomplete_reason = nil
         end
@@ -163,6 +164,7 @@ module Mistri
           @status = response["status"] || "completed"
           @incomplete_reason = response.dig("incomplete_details", "reason")
           @error = failure_error(response["error"]) if @status == "failed"
+          @service_tier = response["service_tier"]
           usage = response["usage"]
           @usage = priced(parse_usage(usage)) if usage
         end
@@ -235,7 +237,13 @@ module Mistri
                     reasoning: output_details["reasoning_tokens"].to_i)
         end
 
-        def priced(usage) = @rates ? usage.with_cost(@rates) : usage
+        def priced(usage)
+          return usage unless @catalog_pricing
+          return usage unless @service_tier == "default"
+
+          rates = Models.rates(@model, usage:, at: @pricing_at)
+          rates ? usage.with_cost(rates) : usage
+        end
       end
     end
   end

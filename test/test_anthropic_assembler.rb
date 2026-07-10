@@ -89,11 +89,12 @@ class TestAnthropicAssembler < Minitest::Test
     assert_equal "opaque", message.content.first.signature
   end
 
-  def test_usage_prices_from_the_catalog_and_unknown_models_stay_zero
+  def test_usage_prices_from_the_catalog_and_unknown_models_stay_unknown
     message = drive([], [
                       { "type" => "message_start",
                         "message" => { "usage" => { "input_tokens" => 1000,
-                                                    "cache_read_input_tokens" => 2000 } } },
+                                                    "cache_read_input_tokens" => 2000,
+                                                    "service_tier" => "standard" } } },
                       { "type" => "message_delta", "delta" => { "stop_reason" => "end_turn" },
                         "usage" => { "output_tokens" => 500 } },
                       { "type" => "message_stop" }
@@ -103,6 +104,7 @@ class TestAnthropicAssembler < Minitest::Test
                 (rates[:output] * 500)) / 1_000_000.0
 
     assert_operator message.usage.cost.total, :>, 0
+    assert_predicate message.usage.cost, :known?
     assert_in_delta expected, message.usage.cost.total,
                     1e-9, "the delta's output count must be repriced, not left stale"
 
@@ -111,7 +113,68 @@ class TestAnthropicAssembler < Minitest::Test
                    "message" => { "usage" => { "input_tokens" => 1000 } } })
     unknown.feed({ "type" => "message_stop" })
 
-    assert_in_delta 0.0, unknown.finish.usage.cost.total
+    refute_predicate unknown.finish.usage.cost, :known?
+  end
+
+  def test_usage_is_unknown_without_catalog_pricing_or_wire_usage
+    unpriced = Mistri::Providers::Anthropic::Assembler.new(model: "claude-opus-4-8",
+                                                           catalog_pricing: false)
+    unpriced.feed({ "type" => "message_start",
+                    "message" => { "usage" => { "input_tokens" => 1000 } } })
+    unpriced.feed({ "type" => "message_stop" })
+
+    refute_predicate unpriced.finish.usage.cost, :known?
+
+    missing = Mistri::Providers::Anthropic::Assembler.new(model: "claude-opus-4-8")
+    missing.feed({ "type" => "message_stop" })
+
+    refute_predicate missing.finish.usage.cost, :known?
+  end
+
+  def test_priority_service_tier_usage_is_unknown
+    priority = Mistri::Providers::Anthropic::Assembler.new(model: "claude-opus-4-8")
+    priority.feed({ "type" => "message_start",
+                    "message" => { "usage" => { "input_tokens" => 1000,
+                                                "service_tier" => "priority" } } })
+    priority.feed({ "type" => "message_stop" })
+
+    refute_predicate priority.finish.usage.cost, :known?
+  end
+
+  def test_usage_without_a_reported_service_tier_is_unknown
+    assembler = Mistri::Providers::Anthropic::Assembler.new(model: "claude-opus-4-8")
+    assembler.feed({ "type" => "message_start",
+                     "message" => { "usage" => { "input_tokens" => 1000 } } })
+    assembler.feed({ "type" => "message_stop" })
+
+    refute_predicate assembler.finish.usage.cost, :known?
+  end
+
+  def test_a_truncated_stream_keeps_partial_dollars_but_marks_them_unknown
+    assembler = Mistri::Providers::Anthropic::Assembler.new(model: "claude-opus-4-8")
+    assembler.feed({ "type" => "message_start",
+                     "message" => { "usage" => { "input_tokens" => 1000,
+                                                 "service_tier" => "standard" } } })
+
+    message = assembler.finish
+
+    assert_equal :error, message.stop_reason
+    assert_operator message.usage.cost.total, :>, 0
+    refute_predicate message.usage.cost, :known?
+  end
+
+  def test_message_stop_without_final_output_usage_is_unpriced
+    assembler = Mistri::Providers::Anthropic::Assembler.new(model: "claude-opus-4-8")
+    assembler.feed({ "type" => "message_start",
+                     "message" => { "usage" => { "input_tokens" => 1000,
+                                                 "service_tier" => "standard" } } })
+    assembler.feed({ "type" => "message_stop" })
+
+    message = assembler.finish
+
+    assert_equal :stop, message.stop_reason
+    assert_equal 0, message.usage.output
+    refute_predicate message.usage.cost, :known?
   end
 
   # The API's own guidance for a refusal is a different model, never a

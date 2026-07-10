@@ -10,7 +10,8 @@ class TestAnthropicLive < Minitest::Test
   end
 
   def test_a_text_turn_streams_and_lands
-    provider = Mistri::Providers::Anthropic.new(api_key: ENV.fetch("ANTHROPIC_API_KEY"))
+    provider = Mistri::Providers::Anthropic.new(api_key: ENV.fetch("ANTHROPIC_API_KEY"),
+                                                service_tier: "standard_only")
     events = []
 
     message = provider.stream(
@@ -23,12 +24,14 @@ class TestAnthropicLive < Minitest::Test
     assert events.any? { |e| e.type == :text_delta }, "expected streamed text deltas"
     assert_operator message.usage.output, :>, 0
     assert_operator message.usage.cost.total, :>, 0, "catalog pricing must ride live usage"
+    assert_predicate message.usage.cost, :known?
   ensure
     provider&.close
   end
 
   def test_a_tool_call_turn_stops_for_tool_use_with_parsed_arguments
-    provider = Mistri::Providers::Anthropic.new(api_key: ENV.fetch("ANTHROPIC_API_KEY"))
+    provider = Mistri::Providers::Anthropic.new(api_key: ENV.fetch("ANTHROPIC_API_KEY"),
+                                                service_tier: "standard_only")
     events = []
     weather = { name: "get_weather", description: "Current weather for a city.",
                 input_schema: { type: "object", properties: { city: { type: "string" } },

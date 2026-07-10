@@ -16,11 +16,36 @@ module Mistri
 
     def none? = [@turns, @tokens, @cost_usd, @wall_clock].all?(&:nil?)
 
+    def cost? = !@cost_usd.nil?
+
+    def validate_provider!(provider)
+      return unless cost?
+      return if provider.respond_to?(:prices_usage?) && provider.prices_usage?
+
+      raise ConfigurationError,
+            "cost budget requires a catalogued model, list-priced origin, and deterministic " \
+            "standard service tier for #{provider.model.inspect}"
+    end
+
+    def validate_usage!(usage)
+      return unless cost?
+      return if usage.cost.known?
+
+      raise BudgetError.new(
+        "cost budget cannot continue after a request returned unpriced usage; not retrying",
+        usage:
+      )
+    end
+
     # The reason the run should stop, or nil to continue.
     def exceeded(turns:, usage:, elapsed: 0)
       return :turns if @turns && turns >= @turns
       return :tokens if @tokens && usage.total_tokens >= @tokens
-      return :cost if @cost_usd && usage.cost.total >= @cost_usd
+
+      if @cost_usd
+        validate_usage!(usage)
+        return :cost if usage.cost.total >= @cost_usd
+      end
       return :wall_clock if @wall_clock && elapsed >= @wall_clock
 
       nil

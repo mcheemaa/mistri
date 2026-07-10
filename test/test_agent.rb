@@ -94,6 +94,101 @@ class TestAgent < Minitest::Test
     assert_equal "budget_cost", message.error_message
   end
 
+  def test_a_cost_budget_rejects_a_provider_without_known_pricing
+    provider = Mistri::Providers::OpenAI.new(api_key: "test", model: "gpt-next",
+                                             service_tier: "default")
+
+    error = assert_raises(Mistri::ConfigurationError) do
+      Mistri::Agent.new(provider:, budget: Mistri::Budget.new(cost_usd: 1.00))
+    end
+
+    assert_match(/deterministic standard service tier/, error.message)
+    Mistri::Agent.new(provider:)
+  ensure
+    provider&.close
+  end
+
+  def test_a_cost_budget_rejects_nondeterministic_service_tier_policy
+    provider = Mistri::Providers::OpenAI.new(api_key: "test", service_tier: "flex")
+
+    assert_raises(Mistri::ConfigurationError) do
+      Mistri::Agent.new(provider:, budget: Mistri::Budget.new(cost_usd: 1.00))
+    end
+  ensure
+    provider&.close
+  end
+
+  def test_a_provider_cannot_claim_pricing_then_return_unknown_cost
+    provider = Mistri::Providers::Fake.new(turns: [{ text: "done" }])
+    provider.define_singleton_method(:prices_usage?) { true }
+    provider.define_singleton_method(:stream) do |**_options|
+      Mistri::Message.assistant(content: "done", stop_reason: :stop)
+    end
+    agent = Mistri::Agent.new(provider:, budget: Mistri::Budget.new(cost_usd: 1.00))
+
+    error = assert_raises(Mistri::BudgetError) { agent.run("go") }
+    entry = agent.session.entries.find { |item| item["type"] == "unpriced_attempt" }
+
+    refute_predicate error.usage.cost, :known?
+    assert_equal "done", error.provider_message.text
+    assert_equal "turn", entry["kind"]
+  end
+
+  def test_compaction_cost_is_checked_before_the_next_model_turn
+    session = session_ready_for_compaction
+    summary_usage = Mistri::Usage.new(input: 1_000_000).with_cost(input: 2.0)
+    provider = Mistri::Providers::Fake.new(turns: [{ text: "## Goal\nContinue.",
+                                                     usage: summary_usage },
+                                                   { text: "must not run" }])
+    agent = Mistri::Agent.new(provider:, session:, budget: Mistri::Budget.new(cost_usd: 1.00),
+                              compaction: Mistri::Compaction.new(window: 1_000, reserve: 50,
+                                                                 keep_recent: 10))
+
+    result = agent.run("next")
+
+    assert_predicate result, :stopped_by_budget?
+    assert_equal "budget_cost", result.message.error_message
+    assert_equal 1, provider.requests.length
+  end
+
+  def test_a_failed_compaction_attempt_still_counts_toward_run_usage
+    failed_usage = Mistri::Usage.new(input: 1_000).with_cost(input: 1.0)
+    turn_usage = Mistri::Usage.new(input: 500).with_cost(input: 1.0)
+    provider = Mistri::Providers::Fake.new(turns: [
+                                             { error: "summary failed", usage: failed_usage },
+                                             { text: "done", usage: turn_usage }
+                                           ])
+    agent = Mistri::Agent.new(provider:, session: session_ready_for_compaction,
+                              budget: Mistri::Budget.new(cost_usd: 1.00),
+                              compaction: compacting_settings)
+
+    result = agent.run("next")
+
+    assert_equal 1_500, result.usage.input
+    assert_in_delta 0.0015, result.usage.cost.total
+    assert_equal 2, provider.requests.length
+  end
+
+  def test_a_failed_compaction_without_usage_fails_a_cost_budget_closed
+    calls = 0
+    provider = Mistri::Providers::Fake.new
+    provider.define_singleton_method(:stream) do |**_options|
+      calls += 1
+      Mistri::Message.assistant(content: "", stop_reason: :error,
+                                error_message: "summary failed")
+    end
+    agent = Mistri::Agent.new(provider:, session: session_ready_for_compaction,
+                              budget: Mistri::Budget.new(cost_usd: 1.00),
+                              compaction: compacting_settings)
+
+    error = assert_raises(Mistri::BudgetError) { agent.run("next") }
+    entry = agent.session.entries.find { |item| item["type"] == "unpriced_attempt" }
+
+    refute_predicate error.usage.cost, :known?
+    assert_equal "compaction", entry["kind"]
+    assert_equal 1, calls
+  end
+
   def test_empty_input_and_duplicate_tools_fail_loudly
     provider = Mistri::Providers::Fake.new
     ping = Mistri::Tool.define("ping", "Ping.") { "pong" }
@@ -159,5 +254,22 @@ class TestAgent < Minitest::Test
 
     assert_equal 1, result.output["x"]
     assert_equal 100, result.usage.input, "both passes count"
+  end
+
+  private
+
+  def session_ready_for_compaction
+    session = Mistri::Session.new(store: Mistri::Stores::Memory.new)
+    session.append_message(Mistri::Message.user("old context " * 100))
+    session.append_message(Mistri::Message.assistant(content: "old answer " * 100,
+                                                     stop_reason: :stop,
+                                                     usage: Mistri::Usage.new(input: 900,
+                                                                              output: 100)))
+    session.append_message(Mistri::Message.user("keep this"))
+    session
+  end
+
+  def compacting_settings
+    Mistri::Compaction.new(window: 1_000, reserve: 50, keep_recent: 10)
   end
 end

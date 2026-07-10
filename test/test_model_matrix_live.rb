@@ -6,14 +6,13 @@ require_relative "test_helper"
 # that must land :stop with text and non-zero usage. This is what proves a
 # catalog entry is real, its default thinking mode is accepted, and its wire
 # path works end to end. Run with MISTRI_LIVE=1.
-#
-# A model the account cannot reach (a preview not enabled on this key) skips
-# with the provider's message rather than failing the suite.
 class TestModelMatrixLive < Minitest::Test
   PROVIDERS = {
-    anthropic: { klass: Mistri::Providers::Anthropic, key: "ANTHROPIC_API_KEY" },
-    openai: { klass: Mistri::Providers::OpenAI, key: "OPENAI_API_KEY" },
-    gemini: { klass: Mistri::Providers::Gemini, key: "GEMINI_API_KEY" }
+    anthropic: { klass: Mistri::Providers::Anthropic, key: "ANTHROPIC_API_KEY",
+                 options: { service_tier: "standard_only" } },
+    openai: { klass: Mistri::Providers::OpenAI, key: "OPENAI_API_KEY",
+              options: { service_tier: "default" } },
+    gemini: { klass: Mistri::Providers::Gemini, key: "GEMINI_API_KEY", options: {} }
   }.freeze
 
   Mistri::Models::CATALOG.each_value do |model|
@@ -29,21 +28,20 @@ class TestModelMatrixLive < Minitest::Test
   private
 
   def verify_model(model, config)
-    provider = config[:klass].new(api_key: ENV.fetch(config[:key]), model: model.id)
+    provider = config[:klass].new(api_key: ENV.fetch(config[:key]), model: model.id,
+                                  **config[:options])
     events = []
     message = provider.stream(
       messages: [Mistri::Message.user("Reply with exactly: ok")]
     ) { |event| events << event }
 
-    skip "#{model.id} unreachable: #{message.error_message}" if message.stop_reason == :error
-
     assert_equal :stop, message.stop_reason, "#{model.id} did not finish cleanly"
     assert_match(/ok/i, message.text, "#{model.id} produced no usable text")
     assert(events.any? { |e| e.type == :text_delta }, "#{model.id} did not stream")
     assert_operator message.usage.output, :>, 0, "#{model.id} reported no output tokens"
-  # The unreachable-model skip fires after the provider opens, so closing its
-  # connection in ensure is intended.
-  ensure # rubocop:disable Minitest/SkipEnsure
+    assert_predicate message.usage.cost, :known?
+    assert_operator message.usage.cost.total, :>, 0, "#{model.id} usage was not priced"
+  ensure
     provider&.close
   end
 end
