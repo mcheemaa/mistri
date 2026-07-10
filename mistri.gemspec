@@ -18,6 +18,7 @@ Gem::Specification.new do |spec|
 
   spec.metadata["source_code_uri"] = "https://github.com/mcheemaa/mistri"
   spec.metadata["changelog_uri"] = "https://github.com/mcheemaa/mistri/blob/main/CHANGELOG.md"
+  spec.metadata["allowed_push_host"] = "https://rubygems.org"
   spec.metadata["rubygems_mfa_required"] = "true"
   spec.metadata["documentation_uri"] = "https://mistri.sh/docs/getting-started/"
   spec.metadata["bug_tracker_uri"] = "https://github.com/mcheemaa/mistri/issues"
