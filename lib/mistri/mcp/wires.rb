@@ -13,14 +13,23 @@ module Mistri
       # Streamable HTTP: requests POST to one endpoint, responses arrive as
       # JSON or an SSE stream. Sessions and bearer auth live here.
       class Http
-        def initialize(url:, token:, headers:, open_timeout:, read_timeout:)
-          uri = URI(url)
+        HEADER_NAME = /\A[!#$%&'*+\-.^_`|~0-9A-Za-z]+\z/
+        INVALID_HEADER_VALUE = /[\x00-\x1F\x7F]/n
+        RESERVED_HEADERS = %w[host content-length transfer-encoding connection keep-alive
+                              proxy-authenticate proxy-authorization proxy-connection te trailer
+                              upgrade accept content-type accept-encoding mcp-session-id
+                              mcp-protocol-version].freeze
+        private_constant :HEADER_NAME, :INVALID_HEADER_VALUE, :RESERVED_HEADERS
+
+        def initialize(url:, token:, headers:, open_timeout:, read_timeout:, allow_non_public:)
+          uri, resolver = Egress.resolver(url, allow_non_public:, label: "MCP URL",
+                                               timeout: open_timeout)
           @path = uri.path.empty? ? "/" : uri.path
           @path = "#{@path}?#{uri.query}" if uri.query
-          @transport = Transport.new(origin: "#{uri.scheme}://#{uri.host}:#{uri.port}",
+          @transport = Transport.new(origin: Egress.origin(uri), address_resolver: resolver,
                                      open_timeout: open_timeout, read_timeout: read_timeout)
           @token = token
-          @headers = headers
+          @headers = normalized_headers(headers)
           @session_id = nil
           @protocol_version = nil
         end
@@ -49,6 +58,24 @@ module Mistri
         def close = @transport.close
 
         private
+
+        def normalized_headers(headers)
+          headers.each_with_object({}) do |(key, value), copy|
+            name = key.to_s
+            content = value.to_s
+            unless name.ascii_only? && HEADER_NAME.match?(name)
+              raise ConfigurationError, "#{name.inspect} is not a valid HTTP header name"
+            end
+            if RESERVED_HEADERS.include?(name.downcase)
+              raise ConfigurationError, "#{name} is managed by the MCP transport"
+            end
+            if INVALID_HEADER_VALUE.match?(content.b)
+              raise ConfigurationError, "#{name} contains invalid control characters"
+            end
+
+            copy[name.dup.freeze] = content.dup.freeze
+          end.freeze
+        end
 
         def request_headers
           headers = { "Accept" => "application/json, text/event-stream" }

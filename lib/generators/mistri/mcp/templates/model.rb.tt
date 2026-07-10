@@ -4,15 +4,19 @@
 class <%= class_name %> < ApplicationRecord
   encrypts :access_token, :refresh_token, :client_secret
 
+  def self.mcp_allow_non_public = nil
+
   # Begin the OAuth flow: persists a pending connection and returns it with
   # the URL to send the user to.
-  def self.connect(name:, url:, client_name:, redirect_uri:, scope: nil)
+  def self.connect(name:, url:, client_name:, redirect_uri:, scope: nil, issuer: nil)
     flow = Mistri::MCP::OAuth.start(url: url, client_name: client_name,
-                                    redirect_uri: redirect_uri, scope: scope)
+                                    redirect_uri: redirect_uri, scope: scope,
+                                    issuer: issuer,
+                                    allow_non_public: mcp_allow_non_public)
     connection = create!(name: name, url: url, status: "pending",
                          state: flow["state"], code_verifier: flow["code_verifier"],
                          client_id: flow["client_id"], client_secret: flow["client_secret"],
-                         token_endpoint: flow["token_endpoint"],
+                         issuer: flow["issuer"],
                          token_auth_method: flow["token_auth_method"],
                          redirect_uri: flow["redirect_uri"])
     [connection, flow["authorize_url"]]
@@ -25,10 +29,11 @@ class <%= class_name %> < ApplicationRecord
                                          code_verifier: connection.code_verifier,
                                          client_id: connection.client_id,
                                          client_secret: connection.client_secret,
-                                         token_endpoint: connection.token_endpoint,
+                                         issuer: connection.issuer,
                                          token_auth_method: connection.token_auth_method,
                                          resource: connection.url,
-                                         redirect_uri: connection.redirect_uri)
+                                         redirect_uri: connection.redirect_uri,
+                                         allow_non_public: mcp_allow_non_public)
     connection.update!(status: "connected", state: nil, code_verifier: nil,
                        access_token: tokens["access_token"],
                        refresh_token: tokens["refresh_token"],
@@ -37,7 +42,8 @@ class <%= class_name %> < ApplicationRecord
   end
 
   def client
-    Mistri::MCP::Client.new(url: url, token: -> { bearer_token })
+    Mistri::MCP::Client.new(url: url, token: -> { bearer_token },
+                            allow_non_public: self.class.mcp_allow_non_public)
   end
 
   def tools(**options)
@@ -54,8 +60,9 @@ class <%= class_name %> < ApplicationRecord
   def refresh!
     tokens = Mistri::MCP::OAuth.refresh(refresh_token: refresh_token,
                                         client_id: client_id, client_secret: client_secret,
-                                        token_endpoint: token_endpoint,
-                                        token_auth_method: token_auth_method, resource: url)
+                                        issuer: issuer, token_auth_method: token_auth_method,
+                                        resource: url,
+                                        allow_non_public: self.class.mcp_allow_non_public)
     update!(access_token: tokens["access_token"],
             refresh_token: tokens["refresh_token"] || refresh_token,
             expires_at: tokens["expires_at"], scope: tokens["scope"] || scope)

@@ -398,11 +398,44 @@ tools = Mistri::MCP.tools(client, prefix: "linear",
 agent = Mistri.agent("claude-opus-4-8", tools: tools)
 ```
 
+Remote URLs are untrusted input. Mistri accepts public HTTPS destinations by
+default, rejects the whole DNS result when any answer is non-public, and pins an
+approved address while keeping the hostname for Host, SNI, and certificate
+verification. Each connection cycle resolves and validates every DNS answer;
+Net::HTTP's internal keep-alive reconnects start a new cycle. Approved
+candidates from one result are tried only before request bytes are sent. MCP
+and server-side OAuth requests do not follow redirects or inherit ambient HTTP
+proxy settings.
+
+Private MCP and authorization servers remain available through one narrow host
+policy, passed to the client and every OAuth operation:
+
+```ruby
+INTERNAL_RANGE = IPAddr.new("10.20.0.0/16")
+ALLOW_INTERNAL_MCP = lambda do |uri, address|
+  %w[mcp.internal.example auth.internal.example].include?(uri.hostname) &&
+    INTERNAL_RANGE.include?(address)
+end
+
+# Override this hook in a generated Rails connection model.
+class McpConnection
+  def self.mcp_allow_non_public = ALLOW_INTERNAL_MCP
+end
+
+client = Mistri::MCP::Client.new(url: "https://mcp.internal.example/mcp",
+                                 allow_non_public: ALLOW_INTERNAL_MCP)
+```
+
+The callback is consulted only for non-public addresses; it cannot permit an
+invalid URL or plaintext HTTP to a non-loopback destination. Local development
+can explicitly use `->(_uri, address) { address.loopback? }`.
+
 The bridge lists the server's tools once, at build time; `client.tools(refresh: true)`
-re-lists when a host wants a changed toolset. `prefix:` namespaces local
-names (`linear__create_issue`) because duplicate tool names raise at
-`Agent.new`: collisions fail loud instead of one server's tool silently
-shadowing another's.
+re-lists when a host wants a changed toolset. Discovery rejects repeated cursors
+and defaults to 100 pages or 10,000 tools; `max_tool_pages:` and `max_tools:`
+let a host set explicit limits. `prefix:` namespaces local names
+(`linear__create_issue`) because duplicate tool names raise at `Agent.new`:
+collisions fail loud instead of one server's tool silently shadowing another's.
 
 Local stdio servers spawn as child processes, credentials in their
 environment. That is also the whole "give the agent a browser" story:
@@ -426,7 +459,9 @@ Each row is one server connection carrying its own OAuth flow state and
 encrypted tokens. The OAuth services underneath (`Mistri::MCP::OAuth.start`,
 `.complete`, `.refresh`) are storage-agnostic, so the same flow works from a
 controller, a GraphQL mutation, or a job. Registration happens as your
-application: `client_name:` is yours to set.
+application: `client_name:` is yours to set. The generated row persists the
+authorization-server identity selected during registration; token endpoints
+are rediscovered from that exact issuer before code exchange and refresh.
 
 ```ruby
 connection, authorize_url = McpConnection.connect(
@@ -438,6 +473,25 @@ connection = McpConnection.complete(state: params[:state], code: params[:code])
 
 agent = Mistri.agent("claude-opus-4-8", tools: connection.tools(prefix: "linear"))
 ```
+
+When calling the low-level OAuth services directly, persist `flow["issuer"]`
+and `flow["resource"]`, verify callback state against `flow["state"]`, and pass
+the same `allow_non_public:` callback to `start`, `complete`, and `refresh` for
+an internal server. A pre-registered `client_id` belongs to a specific
+authorization server, so `start` requires the exact trusted `issuer:` supplied
+when that client was registered. If protected-resource metadata advertises
+more than one issuer, the host must select one explicitly. `start` still
+returns `token_endpoint` for compatibility, but `complete` and `refresh` do
+not trust it; they rediscover the current endpoint from `issuer`.
+
+Generated models copied by an older Mistri release are not rewritten when the
+gem updates. Before using this version, add an `issuer` string column, pass it
+to `complete` and `refresh`, and thread one class-owned egress policy through
+all three OAuth operations and `Client` if non-public destinations are used.
+Restart pending OAuth flows. Existing connected rows may be backfilled only
+when the application independently recorded the exact issuer used during
+registration; otherwise reconnect them. Never infer an issuer from a token
+endpoint. The current generator shows the complete wiring.
 
 ## Streaming into Rails
 

@@ -17,9 +17,14 @@ class TestMcpClient < Minitest::Test
     server.stop
   end
 
+  def remote_client(server, **)
+    Mistri::MCP::Client.new(url: server.url,
+                            allow_non_public: Mistri::Test::ALLOW_LOOPBACK, **)
+  end
+
   def test_the_handshake_negotiates_and_announces
     with_server(session: "sess") do |server|
-      client = Mistri::MCP::Client.new(url: server.url)
+      client = remote_client(server)
       client.connect
 
       assert_equal "stub", client.server_info["name"]
@@ -47,7 +52,7 @@ class TestMcpClient < Minitest::Test
               "b" => { description: "B.", handler: ->(_) { "b" } },
               "c" => { description: "C.", handler: ->(_) { "c" } } }
     with_server(tools: tools, page_size: 2) do |server|
-      client = Mistri::MCP::Client.new(url: server.url)
+      client = remote_client(server, max_tool_pages: 2, max_tools: 3)
 
       assert_equal(%w[a b c], client.tools.map { |t| t["name"] })
 
@@ -59,9 +64,72 @@ class TestMcpClient < Minitest::Test
     end
   end
 
+  def test_tool_discovery_rejects_a_repeated_cursor
+    with_server(page_size: 1, next_cursor: ->(_cursor) { "same" }) do |server|
+      client = remote_client(server)
+
+      error = assert_raises(Mistri::MCP::Error) { client.tools }
+      list_calls = server.bodies.count { |body| body["method"] == "tools/list" }
+
+      assert_match(/repeated a cursor/, error.message)
+      assert_equal 2, list_calls
+    end
+  end
+
+  def test_tool_discovery_has_host_configurable_page_and_tool_limits
+    with_server(page_size: 1, next_cursor: ->(cursor) { cursor ? cursor.succ : "a" }) do |server|
+      client = remote_client(server, max_tool_pages: 2)
+
+      error = assert_raises(Mistri::MCP::Error) { client.tools }
+      list_calls = server.bodies.count { |body| body["method"] == "tools/list" }
+
+      assert_match(/exceeded 2 pages/, error.message)
+      assert_equal 2, list_calls
+    end
+
+    tools = {
+      "a" => { description: "A", handler: ->(_) {} },
+      "b" => { description: "B", handler: ->(_) {} }
+    }
+    with_server(tools: tools) do |server|
+      error = assert_raises(Mistri::MCP::Error) do
+        remote_client(server, max_tools: 1).tools
+      end
+
+      assert_match(/exceeded 1 tools/, error.message)
+    end
+  end
+
+  def test_tool_discovery_limits_must_be_positive_integers
+    [[:max_tool_pages, 0], [:max_tools, 1.5]].each do |name, value|
+      error = assert_raises(Mistri::ConfigurationError) do
+        Mistri::MCP::Client.new(command: ["unused"], name => value)
+      end
+
+      assert_match(/#{name}: must be a positive integer/, error.message)
+    end
+  end
+
+  def test_tool_discovery_rejects_malformed_page_shapes
+    cases = [
+      [nil, /malformed result/],
+      [{ "tools" => nil }, /malformed tools collection/],
+      [{ "tools" => [], "nextCursor" => 7 }, /malformed cursor/]
+    ]
+
+    cases.each do |response, message|
+      client = Mistri::MCP::Client.new(command: ["unused"])
+      client.define_singleton_method(:request) { |_method, _params| response }
+
+      error = assert_raises(Mistri::MCP::Error) { client.tools }
+
+      assert_match message, error.message
+    end
+  end
+
   def test_plain_json_servers_work_identically
     with_server(sse: false) do |server|
-      client = Mistri::MCP::Client.new(url: server.url)
+      client = remote_client(server)
       result = client.call_tool("echo", { "text" => "json mode" })
 
       assert_equal "echo: json mode", result.dig("content", 0, "text")
@@ -77,7 +145,7 @@ class TestMcpClient < Minitest::Test
         resolved << value
         value
       end
-      client = Mistri::MCP::Client.new(url: server.url, token: token)
+      client = remote_client(server, token: token)
       result = client.call_tool("echo", { "text" => "hi" })
 
       assert_equal "echo: hi", result.dig("content", 0, "text")
@@ -88,15 +156,26 @@ class TestMcpClient < Minitest::Test
 
   def test_a_static_token_401_raises
     with_server(require_token: "right") do |server|
-      client = Mistri::MCP::Client.new(url: server.url, token: "wrong")
+      client = remote_client(server, token: "wrong")
 
       assert_raises(Mistri::AuthenticationError) { client.call_tool("echo", {}) }
     end
   end
 
+  def test_custom_headers_are_snapshotted_at_construction
+    with_server do |server|
+      value = +"tenant-one"
+      client = remote_client(server, headers: { "X-Tenant" => value })
+      value.replace("tenant-two")
+      client.connect
+
+      assert_equal "tenant-one", server.requests.first[:headers]["x-tenant"]
+    end
+  end
+
   def test_an_expired_session_reinitializes_transparently
     with_server(session: "sess", expire_after: 3) do |server|
-      client = Mistri::MCP::Client.new(url: server.url)
+      client = remote_client(server)
       client.call_tool("echo", { "text" => "one" })
       result = client.call_tool("echo", { "text" => "two" })
 
@@ -107,7 +186,7 @@ class TestMcpClient < Minitest::Test
 
   def test_a_dropped_tool_response_does_not_replay_the_call
     with_server(drop_after: "tools/call") do |server|
-      client = Mistri::MCP::Client.new(url: server.url)
+      client = remote_client(server)
 
       error = assert_raises(Mistri::AmbiguousDeliveryError) do
         client.call_tool("echo", { "text" => "once" })
@@ -121,7 +200,7 @@ class TestMcpClient < Minitest::Test
 
   def test_a_dropped_replayable_request_reconnects_once
     with_server(drop_after: "tools/list") do |server|
-      client = Mistri::MCP::Client.new(url: server.url)
+      client = remote_client(server)
       names = client.tools.map { |tool| tool["name"] }
       list_calls = server.bodies.count { |body| body["method"] == "tools/list" }
 
@@ -132,7 +211,7 @@ class TestMcpClient < Minitest::Test
 
   def test_a_malformed_tool_response_is_ambiguous
     with_server(malformed_after: "tools/call") do |server|
-      client = Mistri::MCP::Client.new(url: server.url)
+      client = remote_client(server)
 
       error = assert_raises(Mistri::AmbiguousDeliveryError) do
         client.call_tool("echo", { "text" => "once" })
@@ -145,7 +224,7 @@ class TestMcpClient < Minitest::Test
 
   def test_a_malformed_replayable_response_is_not_replayed
     with_server(malformed_after: "tools/list") do |server|
-      client = Mistri::MCP::Client.new(url: server.url)
+      client = remote_client(server)
 
       assert_raises(Mistri::ProviderError) { client.tools }
       list_calls = server.bodies.count { |body| body["method"] == "tools/list" }
@@ -157,7 +236,7 @@ class TestMcpClient < Minitest::Test
 
   def test_a_missing_tool_response_is_ambiguous
     with_server(empty_after: "tools/call") do |server|
-      client = Mistri::MCP::Client.new(url: server.url)
+      client = remote_client(server)
 
       error = assert_raises(Mistri::AmbiguousDeliveryError) do
         client.call_tool("echo", { "text" => "once" })
@@ -170,7 +249,7 @@ class TestMcpClient < Minitest::Test
 
   def test_a_missing_replayable_response_remains_a_protocol_error
     with_server(empty_after: "tools/list") do |server|
-      client = Mistri::MCP::Client.new(url: server.url)
+      client = remote_client(server)
 
       error = assert_raises(Mistri::MCP::Error) { client.tools }
 
@@ -181,7 +260,7 @@ class TestMcpClient < Minitest::Test
 
   def test_an_unsupported_protocol_version_fails_loudly
     with_server(protocol: "1999-01-01") do |server|
-      client = Mistri::MCP::Client.new(url: server.url)
+      client = remote_client(server)
       error = assert_raises(Mistri::MCP::Error) { client.connect }
 
       assert_match(/unsupported protocol version/, error.message)

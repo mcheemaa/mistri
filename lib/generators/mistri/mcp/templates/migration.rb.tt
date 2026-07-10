@@ -12,7 +12,7 @@ class Create<%= table_name.camelize %> < ActiveRecord::Migration[<%= ActiveRecor
 
       t.string :client_id
       t.string :client_secret
-      t.string :token_endpoint
+      t.string :issuer
       t.string :token_auth_method
       t.text :access_token
       t.text :refresh_token

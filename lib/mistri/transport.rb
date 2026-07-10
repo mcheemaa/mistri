@@ -15,15 +15,57 @@ module Mistri
   # Streaming reads abort two ways: cooperatively between fragments, and hard,
   # by closing the socket from the abort signal's callback, so a stalled read
   # stops immediately instead of waiting out the read timeout.
+  # An address_resolver supplies a fresh validated set for each connection
+  # cycle; candidates are tried before the request is sent while the original
+  # hostname still owns Host, SNI, and TLS validation.
   class Transport
     KEEP_ALIVE_SECONDS = 30
+    CONNECT_ERRORS = [IOError, SocketError, SystemCallError, Timeout::Error,
+                      Net::HTTPBadResponse, OpenSSL::SSL::SSLError].freeze
 
-    def initialize(origin:, open_timeout: 15, read_timeout: 300, write_timeout: 60)
+    # Net::HTTP reconnects expired keep-alives internally. Resolving inside
+    # connect makes every MCP connection cycle cross the egress boundary.
+    class ResolvedHTTP < Net::HTTP
+      attr_writer :address_resolver
+
+      private
+
+      def connect
+        addresses = Array(@address_resolver.call)
+        raise ConfigurationError, "address_resolver returned no addresses" if addresses.empty?
+
+        original_timeout = @open_timeout
+        deadline = if original_timeout
+                     Process.clock_gettime(Process::CLOCK_MONOTONIC) + original_timeout
+                   end
+        failure = nil
+        addresses.each do |address|
+          remaining = deadline && (deadline - Process.clock_gettime(Process::CLOCK_MONOTONIC))
+          break if remaining && !remaining.positive?
+
+          @ipaddr = address
+          @open_timeout = remaining if remaining
+          begin
+            return super
+          rescue *CONNECT_ERRORS => e
+            failure = e
+          end
+        end
+        raise failure || Net::OpenTimeout.new("all approved addresses timed out")
+      ensure
+        @open_timeout = original_timeout if original_timeout
+      end
+    end
+    private_constant :ResolvedHTTP, :CONNECT_ERRORS
+
+    def initialize(origin:, open_timeout: 15, read_timeout: 300, write_timeout: 60,
+                   address_resolver: nil)
       @origin = origin.to_s.chomp("/")
       @uri = URI(@origin)
       @open_timeout = open_timeout
       @read_timeout = read_timeout
       @write_timeout = write_timeout
+      @address_resolver = address_resolver
       @mutex = Mutex.new
       @connection = nil
     end
@@ -180,13 +222,21 @@ module Mistri
     end
 
     def connection
-      @connection ||= Net::HTTP.new(@uri.host, @uri.port).tap do |http|
+      @connection ||= begin
+        http = if @address_resolver
+                 ResolvedHTTP.new(@uri.hostname, @uri.port, nil).tap do |resolved|
+                   resolved.address_resolver = @address_resolver
+                 end
+               else
+                 Net::HTTP.new(@uri.hostname, @uri.port)
+               end
         http.use_ssl = @uri.scheme == "https"
         http.open_timeout = @open_timeout
         http.read_timeout = @read_timeout
         http.write_timeout = @write_timeout
         http.keep_alive_timeout = KEEP_ALIVE_SECONDS
         http.start
+        http
       end
     end
 

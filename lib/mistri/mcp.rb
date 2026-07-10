@@ -32,6 +32,9 @@ module Mistri
     # attached); the spec says start a fresh one, and Client does.
     class SessionExpired < Error; end
 
+    # A remote URL cannot be used without weakening the MCP network boundary.
+    class UnsafeURLError < ConfigurationError; end
+
     module_function
 
     # The server's tools as Mistri tools. allow/deny filter by remote name,
@@ -91,6 +94,9 @@ module Mistri
   end
 end
 
+require_relative "mcp/egress"
 require_relative "mcp/wires"
 require_relative "mcp/client"
 require_relative "mcp/oauth"
+
+Mistri::MCP.private_constant :Egress
