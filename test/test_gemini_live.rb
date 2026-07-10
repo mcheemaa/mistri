@@ -54,4 +54,27 @@ class TestGeminiLive < Minitest::Test
   ensure
     provider&.close
   end
+
+  def test_a_nested_freeform_object_reaches_a_tool_call
+    provider = Mistri::Providers::Gemini.new(api_key: ENV.fetch("GEMINI_API_KEY"))
+    tool = Mistri::Tool.define("render_chart", "Renders the requested chart.", schema: lambda {
+      object :config, "Chart config; include a series array.", required: true
+    }) { |_args| "rendered" }
+
+    message = provider.stream(
+      messages: [Mistri::Message.user(
+        'Call render_chart with config {"series":[{"type":"bar","data":[1,2]}]}. No prose.'
+      )],
+      tools: [tool.spec]
+    ) { |_event| nil }
+
+    assert_equal :tool_use, message.stop_reason
+    config = message.tool_calls.first.arguments["config"]
+
+    assert_kind_of Hash, config
+    assert_equal "bar", config.dig("series", 0, "type")
+    assert_equal [1, 2], config.dig("series", 0, "data")
+  ensure
+    provider&.close
+  end
 end

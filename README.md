@@ -91,6 +91,27 @@ weather = Mistri::Tool.define("get_weather", "Current weather for a city.", sche
 end
 ```
 
+A nested object without a block is deliberately freeform. This is useful for
+provider-neutral configuration payloads whose keys Mistri should not prescribe:
+
+```ruby
+chart = Mistri::Tool.define("render_chart", "Renders a chart.", schema: lambda {
+  object :config, "Chart-library configuration", required: true
+}) do |args|
+  Charts.render(args.fetch("config"))
+end
+```
+
+This gives providers an open JSON object schema, where `{}` remains valid. Tool
+arguments remain untrusted input: use the description for generation guidance
+and validate domain semantics in the handler. An empty object block currently
+emits the same open schema.
+
+This freeform DSL shape cannot be represented by strict constrained output
+without changing its meaning, so `Schema.strict` raises instead of silently
+narrowing it to an object that only accepts `{}`. Use declared properties, or an
+explicitly closed raw schema, for constrained task output.
+
 A tool can speak on two channels: `content` for the model, `ui` for your
 interface. The `ui` payload rides the `:tool_result` event and persists with
 the session, but never reaches a provider:

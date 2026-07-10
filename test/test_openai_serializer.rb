@@ -6,6 +6,16 @@ require_relative "test_helper"
 class TestOpenAISerializer < Minitest::Test
   SERIALIZER = Mistri::Providers::OpenAI::Serializer
 
+  def test_a_freeform_object_schema_passes_through
+    tool = Mistri::Tool.define("render", "d", schema: lambda {
+      object :config, "Open configuration", required: true
+    }) { "ok" }
+
+    wire = SERIALIZER.tools([tool.spec])
+
+    assert_equal tool.input_schema, wire.first[:parameters]
+  end
+
   def test_an_assembled_turn_replays_with_its_pairing_intact
     reasoning_item = { "type" => "reasoning", "id" => "rs_1", "summary" => [],
                        "encrypted_content" => "opaque" }
