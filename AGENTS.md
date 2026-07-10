@@ -46,9 +46,10 @@ No ticket references, no Co-Authored-By, no emojis.
 
 ## Releases
 
-Semver from 0.x: patch for fixes, minor for features. Every release: CHANGELOG entry,
-tag `vX.Y.Z`, `gem build`, `gem push`. MFA becomes mandatory on the publishing account
-before 0.1.0; the Gemspec/RequireMFA cop turns on at the same time.
+Semver from 0.x: patch for fixes, minor for features. Prepare every release on main with
+a versioned CHANGELOG entry and matching `vX.Y.Z` tag. The tag-derived workflow verifies,
+builds, and publishes through RubyGems trusted publishing; never publish from a branch or
+manual dispatch. MFA is mandatory on the publishing account and in the gemspec metadata.
 
 ## Review
 
