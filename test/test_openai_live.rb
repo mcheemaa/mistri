@@ -1,5 +1,6 @@
 # frozen_string_literal: true
 
+require "securerandom"
 require_relative "test_helper"
 
 # Real API calls, opt-in: MISTRI_LIVE=1 bundle exec rake test
@@ -11,6 +12,7 @@ class TestOpenAILive < Minitest::Test
 
   def test_a_text_turn_streams_and_lands
     provider = Mistri::Providers::OpenAI.new(api_key: ENV.fetch("OPENAI_API_KEY"),
+                                             model: "gpt-5.6",
                                              service_tier: "default")
     events = []
 
@@ -34,6 +36,7 @@ class TestOpenAILive < Minitest::Test
   # on broken pairing.
   def test_a_tool_turn_replays_cleanly_into_a_final_answer
     provider = Mistri::Providers::OpenAI.new(api_key: ENV.fetch("OPENAI_API_KEY"),
+                                             model: "gpt-5.6",
                                              service_tier: "default")
     weather = { name: "get_weather", description: "Current weather for a city.",
                 input_schema: { type: "object", properties: { city: { type: "string" } },
@@ -53,6 +56,24 @@ class TestOpenAILive < Minitest::Test
 
     assert_equal :stop, second.stop_reason
     assert_match(/41|sunny/i, second.text)
+  ensure
+    provider&.close
+  end
+
+  def test_gpt_5_6_cache_writes_are_accounted
+    provider = Mistri::Providers::OpenAI.new(api_key: ENV.fetch("OPENAI_API_KEY"),
+                                             model: "gpt-5.6-luna",
+                                             reasoning: { effort: "none" },
+                                             service_tier: "default")
+    prompt = [SecureRandom.hex(16), "Mistri cache accounting probe. " * 700,
+              "Reply with exactly: ok"].join(" ")
+    messages = [Mistri::Message.user(prompt)]
+
+    message = provider.stream(messages:)
+
+    assert_operator message.usage.cache_write, :>, 0
+    assert_operator message.usage.cost.cache_write, :>, 0
+    assert_predicate message.usage.cost, :known?
   ensure
     provider&.close
   end

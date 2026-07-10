@@ -12,7 +12,7 @@ require_relative "../test_helper"
 #   MISTRI_INTEGRATION_MODELS=claude-opus-4-8 bundle exec rake integration
 #   bundle exec rake integration N=/compaction/
 module Integration
-  DEFAULT_MODELS = "claude-haiku-4-5-20251001,gpt-5.2,gemini-2.5-flash"
+  DEFAULT_MODELS = "claude-haiku-4-5-20251001,gpt-5.6-terra,gemini-2.5-flash"
 
   STARTS = %w[Spec Wraith Phan Umbra Shade Geist Vesper Haunt Grim Sable Mora Ecto].freeze
   MIDDLES = %w[a o e u ora ile ar in].freeze

@@ -466,7 +466,7 @@ agent.run("Draft a long essay.", signal: signal)
 budget = Mistri::Budget.new(turns: 20, cost_usd: 2.00)
 
 # Anthropic and OpenAI need an explicit standard tier for a cost budget.
-agent = Mistri.agent("gpt-5.5", budget: budget,
+agent = Mistri.agent("gpt-5.6-terra", budget: budget,
                      provider_options: { service_tier: "default" })
 
 # Transient failures (429, 5xx, timeouts) retry with backoff, invisibly to
@@ -525,7 +525,7 @@ photo = Mistri::Content::Image.from_bytes(File.binread("chart.png"), mime_type: 
 photo = Mistri::Content::Image.from_data_uri(params[:image])   # canvases and uploads
 agent.run("What trend does this chart show?", images: [photo])
 
-Mistri.agent("gpt-5.5", provider_options: { reasoning: { effort: "high" } })
+Mistri.agent("gpt-5.6", provider_options: { reasoning: { effort: "high" } })
 Mistri.agent("claude-opus-4-8", provider_options: { cache: false })
 ```
 

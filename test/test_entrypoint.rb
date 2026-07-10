@@ -6,7 +6,10 @@ class TestEntrypoint < Minitest::Test
   def test_provider_is_inferred_from_the_model_id
     assert_instance_of Mistri::Providers::Anthropic,
                        Mistri.provider("claude-opus-4-8", api_key: "k")
-    assert_instance_of Mistri::Providers::OpenAI, Mistri.provider("gpt-5.5", api_key: "k")
+    openai = Mistri.provider("gpt-5.6", api_key: "k")
+
+    assert_instance_of Mistri::Providers::OpenAI, openai
+    assert_equal "gpt-5.6", openai.model, "catalog aliases stay aliases on the wire"
     assert_instance_of Mistri::Providers::Gemini, Mistri.provider("gemini-2.5-flash", api_key: "k")
   end
 

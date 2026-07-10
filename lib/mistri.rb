@@ -71,7 +71,7 @@ module Mistri
   # reading its key from the environment unless one is passed.
   #
   #   Mistri.provider("claude-opus-4-8")
-  #   Mistri.provider("gpt-5.5", api_key: key, reasoning: { effort: "high" })
+  #   Mistri.provider("gpt-5.6", api_key: key, reasoning: { effort: "high" })
   def provider(model, api_key: nil, **)
     name = provider_name(model)
     klass = PROVIDERS.fetch(name) { raise ConfigurationError, "no provider for #{model.inspect}" }

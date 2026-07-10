@@ -216,6 +216,38 @@ class TestOpenAIAssembler < Minitest::Test
     refute_predicate flex.finish.usage.cost, :known?
   end
 
+  def test_usage_separates_cache_reads_and_writes_from_uncached_input
+    assembler = Mistri::Providers::OpenAI::Assembler.new(model: "gpt-5.6-luna")
+    assembler.feed({ "type" => "response.completed",
+                     "response" => {
+                       "status" => "completed",
+                       "service_tier" => "default",
+                       "usage" => {
+                         "input_tokens" => 1000,
+                         "input_tokens_details" => {
+                           "cached_tokens" => 400,
+                           "cache_write_tokens" => 300
+                         },
+                         "output_tokens" => 100
+                       }
+                     } })
+    usage = assembler.finish.usage
+    rates = Mistri::Models.rates("gpt-5.6-luna", usage:)
+
+    assert_equal 300, usage.input
+    assert_equal 400, usage.cache_read
+    assert_equal 300, usage.cache_write
+    assert_equal 1000, usage.prompt_tokens
+    assert_equal 1100, usage.total_tokens
+    assert_predicate usage.cost, :known?
+    assert_in_delta rates[:cache_write] * 300 / 1_000_000.0,
+                    usage.cost.cache_write, 1e-9
+    expected = ((rates[:input] * 300) + (rates[:cache_read] * 400) +
+                (rates[:cache_write] * 300) + (rates[:output] * 100)) / 1_000_000.0
+
+    assert_in_delta expected, usage.cost.total, 1e-9
+  end
+
   def test_long_context_usage_is_priced_at_the_higher_request_tier
     assembler = Mistri::Providers::OpenAI::Assembler.new(model: "gpt-5.5")
     assembler.feed({ "type" => "response.completed",

@@ -5,6 +5,11 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+- GPT-5.6 Sol, Terra, and Luna are catalogued with their 1.05M-token context,
+  128K-token output ceiling, and standard paid pricing above and below the
+  272K long-context boundary. The `gpt-5.6` alias resolves to Sol. OpenAI usage
+  now separates billable GPT-5.6 cache writes from uncached input, keeping
+  compaction, reported cost, and cost budgets accurate.
 - Directory workspaces reject existing symlinks in model-controlled paths and
   omit symlinked files from listings. In a stable, host-controlled tree, reads,
   writes, and deletes no longer follow a link outside the configured root.

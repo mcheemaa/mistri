@@ -37,8 +37,8 @@ module Mistri
     # separate inputTokenLimit and outputTokenLimit.
     #
     # Pricing is selected per request from its prompt size. Rates are paid
-    # standard direct-API list prices. cache_write is the 5-minute write rate;
-    # Usage applies the 1-hour rate separately.
+    # standard direct-API list prices. cache_write is the provider's baseline
+    # write rate; Usage prices a reported longer-retention slice separately.
     Model = Data.define(:id, :provider, :max_output, :context_window, :thinking) do
       def initialize(id:, provider:, max_output:, context_window:, thinking:, pricing: [])
         @pricing = pricing.sort_by(&:effective_at).freeze
@@ -114,6 +114,21 @@ module Mistri
        [price(input: 3.0, output: 15.0, cache_read: 0.3, cache_write: 3.75)]],
       ["claude-haiku-4-5", :anthropic, 64_000, 200_000, :budget,
        [price(input: 1.0, output: 5.0, cache_read: 0.1, cache_write: 1.25)]],
+      ["gpt-5.6-sol", :openai, 128_000, 1_050_000, :effort,
+       [price({ input: 5.0, output: 30.0, cache_read: 0.5, cache_write: 6.25 },
+              above: 272_000,
+              higher: { input: 10.0, output: 45.0, cache_read: 1.0,
+                        cache_write: 12.5 })]],
+      ["gpt-5.6-terra", :openai, 128_000, 1_050_000, :effort,
+       [price({ input: 2.5, output: 15.0, cache_read: 0.25, cache_write: 3.125 },
+              above: 272_000,
+              higher: { input: 5.0, output: 22.5, cache_read: 0.5,
+                        cache_write: 6.25 })]],
+      ["gpt-5.6-luna", :openai, 128_000, 1_050_000, :effort,
+       [price({ input: 1.0, output: 6.0, cache_read: 0.1, cache_write: 1.25 },
+              above: 272_000,
+              higher: { input: 2.0, output: 9.0, cache_read: 0.2,
+                        cache_write: 2.5 })]],
       ["gpt-5.5", :openai, 128_000, 1_050_000, :effort,
        [price({ input: 5.0, output: 30.0, cache_read: 0.5 },
               above: 272_000, higher: { input: 10.0, output: 45.0, cache_read: 1.0 })]],
@@ -137,10 +152,15 @@ module Mistri
       [id, Model.new(id:, provider:, max_output:, context_window:, thinking:, pricing:)]
     end.freeze
 
-    # Dated aliases resolve to their base entry: claude-opus-4-8-20260115 and
-    # gpt-5.4-2025-04-14 both match their base ids.
+    ALIASES = { "gpt-5.6" => "gpt-5.6-sol" }.freeze
+
+    # Published family aliases and dated ids resolve to their canonical entry.
     def self.find(id)
-      CATALOG[id] || CATALOG[id.to_s.sub(/-\d{8}\z/, "").sub(/-\d{4}-\d{2}-\d{2}\z/, "")]
+      exact = CATALOG[id]
+      return exact if exact
+
+      base = id.to_s.sub(/-\d{8}\z/, "").sub(/-\d{4}-\d{2}-\d{2}\z/, "")
+      CATALOG[ALIASES.fetch(base, base)]
     end
 
     def self.max_output(id) = find(id)&.max_output

@@ -232,8 +232,10 @@ module Mistri
           details = raw["input_tokens_details"] || {}
           output_details = raw["output_tokens_details"] || {}
           cache_read = details["cached_tokens"].to_i
-          Usage.new(input: [raw["input_tokens"].to_i - cache_read, 0].max,
-                    output: raw["output_tokens"].to_i, cache_read: cache_read,
+          cache_write = details["cache_write_tokens"].to_i
+          input = [raw["input_tokens"].to_i - cache_read - cache_write, 0].max
+          Usage.new(input:, output: raw["output_tokens"].to_i, cache_read:,
+                    cache_write:,
                     reasoning: output_details["reasoning_tokens"].to_i)
         end
 
