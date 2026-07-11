@@ -71,6 +71,52 @@ class TestSessionApprovalAudit < Minitest::Test # rubocop:disable Metrics/ClassL
     assert_rejected_history(session, /approved value is not true or false/)
   end
 
+  def test_history_entries_and_approval_calls_must_be_objects
+    non_object_entry = Mistri::Session.new(store: Mistri::Stores::Memory.new)
+    non_object_entry.store.append(non_object_entry.id, "not an entry")
+
+    non_object_call = Mistri::Session.new(store: Mistri::Stores::Memory.new)
+    append_assistant_call(non_object_call, "write-1")
+    raw_append(non_object_call, "approval_request", "call" => "not a call")
+
+    assert_rejected_history(non_object_entry, /entry that is not an object/)
+    assert_rejected_history(non_object_call, /invalid approval request/)
+  end
+
+  def test_approval_provenance_shapes_fail_closed
+    cases = {
+      invalid_marker: lambda do |call|
+        { "call" => call.to_h, "prepared_from" => "future" }
+      end,
+      invalid_source: lambda do |call|
+        { "call" => call.to_h, "source_call" => "not a call" }
+      end,
+      mismatched_prepared_call: lambda do |call|
+        prepared = call.to_h.merge("name" => "delete")
+        { "call" => prepared, "prepared_from" => "assistant" }
+      end
+    }
+
+    cases.each do |label, attributes|
+      session = Mistri::Session.new(store: Mistri::Stores::Memory.new)
+      append_assistant_call(session, "write-1")
+      durable_call = session.entries.last.dig("message", "content", 0)
+      raw_append(session, "approval_request", attributes.call(durable_call))
+
+      assert_rejected_history(session, /approval|prepared/, label)
+    end
+  end
+
+  def test_compaction_boundaries_must_be_nonnegative_integers
+    [-1, "1"].each do |kept_from|
+      session = Mistri::Session.new(store: Mistri::Stores::Memory.new)
+      session.append("compaction", "summary" => "summary", "kept_from" => kept_from,
+                                   "tokens_before" => 1)
+
+      assert_rejected_history(session, /invalid compaction boundary/, kept_from.inspect)
+    end
+  end
+
   def test_approval_requests_require_a_tool_use_assistant_turn
     [nil, Mistri::StopReason::STOP, Mistri::StopReason::ERROR,
      Mistri::StopReason::ABORTED, Mistri::StopReason::LENGTH,

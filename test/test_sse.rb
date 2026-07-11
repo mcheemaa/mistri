@@ -118,4 +118,25 @@ class TestSSE < Minitest::Test
     assert_equal :sse_numeric_token, error.kind
     assert_equal arguments::MAX_NUMBER_BYTES, error.limit
   end
+
+  def test_rejects_an_excessively_deep_record_before_json_parsing
+    arguments = Mistri.const_get(:ToolArguments, false)
+    depth = arguments::MAX_DEPTH + 2
+    opening = "[" * depth
+    closing = "]" * depth
+    record = "#{opening}0#{closing}"
+    parse_called = false
+    trace = TracePoint.new(:call) do |event|
+      json_parse = event.defined_class == JSON.singleton_class && event.method_id == :parse
+      parse_called = true if json_parse
+    end
+
+    error = assert_raises(Mistri::ResponseTooComplexError) do
+      trace.enable { Mistri::SSE.new.feed("data: #{record}\n") { flunk } }
+    end
+
+    assert_equal :sse_record_depth, error.kind
+    assert_equal arguments::MAX_DEPTH, error.limit
+    refute parse_called
+  end
 end

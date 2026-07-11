@@ -129,6 +129,24 @@ class TestToolExtension < Minitest::Test
     assert_predicate agent.session.messages.find(&:tool?), :tool_error?
   end
 
+  def test_duck_typed_tool_specs_must_be_objects_with_an_input_schema
+    cases = {
+      non_object: [nil, /spec must be a Hash/],
+      missing_schema: [{ name: "duck", description: "Duck tool." }, /needs input_schema/]
+    }
+
+    cases.each do |label, (spec, message)|
+      tool = DuckTool.new([])
+      tool.define_singleton_method(:spec) { spec }
+
+      error = assert_raises(Mistri::ConfigurationError, label.to_s) do
+        Mistri::Agent.new(provider: Mistri::Providers::Fake.new, tools: [tool])
+      end
+
+      assert_match message, error.message, label
+    end
+  end
+
   def test_tool_subclass_cannot_override_the_agent_core_contract
     subclass = Class.new(Mistri::Tool) do
       def prepared_argument_violations(_arguments) = []

@@ -50,5 +50,7 @@ class TestErrors < Minitest::Test
     assert_equal :sse_record_nodes, error.kind
     assert_equal 10_000, error.limit
     assert_equal "sse record nodes exceeded the complexity limit (10000)", error.message
+    assert_equal({ "type" => "ResponseTooComplexError", "kind" => "sse_record_nodes",
+                   "limit" => 10_000 }, Mistri::ErrorData.for(error))
   end
 end

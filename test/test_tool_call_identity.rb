@@ -186,23 +186,31 @@ class TestToolCallIdentity < Minitest::Test
   end
 
   def test_invalid_provider_call_ids_reject_the_whole_live_attempt
-    ran = false
-    tool = Mistri::Tool.define("write", "Write once.") do
-      ran = true
-      "written"
+    cases = {
+      non_string: [7, /must be strings/],
+      invalid_utf8: ["\xFF".b.force_encoding(Encoding::UTF_8), /must be valid UTF-8/],
+      blank: [" ", /must not be blank/]
+    }
+
+    cases.each do |label, (provider_call_id, message)|
+      ran = false
+      tool = Mistri::Tool.define("write", "Write once.") do
+        ran = true
+        "written"
+      end
+      turns = [{ tool_calls: [
+        { id: "internal", provider_call_id:, name: "write", arguments: {} }
+      ] }]
+      provider = Mistri::Providers::Fake.new(turns:)
+
+      agent = Mistri::Agent.new(provider:, tools: [tool], retries: nil)
+      result = agent.run("go")
+
+      assert_predicate result, :errored?, label
+      assert_match message, result.message.error_message, label
+      refute ran, label
+      assert_empty agent.session.messages.flat_map(&:tool_calls), label
     end
-    turns = [{ tool_calls: [
-      { id: "internal", provider_call_id: " ", name: "write", arguments: {} }
-    ] }]
-    provider = Mistri::Providers::Fake.new(turns:)
-
-    agent = Mistri::Agent.new(provider:, tools: [tool], retries: nil)
-    result = agent.run("go")
-
-    assert_predicate result, :errored?
-    assert_match(/provider tool call IDs must not be blank/, result.message.error_message)
-    refute ran
-    assert_empty agent.session.messages.flat_map(&:tool_calls)
   end
 
   def test_invalid_signatures_reject_the_whole_live_attempt
