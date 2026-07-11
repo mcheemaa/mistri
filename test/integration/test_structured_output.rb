@@ -39,4 +39,27 @@ class TestStructuredOutputIntegration < Minitest::Test
     assert_equal degrees, result.output["temperature_c"],
                  "the answer must carry the tool's exact reading"
   end
+
+  Integration.scenario(self, :scalar_and_tuple_tasks_survive_provider_schema_differences) do |model|
+    scalar = Integration.codename
+    scalar_result = Mistri::Agent.new(provider: Mistri.provider(model)).task(
+      "Return the exact JSON string #{scalar.inspect}.",
+      schema: { type: "string", enum: [scalar] }
+    )
+
+    tuple_value = Integration.codename
+    tuple_schema = {
+      type: "array",
+      prefixItems: [{ type: "string", enum: [tuple_value] },
+                    { type: "integer", enum: [37] }],
+      items: false
+    }
+    tuple_result = Mistri::Agent.new(provider: Mistri.provider(model)).task(
+      "Return a JSON array containing exactly #{tuple_value.inspect} and 37.",
+      schema: tuple_schema
+    )
+
+    assert_equal scalar, scalar_result.output
+    assert_equal [tuple_value, 37], tuple_result.output
+  end
 end

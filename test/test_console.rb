@@ -54,6 +54,31 @@ class TestConsole < Minitest::Test
     assert_match(/Looking it up\./, output)
   end
 
+  def test_read_agent_preserves_non_object_and_invalid_tool_arguments
+    store = Mistri::Stores::Memory.new
+    parent = Mistri::Session.new(store:)
+    worker = link(parent, store, "Setter")
+    worker.append_message(
+      Mistri::Message.assistant(tool_calls: [
+                                  Mistri::ToolCall.new(id: "null", name: "null_call",
+                                                       arguments: nil),
+                                  Mistri::ToolCall.new(id: "false", name: "false_call",
+                                                       arguments: false),
+                                  Mistri::ToolCall.new(id: "bad", name: "bad_call", arguments: nil,
+                                                       arguments_error: "invalid_json")
+                                ])
+    )
+
+    output = Mistri::Console.read_agent.call({ "agent" => "Setter" }, context_for(parent))
+
+    assert_includes output, "null_call(null)"
+    assert_includes output, "false_call(false)"
+    assert_includes output,
+                    'bad_call({"arguments":null,"arguments_error":"invalid_json"})'
+    refute_includes output, "null_call({})"
+    refute_includes output, "false_call({})"
+  end
+
   def test_list_agents_shows_every_worker_with_status
     _store, parent, = setup_family
     output = Mistri::Console.list_agents.call({}, context_for(parent))

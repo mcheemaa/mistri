@@ -88,4 +88,34 @@ class TestSSE < Minitest::Test
       assert_equal "max_record_bytes: must be a positive integer", error.message
     end
   end
+
+  def test_rejects_a_structurally_wide_record_before_json_parsing
+    arguments = Mistri.const_get(:ToolArguments, false)
+    line = "data: [#{Array.new(20_002, "0").join(",")}]"
+    parse_called = false
+    trace = TracePoint.new(:call) do |event|
+      json_parse = event.defined_class == JSON.singleton_class && event.method_id == :parse
+      parse_called = true if json_parse
+    end
+
+    error = assert_raises(Mistri::ResponseTooComplexError) do
+      trace.enable { Mistri::SSE.new.feed("#{line}\n") { flunk } }
+    end
+
+    assert_equal :sse_record_tokens, error.kind
+    assert_equal arguments::MAX_LEXICAL_TOKENS, error.limit
+    refute parse_called
+  end
+
+  def test_rejects_an_oversized_numeric_token_before_json_parsing
+    arguments = Mistri.const_get(:ToolArguments, false)
+    number = "1" * (arguments::MAX_NUMBER_BYTES + 1)
+
+    error = assert_raises(Mistri::ResponseTooComplexError) do
+      Mistri::SSE.new.feed("data: {\"value\":#{number}}\n") { flunk }
+    end
+
+    assert_equal :sse_numeric_token, error.kind
+    assert_equal arguments::MAX_NUMBER_BYTES, error.limit
+  end
 end

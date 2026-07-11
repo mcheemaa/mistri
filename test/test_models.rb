@@ -224,6 +224,9 @@ class TestModels < Minitest::Test
     refute body.key?("service_tier"), "catalog pricing must not choose host policy"
     assert_equal "standard_only", standard_body["service_tier"]
     assert_equal({ "type" => "adaptive", "display" => "summarized" }, body["thinking"])
+    assert_equal :start, seen.first.type
+    assert_predicate seen.first.partial, :assistant?
+    assert_equal :anthropic, seen.first.partial.provider
   ensure
     automatic&.close
     standard&.close
@@ -242,13 +245,16 @@ class TestModels < Minitest::Test
     standard = Mistri::Providers::OpenAI.new(api_key: "test", origin: server.origin,
                                              catalog_pricing: true, service_tier: "default")
 
-    automatic.stream(messages: [Mistri::Message.user("hi")])
+    seen = []
+    automatic.stream(messages: [Mistri::Message.user("hi")]) { |event| seen << event }
     standard.stream(messages: [Mistri::Message.user("hi")])
     automatic_body, standard_body = server.requests.map { |request| JSON.parse(request[:body]) }
 
     assert_equal "gpt-5.5", automatic_body["model"], "the public provider default stays stable"
     refute automatic_body.key?("service_tier"), "catalog pricing must not choose host policy"
     assert_equal "default", standard_body["service_tier"]
+    assert_equal :start, seen.first.type
+    assert_equal :openai, seen.first.partial.provider
   ensure
     automatic&.close
     standard&.close
@@ -267,12 +273,15 @@ class TestModels < Minitest::Test
     priority = Mistri::Providers::Gemini.new(api_key: "test", origin: server.origin,
                                              catalog_pricing: true, service_tier: "priority")
 
-    automatic.stream(messages: [Mistri::Message.user("hi")])
+    seen = []
+    automatic.stream(messages: [Mistri::Message.user("hi")]) { |event| seen << event }
     priority.stream(messages: [Mistri::Message.user("hi")])
     automatic_body, priority_body = server.requests.map { |request| JSON.parse(request[:body]) }
 
     refute automatic_body.key?("serviceTier"), "catalog pricing must not choose host policy"
     assert_equal "priority", priority_body["serviceTier"]
+    assert_equal :start, seen.first.type
+    assert_equal :gemini, seen.first.partial.provider
   ensure
     automatic&.close
     priority&.close

@@ -26,7 +26,7 @@ class TestOpenAISerializer < Minitest::Test
       ],
       tool_calls: [Mistri::ToolCall.new(id: "call_1", name: "search",
                                         arguments: { "q" => "ruby" }, signature: "fc_1")],
-      stop_reason: :tool_use
+      provider: :openai, stop_reason: :tool_use
     )
     history = [Mistri::Message.user("go"), assistant,
                Mistri::Message.tool(content: "found it", tool_call_id: "call_1")]
@@ -51,6 +51,18 @@ class TestOpenAISerializer < Minitest::Test
                  item)
   end
 
+  def test_invalid_or_non_object_tool_arguments_replay_as_objects
+    invalid = Mistri::ToolCall.new(id: "bad", name: "inspect", arguments: nil,
+                                   arguments_error: "invalid_json", signature: "fc_bad")
+    scalar = Mistri::ToolCall.new(id: "scalar", name: "inspect", arguments: 7)
+
+    invalid_item = SERIALIZER.function_call_item(invalid)
+
+    assert_equal "{}", invalid_item[:arguments]
+    refute invalid_item.key?(:id), "a changed placeholder cannot retain the provider item ID"
+    assert_equal "7", SERIALIZER.function_call_item(scalar)[:arguments]
+  end
+
   def test_a_reasoning_item_missing_encrypted_content_is_dropped
     bare = { "type" => "reasoning", "id" => "rs_1", "summary" => [] }
     thinking = Mistri::Content::Thinking.new(thinking: "", signature: JSON.generate(bare))
@@ -64,6 +76,19 @@ class TestOpenAISerializer < Minitest::Test
     items = SERIALIZER.input_items([Mistri::Message.assistant(content: [anthropic_thinking])])
 
     assert_empty items
+  end
+
+  def test_foreign_pairing_signatures_never_reach_the_responses_wire
+    call = Mistri::ToolCall.new(id: "gemini-call", name: "search", arguments: {},
+                                signature: "gemini-signature")
+    message = Mistri::Message.assistant(
+      content: [Mistri::Content::Text.new(text: "Searching.", signature: "gemini-text"), call],
+      provider: :gemini
+    )
+
+    items = SERIALIZER.input_items([message])
+
+    refute(items.any? { |item| item.key?(:id) })
   end
 
   def test_images_ride_as_data_urls

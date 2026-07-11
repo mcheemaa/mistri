@@ -37,14 +37,37 @@ module Mistri
     COMMITTED = Object.new.freeze
     private_constant :COMMITTED
 
+    PreparedContext = Class.new(ToolContext) do
+      def arguments_prepared? = true
+    end
+    private_constant :PreparedContext
+
     module_function
 
     def call(calls, tools_by_name, signal: nil, max_concurrency: 4, session: nil, emit: nil,
              app: nil)
+      call_with_outcomes(
+        calls,
+        tools_by_name,
+        signal:,
+        max_concurrency:,
+        session:,
+        emit:,
+        app:,
+        prepared_arguments: false
+      ).map { |call, result, seconds, _committed| [call, result, seconds] }
+    end
+
+    # Agent prepares model arguments before approval and execution. This
+    # lower-level form preserves that boundary and exposes commitment so hooks
+    # cannot run for queued calls that an abort prevented from starting.
+    def call_with_outcomes(calls, tools_by_name, signal: nil, max_concurrency: 4, session: nil,
+                           emit: nil, app: nil, prepared_arguments: false)
       return [] if calls.empty?
 
-      context = ToolContext.new(session: session, signal: signal, emit: thread_safe(emit, signal),
-                                app: app)
+      context_class = prepared_arguments ? PreparedContext : ToolContext
+      context = context_class.new(session: session, signal: signal,
+                                  emit: thread_safe(emit, signal), app: app)
       results = Array.new(calls.length)
       queue = Queue.new
       errors = Queue.new
@@ -58,9 +81,9 @@ module Mistri
 
       calls.each_with_index.map do |call, index|
         entry = results[index]
-        entry = [failure(OUTCOME_UNKNOWN), nil] if entry.equal?(COMMITTED)
-        value, seconds = entry || [failure(INTERRUPTED), nil]
-        [call, value, seconds]
+        entry = [failure(OUTCOME_UNKNOWN), nil, true] if entry.equal?(COMMITTED)
+        value, seconds, committed = entry || [failure(INTERRUPTED), nil, false]
+        [call, value, seconds, committed]
       end
     end
 
@@ -75,7 +98,7 @@ module Mistri
             break
           end
           if context.signal&.aborted?
-            results[index] = [failure(INTERRUPTED), nil]
+            results[index] = [failure(INTERRUPTED), nil, false]
             next
           end
 
@@ -88,12 +111,12 @@ module Mistri
 
     def run_one(call, index, results, tools_by_name, context)
       tool = tools_by_name[call.name]
-      return [failure("Error: unknown tool #{call.name.inspect}"), nil] unless tool
+      return [failure("Error: unknown tool #{call.name.inspect}"), nil, false] unless tool
 
-      return [failure(INTERRUPTED), nil] unless commit(call, context)
+      return [failure(INTERRUPTED), nil, false] unless commit(call, context)
 
       results[index] = COMMITTED
-      invoke_one(tool, call, context)
+      [*invoke_one(tool, call, context), true]
     end
 
     def invoke_one(tool, call, context)
@@ -115,7 +138,9 @@ module Mistri
     def invoke(tool, call, context)
       return tool.call(call.arguments, context) unless tool.timeout
 
-      Timeout.timeout(tool.timeout, InvocationTimeout) { tool.call(call.arguments, context) }
+      Timeout.timeout(tool.timeout, InvocationTimeout) do
+        tool.call(call.arguments, context)
+      end
     end
 
     def commit(call, context)

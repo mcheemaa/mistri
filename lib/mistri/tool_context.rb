@@ -15,8 +15,10 @@ module Mistri
   #
   #   agent = Mistri.agent("claude-opus-4-8", tools: tools,
   #                        context: { traveler: current_traveler })
-  #   Mistri::Tool.define("book_hotel", "Books the chosen hotel.") do |args, context|
-  #     Bookings.create(args, traveler: context.app[:traveler])
+  #   Mistri::Tool.define("book_hotel", "Books the chosen hotel.", schema: -> {
+  #     string :hotel_id, "Hotel ID", required: true
+  #   }) do |args, context|
+  #     Bookings.create(args.fetch("hotel_id"), traveler: context.app[:traveler])
   #   end
   ToolContext = Data.define(:session, :signal, :emit, :app) do
     def initialize(session: nil, signal: nil, emit: nil, app: nil)

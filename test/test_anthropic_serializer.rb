@@ -46,13 +46,32 @@ class TestAnthropicSerializer < Minitest::Test
     assert blocks.last[:is_error]
   end
 
+  def test_invalid_or_non_object_tool_arguments_replay_as_objects
+    invalid = Mistri::ToolCall.new(id: "bad", name: "inspect", arguments: nil,
+                                   arguments_error: "invalid_json")
+    scalar = Mistri::ToolCall.new(id: "scalar", name: "inspect", arguments: 7)
+
+    assert_equal({}, SERIALIZER.block(invalid)[:input])
+    assert_equal({}, SERIALIZER.block(scalar)[:input])
+  end
+
   def test_thinking_replays_with_signature_and_redacted_as_opaque_data
     thinking = Mistri::Content::Thinking.new(thinking: "why", signature: "sig")
     redacted = Mistri::Content::Thinking.new(thinking: "", signature: "opaque", redacted: true)
-    wire = SERIALIZER.message(Mistri::Message.assistant(content: [thinking, redacted]))
+    wire = SERIALIZER.message(Mistri::Message.assistant(content: [thinking, redacted],
+                                                        provider: :anthropic))
 
     assert_equal({ type: "thinking", thinking: "why", signature: "sig" }, wire[:content][0])
     assert_equal({ type: "redacted_thinking", data: "opaque" }, wire[:content][1])
+  end
+
+  def test_foreign_thinking_signatures_never_reach_the_messages_wire
+    thinking = Mistri::Content::Thinking.new(thinking: "why", signature: "foreign")
+    redacted = Mistri::Content::Thinking.new(thinking: "", signature: "opaque", redacted: true)
+    wire = SERIALIZER.message(Mistri::Message.assistant(content: [thinking, redacted],
+                                                        provider: :gemini))
+
+    assert_equal [{ type: "text", text: "why" }], wire[:content]
   end
 
   def test_cache_marks_the_system_tail_and_the_last_user_turn

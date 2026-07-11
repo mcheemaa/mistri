@@ -5,6 +5,131 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+- Model-originated tool calls now cross a local execution boundary rather than
+  relying on provider guidance alone. Completed calls deeply own immutable JSON,
+  canonicalize symbol keys without coercing values, retain malformed encoded
+  input as a durable `arguments_error`, and stop at 8 MiB, 64 levels, 10,000
+  nodes, or a 64 KiB numeric token. The same numeric bound applies to encoded
+  JSON and programmatic custom-provider arguments. The Agent requires an object
+  argument envelope before `before_tool`, approval predicates, `ends_turn`,
+  handlers, or remote MCP calls. Invalid calls receive a bounded typed result in
+  band, emit no execution-start event, expose no received field values in core
+  errors, and do not prevent valid siblings from running. Results settled in
+  the same phase return in model-call order.
+  Completed tool-call IDs, names, signatures, and provider correlation IDs must
+  be non-empty UTF-8 strings. Internal IDs are unique for the session, and
+  provider correlation IDs are unique within one assistant turn. A malformed
+  call envelope or a non-assistant provider result rejects the whole provider
+  attempt before persistence, policy, or execution. The normal provider retry
+  contract retries unchanged history; exhaustion persists a pairable error with
+  no tool calls. An abort during normalization, validation, policy, or approval
+  evaluation interrupts every uncommitted call and parks no approval. Custom
+  providers that emitted missing, blank, non-string, non-UTF-8, or duplicate
+  identifiers must correct their completed call contract. Each run or resume
+  validates every persisted message and audits call identity in one control-state
+  preflight before doing work, so malformed legacy history fails closed. The
+  preceding assistant entry remains the durable provider source; a normalized
+  approval stores the reviewed prepared call plus an explicit provenance
+  marker. Resume verifies pairing metadata and revalidates the exact approved
+  arguments without rerunning the normalizer. Requests must follow the exact
+  assistant call, decisions must follow one request and carry an exact boolean,
+  and duplicate or late control records fail closed. Legacy requests remain
+  valid only when they exactly mirror the source call.
+  Persisted tool results require one prior call with the exact name, settle in
+  assistant-call order within each direct or approval phase, and cannot cross
+  an unresolved approval; compaction may neither hide an open approval nor
+  split a completed call from its result.
+  `ToolCall#arguments_error?` is stable; its non-nil string remains an opaque
+  diagnostic rather than a public enum. Fake-provider default call IDs now use
+  a per-provider UUID namespace plus a monotonic sequence; explicitly scripted
+  `id:` values remain deterministic. New approval entries no longer duplicate
+  the source argument payload, and generated MySQL-family session tables use
+  LONGTEXT so a legal parallel tool turn is not constrained by MEDIUMTEXT's
+  16 MiB ceiling. Existing MySQL-family stores must migrate `payload` to
+  `size: :long`; generators cannot alter an installed table. `Stores::Memory`
+  owns durable appends while returning fresh mutable snapshots, matching stores
+  that decode each read.
+- Tool schemas compile once into the same deeply frozen canonical UTF-8 JSON
+  value used by provider serializers, so mutation and Ruby encoding cannot make
+  local validation disagree with the wire. Definition checks cover the complete
+  schema document. The zero-dependency runtime subset enforces JSON types and
+  unions, `enum`, `required`, `properties`, `prefixItems`, one-schema `items`,
+  boolean schemas, and boolean or schema-valued `additionalProperties`.
+  `argument_validator:` adds domain rules without weakening core;
+  `complete_argument_validator:` is separate explicit authority for every
+  non-empty `patternProperties` contract. Tool inputs use
+  JSON Schema 2020-12 and require an object root; legacy array-form `items` is
+  rejected in favor of `prefixItems`. A schema-less Tool is now a genuinely
+  closed no-argument contract; hosts that accepted model fields without
+  declaring them must add an explicit schema. Supplied object schemas preserve
+  JSON Schema's default-open semantics unless a raw schema explicitly sets
+  `additionalProperties: false`; handlers should extract named fields instead
+  of mass-assigning model input. MCP bridging requires the complete validator
+  for every unimplemented standard constraint or applicator, rejects external
+  references and explicit `inputSchema: null`, and still defaults an omitted
+  schema to a no-argument object. Common map schemas work in core. Task mode
+  rejects assertions and required vocabularies local validation cannot guarantee
+  before making a provider request, then shares one deeply frozen strict schema
+  between its prompt and compiled local validator.
+  Providers derive a native constraint only for schema shapes their documented
+  and live-verified subsets accept; incompatible shapes fall back to the prompt
+  and local correction loop instead of failing the request. Native constraints
+  are limited to catalogued matching-provider models and documented provider
+  complexity ceilings; unknown models keep the local path. Raw task output is
+  byte-bounded, then lexically
+  width/depth-bounded before JSON parsing so wide hostile JSON is rejected
+  before parser allocation. A Tool-owned `argument_normalizer:` remains the
+  explicit compatibility seam and runs once before validation; approved calls
+  persist that canonical value and revalidate against the current schema on
+  resume without renormalizing or reevaluating approval. `edit_file` declares
+  its existing alias and string-boolean tolerance through that seam and rejects
+  alias collisions. Provider replay substitutes `{}` only as the wire placeholder
+  for an already rejected call, paired with its error result. Direct `Tool#call`
+  remains a trusted host path and skips Agent validation. Task output now uses
+  the same JSON resource limits. This is minor-release behavior for hosts whose
+  policy or handlers previously received malformed values, whose custom
+  validators relied on implicit full-schema authority, or whose code mutated or
+  indexed a Tool's raw schema with symbol keys. `Schema.strict` results are now
+  deeply frozen, and `Tool.define` raises when both `input_schema:` and `schema:`
+  are supplied instead of silently choosing one. Definition compilation is paid
+  once; a completed call adds one bounded ownership pass and one compiled schema
+  traversal, plus ownership only when a normalizer replaces the value. Streaming
+  tool snapshots deep-freeze each newly refreshed bounded preview once; deltas
+  that reuse the cached preview are O(1), and pairing strings are copied.
+  Completed call envelope verification is one linear pass over that turn's
+  calls. Run and resume add one linear control-state read of the session log to
+  seed O(1) identity checks. Encoded Anthropic/OpenAI arguments and task text add
+  one linear lexical scan before JSON parsing; it is off the token-delta path. A
+  normalized approval adds only a small provenance marker. Structured
+  output request building adds one bounded schema ownership pass; task plans
+  compile their local validator once, with no added work on token streaming.
+  Arguments are now deeply frozen before hooks and handlers; hosts that mutated
+  model-supplied hashes or arrays must copy them first.
+- Provider replay now keeps opaque state with its provider of origin. Gemini
+  sends tool schemas through `parametersJsonSchema`, preserves each signed part
+  boundary, and returns Google's function-call ID exactly when one was supplied;
+  legacy calls without a wire ID get a collision-safe internal ID without
+  mutating the signed provider part. On pre-3 Gemini turns, an earlier gated
+  same-name/no-ID call is rejected in band if a later sibling would answer
+  first; Gemini 3 wire IDs retain out-of-order pairing. A MAX_TOKENS turn never
+  executes a returned call. OpenAI treats a missing completed `arguments` field
+  as malformed instead of executing `{}`. Anthropic and OpenAI no longer place
+  another provider's signatures on their wire. These replay checks add constant
+  metadata work per completed block. Terminal records now fence later known
+  content for all three providers. Anthropic enforces
+  sequential and open content-block indexes plus the delta kind expected by the
+  open block. OpenAI enforces one open output item, its kind, any present item or
+  output-index correlation, and terminal event/status agreement. Unknown future
+  event types remain ignorable. The checks add only constant primitive
+  comparisons per known delta, with no parsing, copying, or I/O.
+  Completed foreign tool exchanges project to neutral text when a session
+  moves to Gemini, preserving the result without manufacturing a Gemini
+  function call that lacks Google's thought signature.
+  Real providers now emit the same initial `:start` snapshot as the Fake, and
+  every opened text, thinking, or tool-call block emits its matching end before
+  a terminal failure. Interrupted tool calls remain explicitly incomplete and
+  are stripped before Agent persistence; interrupted Anthropic thinking never
+  replays a partial signature.
 - Tool execution now emits `:tool_started` when each resolved call commits to
   invocation and carries a structured failure fact end to end. A handler may
   return `ToolResult(error: true)`; unknown tools, policy blocks,
@@ -12,12 +137,12 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   hooks, healed dangling calls, and MCP `isError` results set it automatically.
   The flag is sticky through `after_tool` rewrites, so changing error text
   cannot relabel a failed operation as successful. `Event#tool_error` is always
-  true or false on `:tool_result`; new tool messages persist the same value, and legacy
-  messages without it remain unknown and replay with the historical unmarked
-  provider shape. Human approval denial remains a normal control outcome rather
-  than an execution error. Anthropic receives
-  `is_error: true`; Gemini receives the documented `error` function-response
-  key; OpenAI retains textual output because its function-call output has no
+  true or false on `:tool_result`; new tool messages persist the same value, and
+  legacy messages without it remain unknown and replay with the historical
+  unmarked provider shape. Human approval denial remains a normal control
+  outcome rather than an execution error. Anthropic receives `is_error: true`;
+  Gemini receives the documented `error` function-response key; OpenAI retains
+  textual output because its function-call output has no
   execution-error member. Error text is not classified by prefix, and an error
   bit never authorizes a mechanical replay because a side effect may already
   have happened; the model may still choose a new call, so hosts retain
@@ -27,14 +152,15 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   sink event per committed call. Partial streaming Event construction adds two
   primitive checks and one immutable nil slot; partial Message construction
   adds one nil check and one immutable nil slot, with no parsing, buffering,
-  I/O, or string work;
-  tool batches add one sentinel write at commitment and one identity check per
-  result so a hard worker exit distinguishes started calls from untouched queue
-  entries; same-batch ordering adds one short-lived identity map and a linear
-  post-join pass, plus a second identity map only when `after_tool` is configured;
+  I/O, or string work. Tool batches add one sentinel write at commitment and one
+  identity check per result so a hard worker exit distinguishes started calls
+  from untouched queue entries; same-batch ordering adds one short-lived
+  identity map and a linear post-join pass, plus a second identity map only when
+  `after_tool` is configured;
   starts arrive on serialized worker-thread callbacks, while same-batch results
-  still emit in model-call order after the batch joins. `:tool_started` and handler-progress
-  subscriber exceptions propagate and never become tool failures.
+  still emit in model-call order after the batch joins. `:tool_started` and
+  handler-progress subscriber exceptions propagate and never become tool
+  failures.
   Unknown, blocked, denied, queued, and pre-invocation interrupted calls add no
   start event.
 - A blockless nested object in the tool-schema DSL now declares a freeform JSON
@@ -59,8 +185,24 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   child, and requires a clean handshake before the next operation. Explicitly
   closing and reusing an MCP client also clears its session, negotiated
   protocol version, and server information before the fresh handshake.
-  The hot path adds one byte-count addition and comparison per JSON socket
-  fragment or SSE line fragment, with no per-token work.
+  Each completed SSE record also receives a bounded 20,001-token lexical
+  preflight, derived from the 10,000-node canonical limit, plus depth and 64 KiB
+  numeric-token ceilings before JSON parsing. A distinct
+  `ResponseTooComplexError` preserves the exact boundary and bounds Gemini
+  argument allocation inside its enclosing record. Either size or complexity
+  overflow resets an MCP wire and its negotiated session. An unconfirmed
+  `tools/call` outcome becomes ambiguous and is never replayed; a matching result
+  received before an invalid trailing SSE record remains authoritative, while
+  the next operation still performs a fresh handshake. Fragmented Anthropic and
+  OpenAI tool arguments also carry an aggregate 8 MiB cap across SSE records.
+  Their live partial preview stops reparsing after a bounded 64 KiB schedule
+  while raw delta events continue unchanged; OpenAI's completed item remains
+  authoritative. Fragmented Anthropic thinking
+  signatures stop immediately at the same aggregate ceiling rather than
+  growing quadratically or replaying a truncated opaque value.
+  The hot path adds one byte-count addition and comparison per JSON socket or SSE
+  line fragment, then one bounded linear lexical pass over each completed SSE
+  record before the provider's existing JSON parse.
 - Remote MCP and server-side OAuth requests now default to public HTTPS and
   direct connections. Every DNS answer is checked against the IANA
   special-purpose registries, including embedded NAT64 destinations; one unsafe
@@ -112,17 +254,31 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   PROHIBITED_CONTENT, SPII, the image verdicts) and blocked prompts
   (promptFeedback.blockReason, which previously read as a retryable
   truncated stream) fail fast as Mistri::InvalidRequestError with the
-  wire word in the message; its model fumbles and unknown stops
+  wire word in the message. MISSING_THOUGHT_SIGNATURE is a deterministic input
+  failure; its model fumbles and incomplete sentinels
   (MALFORMED_FUNCTION_CALL, UNEXPECTED_TOOL_CALL, TOO_MANY_TOOL_CALLS,
-  NO_IMAGE, and the catch-all OTHER pair, documented as unknown reasons
-  rather than rulings) error retryably. Anthropic's refusal
+  MALFORMED_RESPONSE, FINISH_REASON_UNSPECIFIED, NO_IMAGE, and the catch-all
+  OTHER pair, documented as unknown reasons rather than rulings) error retryably.
+  Anthropic's refusal
   stop reason fails fast carrying stop_details' category and explanation
   (the API's guidance is a different model, never a same-model retry),
   and model_context_window_exceeded maps to :length per its guidance.
-  OpenAI's incomplete_details content_filter fails fast instead of
-  reading as a completed answer. Partial content stays on the errored
-  message for hosts to show. Undocumented future stop reasons still
-  tolerate as clean stops, unchanged.
+  OpenAI's incomplete_details content_filter and structured-output refusal
+  parts or deltas fail fast instead of reading as a completed answer; unknown
+  incomplete reasons retry rather than becoming clean stops. Partial content
+  stays on the errored message for hosts to show. Genuinely undocumented future
+  Gemini stop reasons still tolerate as clean stops, unchanged. Anthropic and
+  OpenAI top-level stream errors now classify documented authentication,
+  request/policy, rate-limit, timeout, overload, and server failures by their
+  wire code rather than retrying deterministic 4xx errors.
+- Active session execution is not yet leased. Store appends from approvals,
+  steers, and reports remain concurrency-safe, but hosts must allow only one
+  `run` or `resume` at a time for a session. Even with one runner, a crash,
+  result-store failure, or subscriber exception after invocation but before
+  result persistence can leave an approved call open for at-least-once
+  re-execution. Simultaneous runners widen the same risk. Hosts must use
+  idempotency/reconciliation across that commit gap; durable atomic claiming is
+  the next synchronization feature, not simulated by a local mutex.
 - Sinks::Coalesced is origin-aware and thread-safe: a background worker's
   deltas no longer merge into the parent's (or another worker's) event at
   the same content index, and concurrent emitters serialize on an

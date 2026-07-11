@@ -89,6 +89,50 @@ class TestFakeProvider < Minitest::Test
     assert_equal html, htmls.last, "the final delta's partial already reads complete"
   end
 
+  def test_generated_tool_call_ids_are_unique_across_turns
+    turns = [
+      { tool_calls: [
+        { name: "first", arguments: {} },
+        { name: "second", arguments: {} }
+      ] },
+      { tool_calls: [{ name: "third", arguments: {} }] }
+    ]
+    provider = Mistri::Providers::Fake.new(turns:)
+
+    ids = [*provider.stream.tool_calls, *provider.stream.tool_calls].map(&:id)
+    fresh = Mistri::Providers::Fake.new(
+      turns: [{ tool_calls: [{ name: "fresh", arguments: {} }] }]
+    ).stream.tool_calls.first.id
+    sequences = ids.map { |id| id.split("_").last }
+
+    assert_equal 3, ids.uniq.length
+    assert_equal %w[1 2 3], sequences
+    refute_includes ids, fresh, "a fresh fake may resume the same durable session"
+  end
+
+  def test_tool_calls_preserve_non_object_arguments_and_omission
+    values = [nil, false, 7, "text", [1, { x: true }]]
+    turns = values.map { |value| { tool_calls: [{ name: "inspect", arguments: value }] } }
+    turns << { tool_calls: [{ name: "inspect" }] }
+    provider = Mistri::Providers::Fake.new(turns: turns)
+
+    calls = turns.map { provider.stream.tool_calls.first }
+
+    assert_equal [nil, false, 7, "text", [1, { "x" => true }], {}], calls.map(&:arguments)
+    assert(calls.all? { |call| call.arguments_error.nil? })
+  end
+
+  def test_tool_calls_can_script_a_malformed_provider_payload
+    turn = { tool_calls: [{ name: "inspect", arguments: { "secret" => "discard" },
+                            arguments_error: "invalid_json" }] }
+    provider = Mistri::Providers::Fake.new(turns: [turn])
+
+    call = provider.stream.tool_calls.first
+
+    assert_nil call.arguments
+    assert_equal "invalid_json", call.arguments_error
+  end
+
   private
 
   def deltas(events, type)

@@ -84,8 +84,7 @@ class TestSubAgent < Minitest::Test
 
     answer = agent.session.messages.select(&:tool?).last.text
 
-    assert_includes answer, 'unknown tool "nope"'
-    assert_includes answer, "lookup"
+    assert_includes answer, "$.tools[0] must match enum"
   end
 
   def test_parallel_fan_out_runs_both_children
@@ -120,7 +119,8 @@ class TestSubAgent < Minitest::Test
 
   def test_a_runtime_suspended_child_is_denied_and_reported
     risky = Mistri::Tool.define("pay", "Pays.",
-                                needs_approval: ->(args) { args["amount"].to_i > 10 }) { "paid" }
+                                needs_approval: ->(args) { args["amount"].to_i > 10 },
+                                schema: -> { integer :amount, "Amount", required: true }) { "paid" }
     child_fake = fake({ tool_calls: [{ name: "pay", arguments: { "amount" => 50 } }] })
     worker = Mistri::SubAgent.new(name: "worker", description: "Works.",
                                   provider: child_fake, tools: [risky])
@@ -174,7 +174,8 @@ class TestSubAgent < Minitest::Test
     agent.run("go")
 
     assert_equal '{"year":1912}', agent.session.messages.select(&:tool?).last.text
-    assert_equal schema, child_fake.requests.first[:options][:output_schema]
+    assert_equal Mistri::Schema.strict(schema),
+                 child_fake.requests.first[:options][:output_schema]
   end
 
   def test_an_errored_child_reports_in_band
@@ -206,13 +207,12 @@ class TestSubAgent < Minitest::Test
 
     answer = agent.session.messages.select(&:tool?).last.text
 
-    assert_includes answer, "not allowed"
-    assert_includes answer, "claude-haiku-4-5-20251001"
+    assert_includes answer, "$.model must match enum"
   end
 
   def test_without_an_allowlist_the_spawner_offers_no_model_choice
     spawn = Mistri::SubAgent.spawner(provider: fake)
-    properties = spawn.spec[:input_schema][:properties]
+    properties = spawn.spec[:input_schema]["properties"]
 
     refute properties.key?("model"), "no allowlist means no model surface at all"
   end
@@ -263,10 +263,10 @@ class TestSubAgent < Minitest::Test
 
   def test_the_model_surface_names_the_default_child_model
     spawn = Mistri::SubAgent.spawner(provider: fake, models: ["claude-haiku-4-5-20251001"])
-    properties = spawn.spec[:input_schema][:properties]
+    properties = spawn.spec[:input_schema]["properties"]
 
     assert properties.key?("name"), "the worker name surface exists"
-    assert_includes properties["model"][:description], "fake-1",
+    assert_includes properties["model"]["description"], "fake-1",
                     "the default model is named, so the choice is informed"
   end
 

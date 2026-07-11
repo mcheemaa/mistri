@@ -62,22 +62,23 @@ module Mistri
         end
 
         def assistant_items(msg)
-          msg.content.filter_map { |block| assistant_item(block) }
+          own = msg.provider == :openai
+          msg.content.filter_map { |block| assistant_item(block, own:) }
         end
 
-        def assistant_item(block)
+        def assistant_item(block, own: true)
           case block
-          when Content::Thinking then reasoning_item(block)
-          when Content::Text then message_item(block)
-          when ToolCall then function_call_item(block)
+          when Content::Thinking then reasoning_item(block, own:)
+          when Content::Text then message_item(block, own:)
+          when ToolCall then function_call_item(block, own:)
           end
         end
 
         # The reasoning item replays exactly as it arrived or not at all. An
         # item without encrypted_content triggers a server-side id lookup that
         # cannot succeed under store: false, so it drops rather than 404s.
-        def reasoning_item(block)
-          return nil unless block.signature
+        def reasoning_item(block, own: true)
+          return nil unless own && block.signature
 
           item = JSON.parse(block.signature)
           item.is_a?(Hash) && item["encrypted_content"] ? item : nil
@@ -85,17 +86,17 @@ module Mistri
           nil
         end
 
-        def message_item(block)
+        def message_item(block, own: true)
           item = { type: "message", role: "assistant",
                    content: [{ type: "output_text", text: block.text }] }
-          item[:id] = block.signature if block.signature
+          item[:id] = block.signature if own && block.signature
           item
         end
 
-        def function_call_item(block)
+        def function_call_item(block, own: true)
           item = { type: "function_call", call_id: block.id, name: block.name,
-                   arguments: JSON.generate(block.arguments) }
-          item[:id] = block.signature if block.signature
+                   arguments: JSON.generate(ToolArguments.replay_value(block)) }
+          item[:id] = block.signature if own && block.signature && !block.arguments_error
           item
         end
       end

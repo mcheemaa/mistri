@@ -1,5 +1,7 @@
 # frozen_string_literal: true
 
+require_relative "schema_capabilities"
+
 module Mistri
   module Providers
     # The OpenAI Responses API, streamed and stateless: store is always false,
@@ -31,9 +33,16 @@ module Mistri
         @catalog_pricing && Models.priced?(model) && @service_tier.to_s == "default"
       end
 
+      def native_output_schema(schema)
+        return unless Models.find(model)&.provider == :openai
+
+        SchemaCapabilities.derive(schema, :openai)
+      end
+
       def stream(messages:, system: nil, tools: [], signal: nil, **overrides, &emit)
         model = overrides.fetch(:model, @model)
         assembler = OpenAI::Assembler.new(model: model, catalog_pricing: @catalog_pricing)
+        assembler.start(&emit)
         body = build_body(model, messages, system, tools, overrides)
         outcome = @transport.stream_post("/v1/responses", body: body, headers: headers,
                                                           signal: signal) do |record|

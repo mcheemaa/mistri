@@ -17,6 +17,10 @@ module Mistri
   # {"name", "description", "inputSchema"} hashes) and call_tool(name, args)
   # bridges the same way, so the official mcp gem's client plugs in too.
   module MCP
+    EMPTY_INPUT_SCHEMA = {
+      "type" => "object", "properties" => {}.freeze, "additionalProperties" => false
+    }.freeze
+
     # A protocol-level failure: a JSON-RPC error, a missing response, an
     # unsupported negotiation.
     class Error < Mistri::Error
@@ -44,23 +48,36 @@ module Mistri
     # prefix namespaces local names ("linear__create_issue") against
     # collisions, and gates marks tools needing human approval
     # (gates: { "create_issue" => true }, or needs_approval: for all).
-    def tools(client, allow: nil, deny: [], prefix: nil, needs_approval: false, gates: {})
+    def tools(client, allow: nil, deny: [], prefix: nil, needs_approval: false, gates: {},
+              complete_argument_validator: nil)
       listed = client.tools
       listed = listed.select { |tool| allow.include?(tool["name"]) } if allow
       listed = listed.reject { |tool| deny.include?(tool["name"]) }
       listed.map do |tool|
-        bridge(client, tool, prefix: prefix, gate: gates.fetch(tool["name"], needs_approval))
+        bridge(client, tool, prefix: prefix, gate: gates.fetch(tool["name"], needs_approval),
+                             complete_argument_validator: complete_argument_validator)
       end
     end
 
-    def bridge(client, spec, prefix: nil, gate: false)
+    def bridge(client, spec, prefix: nil, gate: false, complete_argument_validator: nil)
       remote = spec.fetch("name")
       local = prefix ? "#{prefix}__#{remote}" : remote
+      if spec.key?("inputSchema") && spec["inputSchema"].nil?
+        raise ConfigurationError, "inputSchema must be an object, not null"
+      end
+
+      raw_schema = spec.fetch("inputSchema", EMPTY_INPUT_SCHEMA)
+      input_schema = Schema.validate_mcp!(
+        raw_schema, complete: !complete_argument_validator.nil?
+      )
       Tool.define(local, spec["description"].to_s,
-                  input_schema: spec["inputSchema"] || Tool::EMPTY_SCHEMA,
-                  needs_approval: gate) do |args|
+                  input_schema: input_schema,
+                  needs_approval: gate,
+                  complete_argument_validator: complete_argument_validator) do |args|
         answer(client.call_tool(remote, args || {}))
       end
+    rescue ConfigurationError => e
+      raise ConfigurationError, "MCP tool #{remote.inspect}: #{e.message}"
     end
 
     # An MCP result becomes model-readable content: text joins, images ride
@@ -110,4 +127,4 @@ require_relative "mcp/wires"
 require_relative "mcp/client"
 require_relative "mcp/oauth"
 
-Mistri::MCP.private_constant :Egress, :WireError
+Mistri::MCP.private_constant :Egress, :WireError, :EMPTY_INPUT_SCHEMA

@@ -16,7 +16,7 @@ module Mistri
       def initialize(tools: {}, sse: true, session: nil, page_size: nil,
                      require_token: nil, expire_after: nil, protocol: "2025-11-25",
                      drop_after: nil, malformed_after: nil, empty_after: nil,
-                     next_cursor: nil, trailing_after: nil)
+                     next_cursor: nil, trailing_after: nil, trailing_record: nil)
         @tools = tools
         @sse = sse
         @session = session
@@ -28,6 +28,7 @@ module Mistri
         @malformed_after = malformed_after
         @empty_after = empty_after
         @trailing_after = trailing_after
+        @trailing_record = trailing_record
         @trailed = false
         @next_cursor = next_cursor
         @dropped = false
@@ -128,7 +129,8 @@ module Mistri
         @stub.chunk(socket, "data: #{JSON.generate(payload)}\n\n")
         if method == @trailing_after && !@trailed
           @trailed = true
-          @stub.chunk(socket, "data: #{"x" * 2000}")
+          trailing = @trailing_record ? "#{JSON.generate(@trailing_record)}\n\n" : "x" * 2000
+          @stub.chunk(socket, "data: #{trailing}")
         end
         @stub.finish_sse(socket)
       end

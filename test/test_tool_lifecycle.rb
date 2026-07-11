@@ -164,8 +164,10 @@ class TestToolLifecycle < Minitest::Test
              Mistri::ToolCall.new(id: "c2", name: "later", arguments: {})]
     events = []
 
-    results = Mistri::ToolExecutor.call(calls, { "exit" => tool, "later" => later },
-                                        max_concurrency: 1, emit: ->(event) { events << event })
+    results = Mistri::ToolExecutor.call_with_outcomes(
+      calls, { "exit" => tool, "later" => later },
+      max_concurrency: 1, emit: ->(event) { events << event }
+    )
 
     assert_equal [:tool_started], events.map(&:type)
     assert_predicate results[0][1], :error?
@@ -174,6 +176,8 @@ class TestToolLifecycle < Minitest::Test
     assert_equal Mistri::ToolExecutor::INTERRUPTED, results[1][1].content
     assert_nil results[0][2]
     assert_nil results[1][2]
+    assert results[0][3], "a committed call has an ambiguous outcome"
+    refute results[1][3], "a queued call never committed"
     refute later_ran
   end
 
@@ -232,13 +236,13 @@ class TestToolLifecycle < Minitest::Test
     run&.join
   end
 
-  def test_result_ordering_does_not_trust_provider_call_ids
+  def test_result_ordering_follows_the_provider_call_order
     first = Mistri::Tool.define("first", "First.") { "first result" }
     second = Mistri::Tool.define("second", "Second.") { "second result" }
     provider = Mistri::Providers::Fake.new(turns: [
-                                             { tool_calls: [{ id: "same", name: "first",
+                                             { tool_calls: [{ id: "first", name: "first",
                                                               arguments: {} },
-                                                            { id: "same", name: "second",
+                                                            { id: "second", name: "second",
                                                               arguments: {} }] },
                                              { text: "done" }
                                            ])

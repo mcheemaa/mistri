@@ -145,7 +145,7 @@ module Mistri
         end
 
         result
-      rescue ResponseTooLargeError, WireError => e
+      rescue ResponseTooLargeError, ResponseTooComplexError, WireError => e
         reset_wire
         raise if replayable
         return result if responded

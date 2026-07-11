@@ -38,5 +38,14 @@ if defined?(Mistri::Generators::InstallGenerator)
       assert_file "app/models/mistri_entry.rb", /class MistriEntry/
       assert_migration "db/migrate/create_mistri_entries.rb"
     end
+
+    def test_mysql_family_migrations_use_longtext_for_parallel_turns
+      generator = Mistri::Generators::InstallGenerator.allocate
+
+      %w[mysql2 trilogy].each do |adapter|
+        assert_equal ", size: :long", generator.send(:payload_size_for, adapter), adapter
+      end
+      assert_equal "", generator.send(:payload_size_for, "postgresql")
+    end
   end
 end

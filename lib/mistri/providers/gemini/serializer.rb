@@ -12,14 +12,29 @@ module Mistri
       # signature would be rejected. Thinking summaries are output-only and
       # never replay. Consecutive user turns stay separate: Gemini accepts
       # them, and mixing a text part into a functionResponse turn makes it
-      # answer an empty candidate.
+      # answer an empty candidate. Completed tool exchanges from another
+      # provider become ordinary text: Gemini rejects foreign functionCall
+      # history because it has no Gemini thought signature.
       module Serializer
         module_function
 
         def contents(history)
-          groups = history.reject(&:system?).chunk_while { |a, b| a.tool? && b.tool? }
+          origins = tool_call_origins(history)
+          wire_ids = provider_call_ids(history)
+          groups = history.reject(&:system?).chunk_while do |a, b|
+            a.tool? && b.tool? && native_tool_result?(a, origins) ==
+              native_tool_result?(b, origins)
+          end
           groups.filter_map do |group|
-            group.first.tool? ? tool_turn(group) : turn(group.first)
+            if group.first.tool?
+              if native_tool_result?(group.first, origins)
+                tool_turn(group, wire_ids)
+              else
+                foreign_tool_turn(group)
+              end
+            else
+              turn(group.first)
+            end
           end
         end
 
@@ -33,7 +48,7 @@ module Mistri
           declarations = definitions.map do |tool|
             spec = tool.transform_keys(&:to_sym)
             { name: spec[:name], description: spec[:description],
-              parameters: spec[:input_schema] }
+              parametersJsonSchema: spec[:input_schema] }
           end
           [{ functionDeclarations: declarations }]
         end
@@ -47,15 +62,27 @@ module Mistri
 
         # Gemini pairs a functionResponse to its call by NAME; a wrong name
         # silently mismatches, so a missing one fails loudly instead.
-        def tool_turn(group)
+        def tool_turn(group, wire_ids = {})
           { role: "user", parts: group.map do |msg|
             unless msg.tool_name
               raise SchemaError, "Gemini tool results need tool_name to pair with their call"
             end
 
             key = msg.tool_error? ? "error" : "result"
-            { functionResponse: { name: msg.tool_name,
-                                  response: { key => result_text(msg) } } }
+            response = { name: msg.tool_name, response: { key => result_text(msg) } }
+            response[:id] = wire_ids[msg.tool_call_id] if wire_ids[msg.tool_call_id]
+            { functionResponse: response }
+          end }
+        end
+
+        def foreign_tool_turn(group)
+          { role: "user", parts: group.map do |msg|
+            raise SchemaError, "Gemini tool results need tool_name" unless msg.tool_name
+
+            label = msg.tool_error? ? "error" : "result"
+            text = "Tool #{JSON.generate(msg.tool_name)} #{label} " \
+                   "(call #{JSON.generate(msg.tool_call_id)}): #{result_text(msg)}"
+            { text: text }
           end }
         end
 
@@ -85,8 +112,47 @@ module Mistri
             case block
             when Content::Text then signed({ text: block.text }, block.signature, own)
             when ToolCall
-              signed({ functionCall: { name: block.name, args: block.arguments } },
-                     block.signature, own)
+              own ? native_function_call(block) : foreign_function_call(block)
+            end
+          end
+        end
+
+        def native_function_call(block)
+          arguments = ToolArguments.replay_object(block)
+          signature = block.signature if arguments.equal?(block.arguments)
+          call = { name: block.name, args: arguments }
+          call[:id] = block.provider_call_id if block.provider_call_id
+          signed({ functionCall: call }, signature, true)
+        end
+
+        def foreign_function_call(block)
+          arguments = if block.arguments_error
+                        "unavailable (#{block.arguments_error})"
+                      else
+                        JSON.generate(block.arguments)
+                      end
+          { text: "Tool call #{JSON.generate(block.name)} " \
+                  "(call #{JSON.generate(block.id)}) with arguments: #{arguments}" }
+        end
+
+        def native_tool_result?(message, origins)
+          origins[message.tool_call_id] == :gemini
+        end
+
+        def tool_call_origins(history)
+          history.each_with_object({}) do |message, origins|
+            next unless message.assistant?
+
+            message.tool_calls.each { |call| origins[call.id] = message.provider }
+          end
+        end
+
+        def provider_call_ids(history)
+          history.each_with_object({}) do |message, ids|
+            next unless message.assistant? && message.provider == :gemini
+
+            message.tool_calls.each do |call|
+              ids[call.id] = call.provider_call_id if call.provider_call_id
             end
           end
         end

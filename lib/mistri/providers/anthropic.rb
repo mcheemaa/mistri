@@ -1,5 +1,7 @@
 # frozen_string_literal: true
 
+require_relative "schema_capabilities"
+
 module Mistri
   module Providers
     # The Anthropic Messages API, streamed. Defaults target the current model
@@ -41,9 +43,16 @@ module Mistri
         @catalog_pricing && Models.priced?(model) && @service_tier.to_s == "standard_only"
       end
 
+      def native_output_schema(schema)
+        return unless Models.find(model)&.provider == :anthropic
+
+        SchemaCapabilities.derive(schema, :anthropic)
+      end
+
       def stream(messages:, system: nil, tools: [], signal: nil, **overrides, &emit)
         model = overrides.fetch(:model, @model)
         assembler = Anthropic::Assembler.new(model: model, catalog_pricing: @catalog_pricing)
+        assembler.start(&emit)
         body = build_body(model, messages, system, tools, overrides)
         outcome = @transport.stream_post("/v1/messages", body: body, headers: headers,
                                                          signal: signal) do |record|

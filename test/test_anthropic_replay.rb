@@ -11,7 +11,8 @@ class TestAnthropicReplay < Minitest::Test
     with_signature = Mistri::Content::Thinking.new(thinking: "kept", signature: "sig")
     no_signature = Mistri::Content::Thinking.new(thinking: "was mid-thought")
     empty = Mistri::Content::Thinking.new(thinking: "")
-    msg = Mistri::Message.assistant(content: [with_signature, no_signature, empty])
+    msg = Mistri::Message.assistant(content: [with_signature, no_signature, empty],
+                                    provider: :anthropic)
 
     blocks = SERIALIZER.message(msg)[:content]
 

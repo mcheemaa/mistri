@@ -16,13 +16,13 @@ module Mistri
                   "It must match exactly one place; add surrounding lines to make it " \
                   "unique, or set replace_all to change every occurrence.",
                   eager_input_streaming: true,
+                  argument_normalizer: Tools.method(:tolerate),
                   schema: lambda {
                     string :path, "Document path", required: true
                     string :old_string, "Exact text to replace (whitespace matters)", required: true
                     string :new_string, "Replacement text", required: true
                     boolean :replace_all, "Replace every occurrence instead of exactly one"
                   }) do |args|
-        args = Tools.tolerate(args)
         with_document(workspace, args) do |content|
           result = Edit.replace(content, args["old_string"], args["new_string"],
                                 replace_all: args["replace_all"] == true)

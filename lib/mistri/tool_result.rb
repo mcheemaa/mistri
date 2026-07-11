@@ -5,8 +5,10 @@ module Mistri
   # fact. Both channels and the error bit persist with the tool message; only
   # content and provider-supported error signaling reach the model.
   #
-  #   Tool.define("edit_page", "Edits the page.") do |args|
-  #     page = apply(args)
+  #   Tool.define("edit_page", "Edits the page.", schema: -> {
+  #     object :changes, "Page changes", required: true
+  #   }) do |args|
+  #     page = apply(args.fetch("changes"))
   #     Mistri::ToolResult.new(content: "Updated.", ui: { "html" => page })
   #   end
   #

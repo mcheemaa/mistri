@@ -42,12 +42,14 @@ module Mistri
         end
 
         def message(msg)
-          { role: msg.role.to_s, content: msg.content.filter_map { |block| block(block) } }
+          own = msg.provider == :anthropic
+          { role: msg.role.to_s,
+            content: msg.content.filter_map { |content| block(content, own:) } }
         end
 
         def tool_results(group)
           { role: "user", content: group.map do |msg|
-            blocks = msg.content.filter_map { |block| block(block) }
+            blocks = msg.content.filter_map { |content| block(content, own: false) }
             # The API rejects an empty tool_result; a space stands in for a
             # tool that returned nothing.
             blocks = [{ type: "text", text: " " }] if blocks.empty?
@@ -59,15 +61,16 @@ module Mistri
 
         # Returns nil for a block the API would reject (empty text, unusable
         # thinking), so callers filter_map it out.
-        def block(block)
+        def block(block, own: true)
           case block
           when Content::Text then text_block(block)
-          when Content::Thinking then thinking_block(block)
+          when Content::Thinking then thinking_block(block, own:)
           when Content::Image
             { type: "image",
               source: { type: "base64", media_type: block.mime_type, data: block.data } }
           when ToolCall
-            { type: "tool_use", id: block.id, name: block.name, input: block.arguments }
+            { type: "tool_use", id: block.id, name: block.name,
+              input: ToolArguments.replay_object(block) }
           else
             raise SchemaError, "cannot serialize #{block.class} for Anthropic"
           end
@@ -82,9 +85,9 @@ module Mistri
         # its opaque payload; a normal thinking block missing its signature
         # (an aborted turn cut before signature_delta) cannot replay, so it
         # degrades to its text, or drops when even that is empty.
-        def thinking_block(block)
-          return { type: "redacted_thinking", data: block.signature } if block.redacted?
-          if block.signature
+        def thinking_block(block, own: true)
+          return { type: "redacted_thinking", data: block.signature } if own && block.redacted?
+          if own && block.signature
             return { type: "thinking", thinking: block.thinking,
                      signature: block.signature }
           end

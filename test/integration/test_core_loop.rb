@@ -13,12 +13,35 @@ class TestCoreLoopIntegration < Minitest::Test
     agent = Mistri::Agent.new(provider: Mistri.provider(model),
                               tools: [founder_tool, hq_tool],
                               system: "Answer strictly from the tools.")
+    events = []
 
-    result = agent.run("Who founded the company and what city is HQ in? One sentence.")
+    result = agent.run("Who founded the company and what city is HQ in? One sentence.") do |event|
+      events << event
+    end
 
     assert_predicate result, :completed?
+    assert_equal :start, events.first.type, "the provider stream did not open with :start"
+    assert_predicate events.first.partial, :assistant?
+    assert_empty events.first.partial.content
+    assert_stream_boundaries(events)
+    assert_predicate events.last, :terminal?
     assert Integration.saw?(result.text, founder), "founder fact never flowed: #{result.text}"
     assert Integration.saw?(result.text, city), "city fact never flowed: #{result.text}"
+  end
+
+  def assert_stream_boundaries(events)
+    open = false
+    events.each do |event|
+      if event.type == :start
+        refute open, "a provider stream opened before its predecessor terminated"
+        open = true
+      elsif event.terminal?
+        assert open, "a provider terminal arrived without a matching :start"
+        open = false
+      end
+    end
+
+    refute open, "the final provider stream never terminated"
   end
 
   Integration.scenario(self, :ui_channel_reaches_host_not_model) do |model|
@@ -61,5 +84,52 @@ class TestCoreLoopIntegration < Minitest::Test
     refute_empty failures, "the live tool was never called"
     assert_predicate failures, :all?, "the live lifecycle lost its error fact"
     assert Integration.saw?(result.text, code), "the failed result never replayed: #{result.text}"
+  end
+
+  Integration.scenario(self, :invalid_tool_arguments_are_corrected_before_execution) do |model|
+    correction = Integration.codename
+    validated = []
+    handled = []
+    submit = Mistri::Tool.define(
+      "submit_code", "Submits one validation code.",
+      schema: -> { string :code, "Validation code", required: true },
+      argument_validator: lambda do |args, _schema|
+        validated << args.fetch("code")
+        args["code"] == correction ? [] : ["$.code must be exactly #{correction}"]
+      end
+    ) do |args|
+      handled << args.fetch("code")
+      "Accepted #{args.fetch("code")}."
+    end
+    errors = []
+    calls = []
+    agent = Mistri::Agent.new(
+      provider: Mistri.provider(model), tools: [submit],
+      budget: Mistri::Budget.new(turns: 8),
+      system: "First call submit_code with code exactly wrong. When it returns an argument " \
+              "error, call it once more with the exact correction it gives you, then report " \
+              "the accepted code."
+    )
+
+    result = agent.run("Exercise the validation correction path.") do |event|
+      errors << event.tool_error if event.type == :tool_result
+      calls << event.tool_call if event.type == :toolcall_end
+    end
+
+    assert_operator validated.length, :>=, 2, "the model never exercised the rejected path"
+    refute_equal correction, validated.first, "the first call skipped validation correction"
+    refute_empty handled, "the corrected call never reached the handler"
+    assert_equal [correction], handled.uniq, "invalid arguments reached the handler"
+    assert errors.first, "the rejection lost its error type"
+    refute errors.last, "the accepted call stayed mislabeled as an error"
+    assert_equal handled.length, errors.count(false), "a valid handler outcome was mislabeled"
+    assert Integration.saw?(result.text, correction), "the corrected result never landed"
+    if model.start_with?("gemini-3")
+      ids = calls.map(&:provider_call_id)
+
+      assert ids.all? { |id| id.is_a?(String) && !id.empty? },
+             "Gemini 3 function-call IDs were not preserved"
+      assert_equal ids.uniq, ids, "Gemini 3 reused a provider function-call ID"
+    end
   end
 end

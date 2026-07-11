@@ -32,7 +32,8 @@ class TestGeminiAssembler < Minitest::Test
     events = []
     message = drive(events, [
                       { "candidates" => [{ "content" => { "parts" => [
-                        { "functionCall" => { "name" => "search", "args" => { "q" => "ruby" } },
+                        { "functionCall" => { "id" => "call-remote", "name" => "search",
+                                              "args" => { "q" => "ruby" } },
                           "thoughtSignature" => "tsig123" }
                       ] } }] },
                       { "candidates" => [{ "finishReason" => "STOP" }] }
@@ -42,10 +43,46 @@ class TestGeminiAssembler < Minitest::Test
 
     assert_equal :tool_use, message.stop_reason
     assert_equal "search", call.name
+    assert_equal "call-remote", call.id
+    assert_equal "call-remote", call.provider_call_id
     assert_equal({ "q" => "ruby" }, call.arguments)
     assert_equal "tsig123", call.signature
     assert_equal %i[toolcall_start toolcall_delta toolcall_end],
                  events.select { |e| e.type.start_with?("toolcall") }.map(&:type)
+  end
+
+  def test_signed_parts_keep_their_wire_boundaries
+    message = drive([], [
+                      { "candidates" => [{ "content" => { "parts" => [
+                        { "text" => "A", "thoughtSignature" => "sig-a" },
+                        { "text" => "B", "thoughtSignature" => "sig-b" }
+                      ] } }] },
+                      { "candidates" => [{ "finishReason" => "STOP" }] }
+                    ])
+
+    assert_equal %w[A B], message.content.map(&:text)
+    assert_equal %w[sig-a sig-b], message.content.map(&:signature)
+  end
+
+  def test_missing_function_call_ids_receive_unique_internal_ids_only
+    first = function_call.tool_calls.first
+    second = function_call.tool_calls.first
+
+    refute_equal first.id, second.id
+    assert_nil first.provider_call_id
+    assert_nil second.provider_call_id
+  end
+
+  def test_function_calls_preserve_non_object_arguments_and_omission
+    [nil, false, 7, "text", [1, { "x" => true }]].each do |value|
+      call = function_call("args" => value).tool_calls.first
+
+      value.nil? ? assert_nil(call.arguments) : assert_equal(value, call.arguments)
+
+      assert_nil call.arguments_error
+    end
+
+    assert_equal({}, function_call.tool_calls.first.arguments)
   end
 
   def test_max_tokens_and_error_records_map_cleanly
@@ -62,6 +99,20 @@ class TestGeminiAssembler < Minitest::Test
     assert_equal :error, failed.stop_reason
     assert_equal "Mistri::ProviderError: internal | status 500", failed.error_message
     assert_equal 500, failed.error["status"], "the wire code rides as a status"
+  end
+
+  def test_max_tokens_outranks_a_function_call
+    message = drive([], [
+                      { "candidates" => [{
+                        "content" => { "parts" => [{
+                          "functionCall" => { "name" => "write", "args" => {} }
+                        }] },
+                        "finishReason" => "MAX_TOKENS"
+                      }] }
+                    ])
+
+    assert_equal :length, message.stop_reason
+    assert_equal 1, message.tool_calls.length
   end
 
   def test_usage_prices_from_the_catalog_and_unknown_models_stay_unknown
@@ -163,13 +214,23 @@ class TestGeminiAssembler < Minitest::Test
       refute policy.retryable?(message.error), "#{reason} is a verdict, never retried"
     end
 
-    %w[MALFORMED_FUNCTION_CALL TOO_MANY_TOOL_CALLS OTHER].each do |reason|
+    %w[MALFORMED_FUNCTION_CALL TOO_MANY_TOOL_CALLS OTHER MALFORMED_RESPONSE
+       FINISH_REASON_UNSPECIFIED].each do |reason|
       fumble = drive([], [{ "candidates" => [{ "finishReason" => reason }] }])
 
       assert_equal :error, fumble.stop_reason, "#{reason} must not read as a clean stop"
       assert_equal "ProviderError", fumble.error["type"], "#{reason} misclassified"
       assert policy.retryable?(fumble.error), "#{reason} accuses the input of nothing"
     end
+
+    missing_signature = drive([], [
+                                { "candidates" => [
+                                  { "finishReason" => "MISSING_THOUGHT_SIGNATURE" }
+                                ] }
+                              ])
+
+    assert_equal "InvalidRequestError", missing_signature.error["type"]
+    refute policy.retryable?(missing_signature.error)
   end
 
   def test_a_blocked_prompt_fails_fast_instead_of_reading_as_truncation
@@ -200,15 +261,26 @@ class TestGeminiAssembler < Minitest::Test
   end
 
   def test_a_stream_that_ends_without_a_finish_reason_is_an_error
-    message = drive([], [
+    events = []
+    message = drive(events, [
                       { "candidates" => [{ "content" => { "parts" => [{ "text" => "cut" }] } }] }
                     ])
 
     assert_equal :error, message.stop_reason
     assert_match(/finish reason/, message.error_message)
+    assert_equal %i[text_start text_delta text_end error], events.map(&:type)
   end
 
   private
+
+  def function_call(fields = {})
+    drive([], [
+            { "candidates" => [{ "content" => { "parts" => [
+              { "functionCall" => { "name" => "inspect" }.merge(fields) }
+            ] } }] },
+            { "candidates" => [{ "finishReason" => "STOP" }] }
+          ])
+  end
 
   def drive(events, records)
     assembler = Mistri::Providers::Gemini::Assembler.new(model: "gemini-2.5-flash")

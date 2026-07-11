@@ -1,6 +1,7 @@
 # frozen_string_literal: true
 
 require_relative "test_helper"
+require "securerandom"
 
 # Real API calls, opt-in: MISTRI_LIVE=1 bundle exec rake test
 class TestGeminiLive < Minitest::Test
@@ -74,6 +75,29 @@ class TestGeminiLive < Minitest::Test
     assert_kind_of Hash, config
     assert_equal "bar", config.dig("series", 0, "type")
     assert_equal [1, 2], config.dig("series", 0, "data")
+  ensure
+    provider&.close
+  end
+
+  def test_foreign_tool_history_projects_into_a_valid_gemini_continuation
+    provider = Mistri::Providers::Gemini.new(api_key: ENV.fetch("GEMINI_API_KEY"),
+                                             model: "gemini-3.5-flash")
+    fact = "Mistri-cross-provider-#{SecureRandom.hex(5)}"
+    call = Mistri::ToolCall.new(id: "openai-call-1", name: "lookup",
+                                arguments: { "record" => "one" },
+                                signature: "openai-item-1")
+    history = [
+      Mistri::Message.user("Look up the record."),
+      Mistri::Message.assistant(content: [call], provider: :openai,
+                                stop_reason: :tool_use),
+      Mistri::Message.tool(content: fact, tool_call_id: call.id, tool_name: call.name),
+      Mistri::Message.user("Repeat the exact historical lookup result and nothing else.")
+    ]
+
+    message = provider.stream(messages: history) { |_event| nil }
+
+    assert_equal :stop, message.stop_reason
+    assert_includes message.text, fact
   ensure
     provider&.close
   end

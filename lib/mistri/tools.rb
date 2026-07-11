@@ -28,10 +28,17 @@ module Mistri
       yield content
     end
 
-    # Absorb the drift real models produce: alias keys, stringly booleans,
-    # unknown keys dropped by simply never being read.
+    # Absorb the drift real models produce for edit_file only. Ambiguous
+    # aliases fail instead of letting hash insertion order choose an edit.
     def tolerate(args)
-      normalized = args.to_h { |key, value| [ALIASES.fetch(key.to_s, key.to_s), value] }
+      normalized = args.each_with_object({}) do |(key, value), copy|
+        canonical = ALIASES.fetch(key.to_s, key.to_s)
+        if copy.key?(canonical)
+          raise ArgumentError, "multiple arguments map to #{canonical.inspect}"
+        end
+
+        copy[canonical] = value
+      end
       case normalized["replace_all"]
       when "true", "1", 1 then normalized["replace_all"] = true
       when "false", "0", 0, nil then normalized["replace_all"] = false

@@ -49,6 +49,31 @@ class TestMcpResponseLimits < Minitest::Test
     end
   end
 
+  def test_a_structurally_complex_tool_response_is_ambiguous_and_resets_the_wire
+    arguments = Mistri.const_get(:ToolArguments, false)
+    cases = {
+      tokens: { "content" => Array.new(arguments::MAX_LEXICAL_TOKENS + 1, 0) },
+      numeric_token: { "content" => [1 << ((arguments::MAX_NUMBER_BYTES + 1) * 4)] }
+    }
+
+    cases.each do |label, outcome|
+      tools = { "complex" => { description: "Complex.", handler: ->(_) { outcome } } }
+      with_server(tools:, session: "sess") do |server|
+        client = remote_client(server)
+
+        error = assert_raises(Mistri::AmbiguousDeliveryError) do
+          client.call_tool("complex", {})
+        end
+
+        assert_instance_of Mistri::ResponseTooComplexError, error.cause, label
+        assert_equal 1, server.calls.length, label
+        client.connect
+
+        assert_equal 2, server.initializes, label
+      end
+    end
+  end
+
   def test_a_confirmed_tool_result_survives_an_oversized_trailing_sse_line
     with_server(trailing_after: "tools/call") do |server|
       client = remote_client(server, max_record_bytes: 512)
@@ -61,6 +86,22 @@ class TestMcpResponseLimits < Minitest::Test
       client.connect
 
       assert_equal 2, server.initializes, "the malformed stream forced a clean handshake"
+    end
+  end
+
+  def test_a_confirmed_tool_result_survives_a_complex_trailing_sse_record
+    arguments = Mistri.const_get(:ToolArguments, false)
+    trailing = { "noise" => Array.new(arguments::MAX_LEXICAL_TOKENS + 1, 0) }
+    with_server(trailing_after: "tools/call", trailing_record: trailing) do |server|
+      client = remote_client(server)
+
+      result = client.call_tool("echo", { "text" => "confirmed" })
+
+      assert_equal "echo: confirmed", result.dig("content", 0, "text")
+      assert_equal 1, server.calls.length
+      client.connect
+
+      assert_equal 2, server.initializes, "the complex stream forced a clean handshake"
     end
   end
 
