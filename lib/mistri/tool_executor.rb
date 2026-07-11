@@ -34,6 +34,8 @@ module Mistri
                       "executed, so verify its effects before retrying]"
     VERIFY_BEFORE_RETRY = "The tool may have completed partially; verify its effects before " \
                           "retrying."
+    COMMITTED = Object.new.freeze
+    private_constant :COMMITTED
 
     module_function
 
@@ -54,8 +56,10 @@ module Mistri
         raise(error.is_a?(SubscriberError) ? error.original : error)
       end
 
-      calls.zip(results).map do |call, entry|
-        value, seconds = entry || [failure(OUTCOME_UNKNOWN), nil]
+      calls.each_with_index.map do |call, index|
+        entry = results[index]
+        entry = [failure(OUTCOME_UNKNOWN), nil] if entry.equal?(COMMITTED)
+        value, seconds = entry || [failure(INTERRUPTED), nil]
         [call, value, seconds]
       end
     end
@@ -75,19 +79,20 @@ module Mistri
             next
           end
 
-          results[index] = run_one(call, tools_by_name, context)
+          results[index] = run_one(call, index, results, tools_by_name, context)
         end
       rescue StandardError => e
         errors << e
       end
     end
 
-    def run_one(call, tools_by_name, context)
+    def run_one(call, index, results, tools_by_name, context)
       tool = tools_by_name[call.name]
       return [failure("Error: unknown tool #{call.name.inspect}"), nil] unless tool
 
       return [failure(INTERRUPTED), nil] unless commit(call, context)
 
+      results[index] = COMMITTED
       invoke_one(tool, call, context)
     end
 

@@ -317,62 +317,62 @@ module Mistri
         return [[], false]
       end
 
-      parked, free = partition_approval(screen(calls, signal, &emit), &emit)
+      screened, blocked = screen(calls, signal, &emit)
+      parked, free, rejected = partition_approval(screened)
       executed = execute(free, signal, &emit)
+      answer_results(calls, [*blocked, *rejected, *executed], executed:, signal:, &emit)
       parked.each do |call|
         @session.append("approval_request", "call" => call.to_h)
         emit&.call(Event.new(type: :approval_needed, tool_call: call))
       end
-      [parked, executed.any? { |call| ends_turn?(call) }]
+      [parked, executed.any? { |call, _result, _seconds| ends_turn?(call) }]
     end
 
     # Returns the calls that actually executed (denied ones only answer).
-    def settle(open, signal, &emit)
+    def settle(open, signal, &)
       approved, denied = open.partition { |approval| approval[:decision]["approved"] }
-      cleared = screen(approved.map { |approval| approval[:call] }, signal, &emit)
-      executed = execute(cleared, signal, &emit)
-      denied.each do |approval|
+      cleared, blocked = screen(approved.map { |approval| approval[:call] }, signal, &)
+      executed = execute(cleared, signal, &)
+      denials = denied.map do |approval|
         note = approval[:decision]["note"]
         text = "The user denied this tool call#{note ? ": #{note}" : "."}"
-        answer(approval[:call], text, &emit)
+        [approval[:call], text, nil]
       end
-      executed
+      answer_results(open.map { |approval| approval[:call] },
+                     [*blocked, *executed, *denials], executed:, signal:, &)
+      executed.map(&:first)
     end
 
-    # Runs the calls and answers each; returns the calls that executed
-    # (blocked and parked calls never reach here).
+    # Runs calls without persisting them; the caller commits and rewrites
+    # settled results in the model's original call order.
     def execute(calls, signal, &emit)
       return [] if calls.empty?
 
-      results = ToolExecutor.call(calls, @tools_by_name, signal: signal,
-                                                         max_concurrency: @max_concurrency,
-                                                         session: @session, emit: emit,
-                                                         app: @context)
-      context = hook_context(signal, emit)
-      results.each do |call, result, seconds|
-        result = rewrite(call, result, context) if @after_tool
-        answer(call, result, duration: seconds, &emit)
-      end
-      calls
+      ToolExecutor.call(calls, @tools_by_name, signal: signal,
+                                               max_concurrency: @max_concurrency,
+                                               session: @session, emit: emit,
+                                               app: @context)
     end
 
     # A blocked call answers in band, so the model reads the reason and
     # reacts; a hook that raises blocks conservatively rather than letting
     # an unpoliced call through.
     def screen(calls, signal, &emit)
-      return calls unless @before_tool
+      return [calls, []] unless @before_tool
 
       context = hook_context(signal, emit)
-      calls.reject do |call|
+      calls.each_with_object([[], []]) do |call, (cleared, blocked)|
         reason = begin
           @before_tool.call(call, context)
         rescue StandardError => e
           "the before_tool hook failed: #{e.class}: #{e.message}"
         end
-        next false unless reason.is_a?(String)
-
-        answer(call, ToolResult.new(content: "Blocked: #{reason}", error: true), &emit)
-        true
+        if reason.is_a?(String)
+          result = ToolResult.new(content: "Blocked: #{reason}", error: true)
+          blocked << [call, result, nil]
+        else
+          cleared << call
+        end
       end
     end
 
@@ -413,18 +413,37 @@ module Mistri
                            message: message, duration: duration, tool_error: tool_error))
     end
 
+    def answer_results(calls, results, executed:, signal:, &emit)
+      executed_results = if @after_tool
+                           {}.compare_by_identity.tap do |index|
+                             executed.each { |result| index[result] = true }
+                           end
+                         end
+      by_call = {}.compare_by_identity
+      results.each { |result| (by_call[result[0]] ||= []) << result }
+      context = hook_context(signal, emit) if @after_tool
+      calls.each do |call|
+        queued = by_call[call]
+        next unless queued && (entry = queued.shift)
+
+        _call, result, seconds = entry
+        result = rewrite(call, result, context) if executed_results&.key?(entry)
+        answer(call, result, duration: seconds, &emit)
+      end
+    end
+
     def gated?(call)
       tool = @tools_by_name[call.name]
       tool ? tool.needs_approval?(call.arguments) : false
     end
 
-    def partition_approval(calls, &emit)
-      calls.each_with_object([[], []]) do |call, (parked, free)|
+    def partition_approval(calls)
+      calls.each_with_object([[], [], []]) do |call, (parked, free, rejected)|
         (gated?(call) ? parked : free) << call
       rescue StandardError => e
         content = "Error evaluating approval policy for tool #{call.name.inspect}: " \
                   "#{e.class}: #{e.message}. The tool did not run."
-        answer(call, ToolResult.new(content:, error: true), &emit)
+        rejected << [call, ToolResult.new(content:, error: true), nil]
       end
     end
 

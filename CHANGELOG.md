@@ -28,8 +28,12 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   primitive checks and one immutable nil slot; partial Message construction
   adds one nil check and one immutable nil slot, with no parsing, buffering,
   I/O, or string work;
-  starts arrive on serialized worker-thread callbacks, while ordered results
-  still emit after the batch joins. `:tool_started` and handler-progress
+  tool batches add one sentinel write at commitment and one identity check per
+  result so a hard worker exit distinguishes started calls from untouched queue
+  entries; same-batch ordering adds one short-lived identity map and a linear
+  post-join pass, plus a second identity map only when `after_tool` is configured;
+  starts arrive on serialized worker-thread callbacks, while same-batch results
+  still emit in model-call order after the batch joins. `:tool_started` and handler-progress
   subscriber exceptions propagate and never become tool failures.
   Unknown, blocked, denied, queued, and pre-invocation interrupted calls add no
   start event.

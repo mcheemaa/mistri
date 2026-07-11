@@ -153,21 +153,41 @@ class TestToolLifecycle < Minitest::Test
     assert_predicate answer, :tool_error?
   end
 
-  def test_a_worker_that_dies_after_start_returns_an_unknown_outcome
+  def test_a_worker_that_dies_distinguishes_its_outcome_from_queued_calls
+    later_ran = false
     tool = Mistri::Tool.define("exit", "Exits its worker.") { Thread.exit }
-    call = Mistri::ToolCall.new(id: "c1", name: "exit", arguments: {})
+    later = Mistri::Tool.define("later", "Runs later.") do
+      later_ran = true
+      "done"
+    end
+    calls = [Mistri::ToolCall.new(id: "c1", name: "exit", arguments: {}),
+             Mistri::ToolCall.new(id: "c2", name: "later", arguments: {})]
     events = []
 
-    emit = lambda do |event|
-      events << event
-    end
-    result = Mistri::ToolExecutor.call([call], { "exit" => tool }, emit:).first
+    results = Mistri::ToolExecutor.call(calls, { "exit" => tool, "later" => later },
+                                        max_concurrency: 1, emit: ->(event) { events << event })
 
     assert_equal [:tool_started], events.map(&:type)
-    assert_predicate result[1], :error?
-    assert_equal Mistri::ToolExecutor::OUTCOME_UNKNOWN, result[1].content
-    assert_match(/verify.*before retrying/i, result[1].content)
-    assert_nil result[2]
+    assert_predicate results[0][1], :error?
+    assert_equal Mistri::ToolExecutor::OUTCOME_UNKNOWN, results[0][1].content
+    assert_match(/verify.*before retrying/i, results[0][1].content)
+    assert_equal Mistri::ToolExecutor::INTERRUPTED, results[1][1].content
+    assert_nil results[0][2]
+    assert_nil results[1][2]
+    refute later_ran
+  end
+
+  def test_worker_outcomes_do_not_depend_on_a_lifecycle_subscriber
+    tool = Mistri::Tool.define("exit", "Exits its worker.") { Thread.exit }
+    later = Mistri::Tool.define("later", "Runs later.") { flunk "queued call ran" }
+    calls = [Mistri::ToolCall.new(id: "c1", name: "exit", arguments: {}),
+             Mistri::ToolCall.new(id: "c2", name: "later", arguments: {})]
+
+    results = Mistri::ToolExecutor.call(calls, { "exit" => tool, "later" => later },
+                                        max_concurrency: 1)
+
+    assert_equal Mistri::ToolExecutor::OUTCOME_UNKNOWN, results[0][1].content
+    assert_equal Mistri::ToolExecutor::INTERRUPTED, results[1][1].content
   end
 
   def test_parallel_results_keep_model_order_after_the_batch_joins
@@ -210,5 +230,25 @@ class TestToolLifecycle < Minitest::Test
   ensure
     release << true if release && release.empty?
     run&.join
+  end
+
+  def test_result_ordering_does_not_trust_provider_call_ids
+    first = Mistri::Tool.define("first", "First.") { "first result" }
+    second = Mistri::Tool.define("second", "Second.") { "second result" }
+    provider = Mistri::Providers::Fake.new(turns: [
+                                             { tool_calls: [{ id: "same", name: "first",
+                                                              arguments: {} },
+                                                            { id: "same", name: "second",
+                                                              arguments: {} }] },
+                                             { text: "done" }
+                                           ])
+    agent = Mistri::Agent.new(provider:, tools: [first, second], max_concurrency: 1)
+
+    agent.run("go")
+
+    answers = agent.session.messages.select(&:tool?)
+
+    assert_equal %w[first second], answers.map(&:tool_name)
+    assert_equal ["first result", "second result"], answers.map(&:text)
   end
 end

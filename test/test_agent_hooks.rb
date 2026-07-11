@@ -35,16 +35,19 @@ class TestAgentHooks < Minitest::Test
     assert_predicate result, :completed?
     assert_equal [:read], log, "the blocked tool never ran"
 
-    answers = agent.session.messages.select(&:tool?).map(&:text)
+    answers = agent.session.messages.select(&:tool?)
 
-    assert_includes answers, "Blocked: org policy forbids purging"
-    assert_includes answers, "data"
-    errors = agent.session.messages.select(&:tool?).map(&:tool_error).sort_by(&:to_s)
+    assert_equal %w[read purge], answers.map(&:tool_name)
+    assert_equal ["data", "Blocked: org policy forbids purging"], answers.map(&:text)
+    errors = answers.map(&:tool_error)
     starts = events.select { |event| event.type == :tool_started }
                    .map { |event| event.tool_call.name }
+    results = events.select { |event| event.type == :tool_result }
+                    .map { |event| event.tool_call.name }
 
     assert_equal [false, true], errors
     assert_equal ["read"], starts
+    assert_equal %w[read purge], results
   end
 
   def test_before_tool_outranks_the_approval_gate
@@ -170,6 +173,34 @@ class TestAgentHooks < Minitest::Test
 
     assert_equal "The operation failed.", answer.text
     assert_predicate answer, :tool_error?
+  end
+
+  def test_after_tool_stays_interleaved_with_each_persisted_result
+    observed = []
+    audit = lambda do |call, result, context|
+      persisted = context.session.entries.count do |entry|
+        entry["type"] == "message" && entry.dig("message", "role") == "tool"
+      end
+      observed << [call.name, persisted]
+      context.emit.call(Mistri::Event.new(type: :compacting, content: call.name))
+      result
+    end
+    provider = Mistri::Providers::Fake.new(turns: two_call_turns)
+    events = []
+    agent = Mistri::Agent.new(provider:, tools: tools([]), after_tool: audit,
+                              max_concurrency: 1)
+
+    agent.run("go") { |event| events << event }
+
+    assert_equal [["read", 0], ["purge", 1]], observed
+    lifecycle = events.filter_map do |event|
+      case event.type
+      when :compacting then "hook:#{event.content}"
+      when :tool_result then "result:#{event.tool_call.name}"
+      end
+    end
+
+    assert_equal %w[hook:read result:read hook:purge result:purge], lifecycle
   end
 
   def test_hooks_receive_the_callers_context

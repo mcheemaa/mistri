@@ -625,10 +625,10 @@ execution, then `:tool_result` with an explicit `tool_error` boolean. Calls
 still queued behind `max_concurrency`, blocked by policy, waiting for approval,
 denied, unknown, or interrupted before invocation never claim to have started.
 Starts arrive from tool worker threads as execution begins; sinks must tolerate
-serialized callbacks from those threads. Results retain deterministic model-call
-order and emit after the parallel batch joins, as before. A subscriber exception
-from `:tool_started` or handler-emitted progress propagates to the run and never
-becomes a tool result.
+serialized callbacks from those threads. Results settled in the same batch
+retain deterministic model-call order and emit after the parallel batch joins,
+as before. A subscriber exception from `:tool_started` or handler-emitted
+progress propagates to the run and never becomes a tool result.
 Event types are an extensible union; subscribers should handle the types they
 use and ignore the rest.
 
