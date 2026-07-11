@@ -33,4 +33,31 @@ class TestEvent < Minitest::Test
     refute_includes event.to_h.keys, :partial
     assert_equal "He", event.to_h[:delta]
   end
+
+  def test_tool_lifecycle_events_keep_terminal_errors_distinct
+    call = Mistri::ToolCall.new(id: "c1", name: "lookup", arguments: {})
+    started = Mistri::Event.new(type: :tool_started, tool_call: call)
+    failed = Mistri::Event.new(type: :tool_result, tool_call: call, tool_error: true)
+
+    refute_predicate started, :terminal?
+    refute_predicate failed, :error?
+    assert failed.to_h[:tool_error]
+  end
+
+  def test_tool_error_is_boolean_and_only_belongs_to_results
+    assert_raises(ArgumentError) do
+      Mistri::Event.new(type: :tool_result)
+    end
+    assert_raises(ArgumentError) do
+      Mistri::Event.new(type: :tool_result, tool_error: "yes")
+    end
+    assert_raises(ArgumentError) do
+      Mistri::Event.new(type: :tool_started, tool_error: false)
+    end
+    message = Mistri::Message.tool(content: "failed", tool_call_id: "c1", tool_error: true)
+
+    assert_raises(ArgumentError) do
+      Mistri::Event.new(type: :tool_result, message:, tool_error: false)
+    end
+  end
 end

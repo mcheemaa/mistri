@@ -31,6 +31,8 @@ class TestSessionHealing < Minitest::Test
     interrupted = answers.find { |message| message.tool_call_id == "b" }
 
     assert_equal INTERRUPTED, interrupted.text
+    assert_match(/may have executed.*verify/i, interrupted.text)
+    assert_predicate interrupted, :tool_error?
     assert_equal 1, session.entries.count { |e| e.dig("message", "role") == "tool" },
                  "the stored log gained nothing"
   end

@@ -37,10 +37,27 @@ class TestMcpBridge < Minitest::Test
 
     failed = { "isError" => true, "content" => [{ "type" => "text", "text" => "no access" }] }
 
-    assert_equal "MCP tool error: no access", Mistri::MCP.answer(failed)
+    error = Mistri::MCP.answer(failed)
+
+    assert_equal "MCP tool error: no access", error.content
+    assert_predicate error, :error?
 
     image = { "content" => [{ "type" => "image", "data" => ["png!"].pack("m0"),
                               "mimeType" => "image/png" }] }
+    failed_image = { "isError" => true, "content" => image["content"] }
+    image_error = Mistri::MCP.answer(failed_image)
+
+    assert_instance_of Mistri::Content::Image, image_error.content.last
+    assert_predicate image_error, :error?
+
+    structured_error = Mistri::MCP.answer(
+      "isError" => true, "content" => [],
+      "structuredContent" => { "code" => "RATE_LIMITED" }
+    )
+
+    assert_includes structured_error.content, '"code":"RATE_LIMITED"'
+    assert_predicate structured_error, :error?
+
     blocks = Mistri::MCP.answer(image)
 
     assert_instance_of Mistri::Content::Image, blocks.first
@@ -71,6 +88,30 @@ class TestMcpBridge < Minitest::Test
     server.stop
   end
 
+  def test_mcp_is_error_reaches_the_agent_event_and_session
+    tools = { "lookup" => { description: "Looks up facts.", handler: lambda do |_args|
+      { "isError" => true,
+        "content" => [{ "type" => "text", "text" => "index unavailable" }] }
+    end } }
+    server = Mistri::Test::McpStubServer.new(tools: tools)
+    provider = Mistri::Providers::Fake.new(turns: [
+                                             { tool_calls: [{ name: "lookup",
+                                                              arguments: {} }] },
+                                             { text: "I will use another source." }
+                                           ])
+    events = []
+    agent = Mistri::Agent.new(provider:, tools: Mistri::MCP.tools(remote_client(server)))
+
+    agent.run("look it up") { |event| events << event }
+
+    event = events.find { |item| item.type == :tool_result }
+
+    assert_predicate event, :tool_error?
+    assert_predicate agent.session.messages.find(&:tool?), :tool_error?
+  ensure
+    server&.stop
+  end
+
   def test_an_ambiguous_delivery_warns_the_model_not_to_retry
     tools = { "send" => { description: "Sends once.", handler: ->(_) { "sent" } } }
     server = Mistri::Test::McpStubServer.new(tools: tools, drop_after: "tools/call")
@@ -87,6 +128,7 @@ class TestMcpBridge < Minitest::Test
 
     assert_match(/AmbiguousDeliveryError/, result.text)
     assert_match(/do not retry automatically/, result.text)
+    assert_predicate result, :tool_error?
     assert_equal 1, server.calls.length
   ensure
     server&.stop

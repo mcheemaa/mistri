@@ -41,6 +41,16 @@ class TestOpenAISerializer < Minitest::Test
                  items[4])
   end
 
+  def test_failed_tool_results_do_not_invent_an_unsupported_wire_field
+    failed = Mistri::Message.tool(content: "unavailable", tool_call_id: "call_1",
+                                  tool_error: true)
+
+    item = SERIALIZER.input_items([failed]).first
+
+    assert_equal({ type: "function_call_output", call_id: "call_1", output: "unavailable" },
+                 item)
+  end
+
   def test_a_reasoning_item_missing_encrypted_content_is_dropped
     bare = { "type" => "reasoning", "id" => "rs_1", "summary" => [] }
     thinking = Mistri::Content::Thinking.new(thinking: "", signature: JSON.generate(bare))

@@ -17,6 +17,7 @@ class TestAgentApproval < Minitest::Test
     assert_equal "send_gift", result.pending.first.name
     assert_empty sent, "the gated tool must not execute before approval"
     assert(events.any? { |e| e.type == :approval_needed })
+    refute(events.any? { |e| e.type == :tool_started })
   end
 
   def test_approval_days_later_from_a_fresh_process_completes_the_run
@@ -51,10 +52,11 @@ class TestAgentApproval < Minitest::Test
 
     assert_predicate result, :completed?
     assert_empty sent
-    denial = agent.session.messages.select(&:tool?).last.text
+    denial = agent.session.messages.select(&:tool?).last
 
-    assert_match(/denied/i, denial)
-    assert_match(/too expensive/, denial)
+    assert_match(/denied/i, denial.text)
+    assert_match(/too expensive/, denial.text)
+    refute_predicate denial, :tool_error?, "human denial is an expected control outcome"
   end
 
   def test_resume_before_a_decision_returns_still_suspended
@@ -108,6 +110,37 @@ class TestAgentApproval < Minitest::Test
 
     assert_predicate result, :completed?
     assert_equal [5], sent
+  end
+
+  def test_a_raising_approval_policy_fails_closed_per_call
+    ran = []
+    broken = Mistri::Tool.define("broken", "B.", needs_approval: lambda { |_args|
+      raise "policy unavailable"
+    }) { flunk "ran despite an unavailable approval policy" }
+    safe = Mistri::Tool.define("safe", "S.") do
+      ran << :safe
+      "ok"
+    end
+    provider = Mistri::Providers::Fake.new(turns: [
+                                             { tool_calls: [{ name: "broken", arguments: {} },
+                                                            { name: "safe", arguments: {} }] },
+                                             { text: "done" }
+                                           ])
+    events = []
+    agent = Mistri::Agent.new(provider:, tools: [broken, safe], max_concurrency: 1)
+
+    result = agent.run("go") { |event| events << event }
+
+    assert_predicate result, :completed?
+    assert_equal [:safe], ran
+    answers = agent.session.messages.select(&:tool?)
+    failed = answers.find { |message| message.tool_name == "broken" }
+
+    assert_predicate failed, :tool_error?
+    assert_includes failed.text, "approval policy"
+    starts = events.select { |event| event.type == :tool_started }.map(&:tool_call)
+
+    assert_equal ["safe"], starts.map(&:name)
   end
 
   private

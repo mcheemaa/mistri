@@ -311,11 +311,13 @@ module Mistri
     def run_tools(assistant, signal, &emit)
       calls = assistant.tool_calls
       unless assistant.stop_reason == StopReason::TOOL_USE && !signal&.aborted?
-        calls.each { |call| answer(call, ToolExecutor::INTERRUPTED, &emit) }
+        calls.each do |call|
+          answer(call, ToolResult.new(content: ToolExecutor::INTERRUPTED, error: true), &emit)
+        end
         return [[], false]
       end
 
-      parked, free = screen(calls, signal, &emit).partition { |call| gated?(call) }
+      parked, free = partition_approval(screen(calls, signal, &emit), &emit)
       executed = execute(free, signal, &emit)
       parked.each do |call|
         @session.append("approval_request", "call" => call.to_h)
@@ -369,15 +371,26 @@ module Mistri
         end
         next false unless reason.is_a?(String)
 
-        answer(call, "Blocked: #{reason}", &emit)
+        answer(call, ToolResult.new(content: "Blocked: #{reason}", error: true), &emit)
         true
       end
     end
 
     def rewrite(call, result, context)
-      @after_tool.call(call, result, context) || result
+      rewritten = @after_tool.call(call, result, context) || result
+      return rewritten unless result.is_a?(ToolResult) && result.error?
+
+      if rewritten.is_a?(ToolResult)
+        rewritten.with(error: true)
+      else
+        ToolResult.new(content: rewritten, error: true)
+      end
     rescue StandardError => e
-      "Error in after_tool hook: #{e.class}: #{e.message}"
+      ToolResult.new(
+        content: "Error in after_tool hook: #{e.class}: #{e.message}. The tool already returned; " \
+                 "verify its effects before retrying.",
+        error: true
+      )
     end
 
     def hook_context(signal, emit)
@@ -387,17 +400,32 @@ module Mistri
     # The tool message carries both channels; the :tool_result event exposes
     # it whole so hosts read event.message.ui for their side of the result.
     def answer(call, result, duration: nil, &emit)
-      content, ui = result.is_a?(ToolResult) ? [result.content, result.ui] : [result, nil]
+      content, ui, tool_error = if result.is_a?(ToolResult)
+                                  [result.content, result.ui, result.error?]
+                                else
+                                  [result, nil, false]
+                                end
       message = @session.append_message(Message.tool(content: content, tool_call_id: call.id,
-                                                     tool_name: call.name, ui: ui))
+                                                     tool_name: call.name, ui: ui,
+                                                     tool_error: tool_error))
       text = content.is_a?(String) ? content : "[content]"
       emit&.call(Event.new(type: :tool_result, tool_call: call, content: text,
-                           message: message, duration: duration))
+                           message: message, duration: duration, tool_error: tool_error))
     end
 
     def gated?(call)
       tool = @tools_by_name[call.name]
       tool ? tool.needs_approval?(call.arguments) : false
+    end
+
+    def partition_approval(calls, &emit)
+      calls.each_with_object([[], []]) do |call, (parked, free)|
+        (gated?(call) ? parked : free) << call
+      rescue StandardError => e
+        content = "Error evaluating approval policy for tool #{call.name.inspect}: " \
+                  "#{e.class}: #{e.message}. The tool did not run."
+        answer(call, ToolResult.new(content:, error: true), &emit)
+      end
     end
 
     def ends_turn?(call)

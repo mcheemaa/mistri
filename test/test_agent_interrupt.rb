@@ -22,7 +22,7 @@ class TestAgentInterrupt < Minitest::Test
     end
     never = Mistri::Tool.define("never_runs", "Should not complete.") { flunk "ran despite abort" }
     session = Mistri::Session.new(store: Mistri::Stores::Memory.new)
-    agent = Mistri::Agent.new(provider:, tools: [stop_here, never], session:)
+    agent = Mistri::Agent.new(provider:, tools: [stop_here, never], session:, max_concurrency: 1)
 
     agent.run("do two things", signal:)
 

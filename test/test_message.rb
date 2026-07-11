@@ -37,6 +37,19 @@ class TestMessage < Minitest::Test
 
     assert_predicate message, :tool?
     assert_equal "call_1", message.tool_call_id
+    assert_predicate message, :tool_error_known?
+    refute_predicate message, :tool_error?
+  end
+
+  def test_tool_error_survives_json_and_legacy_absence_stays_unknown
+    failed = Mistri::Message.tool(content: "failed", tool_call_id: "call_1", tool_error: true)
+    restored = Mistri::Message.from_h(JSON.parse(JSON.generate(failed.to_h)))
+    legacy = Mistri::Message.from_h(role: "tool", content: [], tool_call_id: "call_0")
+
+    assert_predicate restored, :tool_error?
+    assert restored.to_h[:tool_error]
+    refute_predicate legacy, :tool_error_known?
+    assert_nil legacy.tool_error
   end
 
   def test_text_is_nil_on_a_pure_tool_call_turn
@@ -48,5 +61,9 @@ class TestMessage < Minitest::Test
   def test_invalid_role_and_stop_reason_raise
     assert_raises(ArgumentError) { Mistri::Message.new(role: :robot) }
     assert_raises(ArgumentError) { Mistri::Message.assistant(content: "x", stop_reason: :tired) }
+    assert_raises(ArgumentError) do
+      Mistri::Message.tool(content: "x", tool_call_id: "c1", tool_error: "yes")
+    end
+    assert_raises(ArgumentError) { Mistri::Message.new(role: :user, tool_error: false) }
   end
 end

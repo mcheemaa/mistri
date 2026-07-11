@@ -40,9 +40,11 @@ class TestSinks < Minitest::Test
 
     sink.call(Mistri::Event.new(type: :start))
     sink.call(delta("partial answer"))
-    sink.call(Mistri::Event.new(type: :tool_result, content: "ran"))
+    call = Mistri::ToolCall.new(id: "c1", name: "run", arguments: {})
+    sink.call(Mistri::Event.new(type: :tool_started, tool_call: call))
+    sink.call(Mistri::Event.new(type: :tool_result, content: "ran", tool_error: false))
 
-    assert_equal %i[start text_delta tool_result], seen.map(&:type),
+    assert_equal %i[start text_delta tool_started tool_result], seen.map(&:type),
                  "the buffered delta flushes before the next non-delta event"
   end
 
@@ -112,6 +114,16 @@ class TestSinks < Minitest::Test
     assert_includes frames.last, "event: done"
   end
 
+  def test_sse_carries_tool_failure_as_json_data
+    io = StringIO.new
+    sink = Mistri::Sinks::SSE.new(io)
+
+    sink.call(Mistri::Event.new(type: :tool_result, content: "failed", tool_error: true))
+
+    assert_includes io.string, "event: tool_result"
+    assert_includes io.string, '"tool_error":true'
+  end
+
   def test_action_cable_broadcasts_event_hashes_to_the_stream
     broadcasts = []
     server = Object.new
@@ -125,6 +137,18 @@ class TestSinks < Minitest::Test
     assert_equal "agent_9", stream
     assert_equal :text_delta, payload[:type]
     assert_equal "hi", payload[:delta]
+  end
+
+  def test_action_cable_broadcasts_known_success_without_dropping_false
+    broadcasts = []
+    server = Object.new
+    server.define_singleton_method(:broadcast) { |_stream, payload| broadcasts << payload }
+    sink = Mistri::Sinks::ActionCable.new("agent_9", server: server)
+
+    sink.call(Mistri::Event.new(type: :tool_result, content: "ok", tool_error: false))
+
+    assert broadcasts.first.key?(:tool_error)
+    refute broadcasts.first.fetch(:tool_error)
   end
 
   def test_sinks_compose_as_blocks

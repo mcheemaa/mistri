@@ -35,6 +35,17 @@ class TestAnthropicSerializer < Minitest::Test
     assert_equal({ type: "tool_use", id: "a", name: "x", input: {} }, wire[1][:content].first)
   end
 
+  def test_only_failed_tool_results_emit_is_error
+    history = [Mistri::Message.tool(content: "Error-looking success", tool_call_id: "a"),
+               Mistri::Message.tool(content: "plain failure", tool_call_id: "b",
+                                    tool_error: true)]
+
+    blocks = SERIALIZER.messages(history).first[:content]
+
+    refute blocks.first.key?(:is_error)
+    assert blocks.last[:is_error]
+  end
+
   def test_thinking_replays_with_signature_and_redacted_as_opaque_data
     thinking = Mistri::Content::Thinking.new(thinking: "why", signature: "sig")
     redacted = Mistri::Content::Thinking.new(thinking: "", signature: "opaque", redacted: true)

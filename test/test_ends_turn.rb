@@ -67,6 +67,26 @@ class TestEndsTurn < Minitest::Test
                  "a blocked call never executed, so the model keeps the floor"
   end
 
+  def test_an_errored_ends_turn_call_still_hands_away_the_floor
+    tools = [
+      Mistri::Tool.define("declared", "D.", ends_turn: true) do
+        Mistri::ToolResult.new(content: "could not present", error: true)
+      end,
+      Mistri::Tool.define("raised", "R.", ends_turn: true) { raise "display failed" }
+    ]
+
+    tools.each do |tool|
+      provider = fake({ tool_calls: [{ name: tool.name, arguments: {} }] })
+      agent = Mistri::Agent.new(provider:, tools: [tool])
+
+      result = agent.run("go")
+
+      assert_predicate result, :handed_off?, "ends_turn is structural, not a success claim"
+      assert_predicate agent.session.messages.select(&:tool?).last, :tool_error?
+      assert_equal 1, provider.requests.length, "the model never mechanically retries the call"
+    end
+  end
+
   def test_ends_turn_outranks_a_pending_steer
     provider = fake({ tool_calls: [{ name: "ask_user",
                                      arguments: { "question" => "Which one?" } }] })

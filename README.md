@@ -112,16 +112,40 @@ without changing its meaning, so `Schema.strict` raises instead of silently
 narrowing it to an object that only accepts `{}`. Use declared properties, or an
 explicitly closed raw schema, for constrained task output.
 
-A tool can speak on two channels: `content` for the model, `ui` for your
-interface. The `ui` payload rides the `:tool_result` event and persists with
-the session, but never reaches a provider:
+A tool result carries model content, host-only UI, and a failure fact. The
+`ui` payload rides the `:tool_result` event and persists with the session, but
+never reaches a provider. Return `error: true` for an expected tool failure
+that the model should handle rather than treating as a successful answer:
 
 ```ruby
 Mistri::Tool.define("edit_page", "Applies a page edit.") do |args|
   page = apply(args)
   Mistri::ToolResult.new(content: "Saved.", ui: { "html" => page })
 end
+
+Mistri::Tool.define("lookup", "Looks up an account.") do |args|
+  account = Accounts.find_by(id: args["id"])
+  account || Mistri::ToolResult.new(content: "Account not found.", error: true)
+end
 ```
+
+Mistri also sets the flag for unknown tools, blocked calls, handler exceptions,
+timeouts, calls interrupted before invocation, crash-healed calls whose outcome
+is unknown, and failed `after_tool` hooks. `event.tool_error` and
+`event.message.tool_error?` expose it without inspecting result text. A new
+successful result records false; a reloaded legacy result without the field
+keeps `tool_error == nil`, because Mistri cannot infer its historical outcome.
+Human denial is an expected approval outcome and records false. Anthropic and
+Gemini receive their native failure representation; OpenAI receives the same
+explanatory output because its function-result shape has no error member.
+Legacy unknown results replay with the historical unmarked provider shape;
+Mistri never guesses their status from prose.
+
+The flag means the call did not produce a confirmed successful result. It does
+not mean retrying is safe: a handler can commit an external write before it
+raises or times out. Mistri never mechanically replays the same call because
+this flag is true, but the model may choose to issue another call. Hosts still
+own idempotency, approval, and reconciliation for side effects.
 
 Handlers and hooks can take the run's context as a second argument, and
 `context.app` carries whatever object you pass as `Mistri.agent(context:)`
@@ -140,8 +164,9 @@ end
 A tool can also be the last word of its turn. `ends_turn: true` makes the
 loop end the run once the tool executes, instead of prompting the model
 again: an `ask_user` tool hands the floor to a human structurally, no
-"remember to stop after asking" prompt required. The result says it
-happened (`result.handed_off?`), and the answer arrives as the next run's
+"remember to stop after asking" prompt required. `result.handed_off?` says the
+model's floor was handed away; the persisted tool result says separately
+whether execution confirmed success. The answer arrives as the next run's
 input:
 
 ```ruby
@@ -595,11 +620,25 @@ are loop-owned: `:done` and `:error` reach the subscriber only for the
 accepted attempt, so a recovered retry never flashes an error it then walks
 back.
 
+Tool execution emits `:tool_started` when each resolved call commits to
+execution, then `:tool_result` with an explicit `tool_error` boolean. Calls
+still queued behind `max_concurrency`, blocked by policy, waiting for approval,
+denied, unknown, or interrupted before invocation never claim to have started.
+Starts arrive from tool worker threads as execution begins; sinks must tolerate
+serialized callbacks from those threads. Results retain deterministic model-call
+order and emit after the parallel batch joins, as before. A subscriber exception
+from `:tool_started` or handler-emitted progress propagates to the run and never
+becomes a tool result.
+Event types are an extensible union; subscribers should handle the types they
+use and ignore the rest.
+
 ```ruby
 agent.run("Plan the itinerary.") do |event|
   case event.type
   when :text_delta then stream(event.delta)
   when :retry then banner("Retrying (#{event.attempt}/#{event.max_attempts}) in #{event.delay}s")
+  when :tool_started then tool_running(event.tool_call)
+  when :tool_result then tool_finished(event.tool_call, failed: event.tool_error)
   when :done, :error then clear_banner
   end
 end

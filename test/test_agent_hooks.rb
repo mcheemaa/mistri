@@ -29,7 +29,8 @@ class TestAgentHooks < Minitest::Test
     provider = Mistri::Providers::Fake.new(turns: two_call_turns)
     agent = Mistri::Agent.new(provider:, tools: tools(log), before_tool: policy)
 
-    result = agent.run("clean up")
+    events = []
+    result = agent.run("clean up") { |event| events << event }
 
     assert_predicate result, :completed?
     assert_equal [:read], log, "the blocked tool never ran"
@@ -38,6 +39,12 @@ class TestAgentHooks < Minitest::Test
 
     assert_includes answers, "Blocked: org policy forbids purging"
     assert_includes answers, "data"
+    errors = agent.session.messages.select(&:tool?).map(&:tool_error).sort_by(&:to_s)
+    starts = events.select { |event| event.type == :tool_started }
+                   .map { |event| event.tool_call.name }
+
+    assert_equal [false, true], errors
+    assert_equal ["read"], starts
   end
 
   def test_before_tool_outranks_the_approval_gate
@@ -135,7 +142,34 @@ class TestAgentHooks < Minitest::Test
     agent = Mistri::Agent.new(provider:, tools: [tool], after_tool: boom)
     agent.run("go")
 
-    assert_includes agent.session.messages.select(&:tool?).last.text, "after_tool hook"
+    answer = agent.session.messages.select(&:tool?).last
+
+    assert_includes answer.text, "after_tool hook"
+    assert_includes answer.text, "already returned"
+    assert_predicate answer, :tool_error?
+  end
+
+  def test_after_tool_sees_typed_failures_and_cannot_clear_them
+    seen = nil
+    tool = Mistri::Tool.define("boom", "B.") { raise "secret detail" }
+    redact = lambda do |_call, result, _context|
+      seen = result
+      Mistri::ToolResult.new(content: "The operation failed.", error: false)
+    end
+    provider = Mistri::Providers::Fake.new(turns: [
+                                             { tool_calls: [{ name: "boom", arguments: {} }] },
+                                             { text: "done" }
+                                           ])
+    agent = Mistri::Agent.new(provider:, tools: [tool], after_tool: redact)
+
+    agent.run("go")
+
+    assert_instance_of Mistri::ToolResult, seen
+    assert_predicate seen, :error?
+    answer = agent.session.messages.select(&:tool?).last
+
+    assert_equal "The operation failed.", answer.text
+    assert_predicate answer, :tool_error?
   end
 
   def test_hooks_receive_the_callers_context
