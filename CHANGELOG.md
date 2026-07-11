@@ -66,7 +66,9 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   JSON Schema 2020-12 and require an object root; legacy array-form `items` is
   rejected in favor of `prefixItems`. A schema-less Tool is now a genuinely
   closed no-argument contract; hosts that accepted model fields without
-  declaring them must add an explicit schema. Supplied object schemas preserve
+  declaring them must add an explicit schema. The schema-less wire shape
+  changed with it, so provider prompt caches re-warm once per affected tool
+  set after upgrading. Supplied object schemas preserve
   JSON Schema's default-open semantics unless a raw schema explicitly sets
   `additionalProperties: false`; handlers should extract named fields instead
   of mass-assigning model input. MCP bridging enforces the portable subset
