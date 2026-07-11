@@ -85,6 +85,30 @@ class TestGeminiSerializer < Minitest::Test
     assert contents[-1][:parts].first.key?(:text)
   end
 
+  def test_reused_legacy_ids_keep_result_metadata_with_their_own_occurrence
+    foreign_call = Mistri::ToolCall.new(id: "call_1", name: "first", arguments: {})
+    gemini_call = Mistri::ToolCall.new(id: "call_1", name: "second", arguments: {})
+    foreign_result = Mistri::Message.tool(content: "foreign", tool_call_id: "call_1",
+                                          tool_name: "first")
+    gemini_result = Mistri::Message.tool(content: "native", tool_call_id: "call_1",
+                                         tool_name: "second")
+    history = [
+      Mistri::Message.assistant(content: [foreign_call], provider: :fake),
+      foreign_result,
+      Mistri::Message.assistant(content: [gemini_call], provider: :gemini),
+      gemini_result
+    ]
+
+    contents = SERIALIZER.contents(history)
+    first_response = contents[1][:parts].first
+    second_response = contents[3][:parts].first[:functionResponse]
+
+    assert first_response.key?(:text), "the earlier Fake result remains provider-neutral"
+    refute first_response.key?(:functionResponse)
+    refute second_response.key?(:id)
+    assert_equal "second", second_response[:name]
+  end
+
   def test_a_tool_result_without_a_tool_name_fails_loudly
     result = Mistri::Message.tool(content: "found", tool_call_id: "c1")
 

@@ -24,6 +24,11 @@ class TestMcpBridge < Minitest::Test
 
       def call_tool(name, args)
         @calls << [name, args]
+        if args["count"].is_a?(Integer) && args["count"] < 1
+          return { "isError" => true,
+                   "content" => [{ "type" => "text", "text" => "count must be positive" }] }
+        end
+
         { "content" => [{ "type" => "text", "text" => "within bounds" }] }
       end
     end.new(listed)
@@ -127,31 +132,29 @@ class TestMcpBridge < Minitest::Test
                  tool.argument_violations("count" => "one")
     assert_empty tool.argument_violations("count" => 0),
                  "minimum stays guidance for the server, which the MCP spec obligates to validate"
-    assert_equal "within bounds", tool.call({ "count" => 0 })
+    rejected = tool.call({ "count" => 0 })
+
+    assert_predicate rejected, :error?
+    assert_includes rejected.content, "count must be positive"
     assert_equal [["bounded", { "count" => 0 }]], client.calls
   end
 
-  def test_mcp_strict_schemas_refuses_unimplemented_assertions
-    listed = [{ "name" => "bounded", "description" => "Checks a bounded value.",
-                "inputSchema" => {
-                  "type" => "object",
-                  "properties" => { "count" => { "type" => "integer", "minimum" => 1 } }
-                } }]
-    client = Struct.new(:tools).new(listed)
+  def test_mcp_ignores_inline_vocabulary_declarations_for_instance_validation
+    schema = {
+      "$vocabulary" => { "https://example.com/vocab" => true },
+      "type" => "object"
+    }
+    client = Struct.new(:tools).new(
+      [{ "name" => "custom", "description" => "Custom.", "inputSchema" => schema }]
+    )
 
-    error = assert_raises(Mistri::ConfigurationError) do
-      Mistri::MCP.tools(client, strict_schemas: true)
-    end
+    tool = Mistri::MCP.tools(client).first
 
-    assert_match(/MCP input schema uses assertions Mistri cannot validate/, error.message)
-    assert_match(/\$\.properties\.count\.minimum/, error.message)
+    assert_empty tool.argument_violations({})
 
-    tool = Mistri::MCP.tools(
-      client, strict_schemas: true,
-              complete_argument_validator: ->(*) { [] }
-    ).first
+    schema["$vocabulary"]["https://example.com/vocab"] = false
 
-    assert_empty tool.argument_violations("count" => 1)
+    assert Mistri::MCP.tools(client).first
   end
 
   def test_mcp_pattern_properties_still_require_complete_authority_by_default
@@ -213,6 +216,16 @@ class TestMcpBridge < Minitest::Test
 
     assert Mistri::MCP.tools(local, complete_argument_validator: complete).first
     assert Mistri::MCP.tools(local).first, "same-document refs bridge as guidance by default"
+    %w[$ref $dynamicRef].each do |keyword|
+      empty_ref = base.merge("properties" => { "id" => { keyword => "" } })
+      empty_client = Struct.new(:tools).new(
+        [{ "name" => "empty", "description" => "Empty ref.", "inputSchema" => empty_ref }]
+      )
+
+      assert Mistri::MCP.tools(empty_client).first
+      assert Mistri::MCP.tools(empty_client,
+                               complete_argument_validator: complete).first
+    end
     error = assert_raises(Mistri::ConfigurationError) do
       Mistri::MCP.tools(external, complete_argument_validator: complete)
     end

@@ -122,7 +122,7 @@ class TestSchemaContract < Minitest::Test
     end
   end
 
-  def test_task_mode_rejects_a_required_vocabulary_it_cannot_implement
+  def test_inline_vocabulary_declarations_are_not_instance_assertions
     required = {
       "$vocabulary" => { "https://example.test/vocab" => true }, type: "string"
     }
@@ -130,12 +130,10 @@ class TestSchemaContract < Minitest::Test
       "$vocabulary" => { "https://example.test/vocab" => false }, type: "string"
     }
 
-    error = assert_raises(Mistri::ConfigurationError) do
-      Mistri::Schema.task_plan(required)
-    end
-
-    assert_match(/task output schema uses assertions Mistri cannot validate/, error.message)
+    Mistri::Schema.task_plan(required)
     Mistri::Schema.task_plan(optional)
+
+    assert_empty Mistri::Schema.unsupported_assertions(required)
   end
 
   def test_tool_schemas_require_an_object_root

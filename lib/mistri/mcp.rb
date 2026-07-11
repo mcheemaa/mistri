@@ -48,23 +48,18 @@ module Mistri
     # prefix namespaces local names ("linear__create_issue") against
     # collisions, and gates marks tools needing human approval
     # (gates: { "create_issue" => true }, or needs_approval: for all).
-    # strict_schemas: true refuses any tool whose schema carries assertions
-    # the portable validator cannot enforce, instead of bridging them as
-    # server-validated guidance.
     def tools(client, allow: nil, deny: [], prefix: nil, needs_approval: false, gates: {},
-              complete_argument_validator: nil, strict_schemas: false)
+              complete_argument_validator: nil)
       listed = client.tools
       listed = listed.select { |tool| allow.include?(tool["name"]) } if allow
       listed = listed.reject { |tool| deny.include?(tool["name"]) }
       listed.map do |tool|
         bridge(client, tool, prefix: prefix, gate: gates.fetch(tool["name"], needs_approval),
-                             complete_argument_validator: complete_argument_validator,
-                             strict_schemas: strict_schemas)
+                             complete_argument_validator: complete_argument_validator)
       end
     end
 
-    def bridge(client, spec, prefix: nil, gate: false, complete_argument_validator: nil,
-               strict_schemas: false)
+    def bridge(client, spec, prefix: nil, gate: false, complete_argument_validator: nil)
       remote = spec.fetch("name")
       local = prefix ? "#{prefix}__#{remote}" : remote
       if spec.key?("inputSchema") && spec["inputSchema"].nil?
@@ -73,7 +68,7 @@ module Mistri
 
       raw_schema = spec.fetch("inputSchema", EMPTY_INPUT_SCHEMA)
       input_schema = Schema.validate_mcp!(
-        raw_schema, complete: !complete_argument_validator.nil?, strict: strict_schemas
+        raw_schema, complete: !complete_argument_validator.nil?
       )
       Tool.define(local, spec["description"].to_s,
                   input_schema: input_schema,

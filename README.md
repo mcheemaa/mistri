@@ -177,8 +177,9 @@ end
 Use `complete_argument_validator:` when a host validator implements the full
 schema. It has the same `(args, schema)` contract, still runs only after core
 passes, and is deliberately distinct from a supplemental validator. Any
-non-empty `patternProperties` requires this explicit authority because core
-cannot enforce a pattern's value schema even when unmatched keys remain open.
+argument-applicable non-empty `patternProperties` requires this explicit
+authority because core cannot enforce a pattern's value schema even when
+unmatched keys remain open.
 The two validator options are mutually exclusive.
 
 Validator errors are bounded before they reach a model; they should still
@@ -297,14 +298,15 @@ normalizer changes arguments, the approval stores the exact prepared call the
 human reviewed plus an explicit source marker. `resume` verifies pairing
 metadata and revalidates those approved arguments without rerunning a
 normalizer. Tool-call IDs are session-wide correlation keys; live provider
-turns require session-unique IDs, while a persisted ID may recur across turns
-once its earlier call was answered, the per-turn shape earlier releases wrote
-for Gemini and the Fake provider. Unanswered, open-approval, or same-turn
-reuse and malformed legacy histories fail before a handler or provider runs.
-Persisted
-results must follow one matching call with the same name and settle in call
-order within each direct or approval phase; a compaction boundary cannot hide
-an open approval or split a completed call from its result.
+turns require session-unique IDs. Replay recognizes only the `call_N` reuse
+without provider correlation IDs that earlier releases wrote for Gemini and
+the Fake provider, and only after the prior occurrence was answered or
+crash-interrupted. Every other duplicate and malformed legacy history fails
+before a handler or provider runs. A reused ID cannot carry stale approval
+forward: an unsettled approval that cannot identify its generation is replayed
+as interrupted. Persisted results must follow one matching call with the same
+name and settle in call order within each direct or approval phase; a compaction
+boundary cannot hide an open approval or split a completed call from its result.
 
 Only one Agent may actively call `run` or `resume` for a session at a time.
 Concurrent appenders such as approval decisions, steers, and worker reports are
@@ -583,11 +585,11 @@ agent = Mistri.agent("claude-opus-4-8", tools: tools)
 Common MCP map input schemas work with Mistri's portable validator through
 schema-valued `additionalProperties`. Standard assertions outside that subset
 (`minimum`, `pattern`, `anyOf`, same-document `$ref`, ...) bridge as guidance:
-Mistri enforces its portable subset locally and the server validates the full
-contract, which the MCP spec already requires of it. Two stricter stances are
-explicit host choices. `strict_schemas: true` refuses to bridge any tool whose
-contract core cannot enforce, and a complete validator takes whole-contract
-authority locally:
+Mistri enforces directly reachable portable constraints locally. Constraints
+inside an unsupported applicator such as `anyOf` remain server guidance as one
+unit, and the server validates the full contract, which the MCP spec already
+requires of it. When host policy must rely on assertions outside the portable
+subset, a complete validator takes explicit whole-contract authority locally:
 
 ```ruby
 tools = Mistri::MCP.tools(
@@ -596,12 +598,13 @@ tools = Mistri::MCP.tools(
 )
 ```
 
-Non-empty `patternProperties` always requires the complete validator, because
-which argument keys are even legal becomes a regex question core will not
-approximate. Omitted MCP `inputSchema` means a no-argument object. Explicit
-`null` and non-object roots are configuration errors. External references are
-rejected in every mode so validation never performs hidden network or file
-resolution.
+Argument-applicable non-empty `patternProperties` requires the complete
+validator because regex matching changes validation and can determine key
+legality in a closed schema. Core will not approximate it. Omitted MCP
+`inputSchema` means a no-argument object. Explicit `null` and non-object roots
+are configuration errors. Mistri currently compiles MCP inputs as JSON Schema
+2020-12 and rejects an explicit older dialect. External references are rejected
+in every mode so validation never performs hidden network or file resolution.
 
 Remote URLs are untrusted input. Mistri accepts public HTTPS destinations by
 default, rejects the whole DNS result when any answer is non-public, and pins an

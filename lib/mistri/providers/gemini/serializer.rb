@@ -19,16 +19,15 @@ module Mistri
         module_function
 
         def contents(history)
-          origins = tool_call_origins(history)
-          wire_ids = provider_call_ids(history)
+          result_metadata = tool_result_metadata(history)
           groups = history.reject(&:system?).chunk_while do |a, b|
-            a.tool? && b.tool? && native_tool_result?(a, origins) ==
-              native_tool_result?(b, origins)
+            a.tool? && b.tool? && native_tool_result?(a, result_metadata) ==
+              native_tool_result?(b, result_metadata)
           end
           groups.filter_map do |group|
             if group.first.tool?
-              if native_tool_result?(group.first, origins)
-                tool_turn(group, wire_ids)
+              if native_tool_result?(group.first, result_metadata)
+                tool_turn(group, result_metadata)
               else
                 foreign_tool_turn(group)
               end
@@ -62,7 +61,7 @@ module Mistri
 
         # Gemini pairs a functionResponse to its call by NAME; a wrong name
         # silently mismatches, so a missing one fails loudly instead.
-        def tool_turn(group, wire_ids = {})
+        def tool_turn(group, result_metadata = {}.compare_by_identity)
           { role: "user", parts: group.map do |msg|
             unless msg.tool_name
               raise SchemaError, "Gemini tool results need tool_name to pair with their call"
@@ -70,7 +69,8 @@ module Mistri
 
             key = msg.tool_error? ? "error" : "result"
             response = { name: msg.tool_name, response: { key => result_text(msg) } }
-            response[:id] = wire_ids[msg.tool_call_id] if wire_ids[msg.tool_call_id]
+            wire_id = result_metadata.dig(msg, :provider_call_id)
+            response[:id] = wire_id if wire_id
             { functionResponse: response }
           end }
         end
@@ -135,26 +135,28 @@ module Mistri
                   "(call #{JSON.generate(block.id)}) with arguments: #{arguments}" }
         end
 
-        def native_tool_result?(message, origins)
-          origins[message.tool_call_id] == :gemini
+        def native_tool_result?(message, result_metadata)
+          result_metadata.dig(message, :provider) == :gemini
         end
 
-        def tool_call_origins(history)
-          history.each_with_object({}) do |message, origins|
-            next unless message.assistant?
-
-            message.tool_calls.each { |call| origins[call.id] = message.provider }
-          end
-        end
-
-        def provider_call_ids(history)
-          history.each_with_object({}) do |message, ids|
-            next unless message.assistant? && message.provider == :gemini
-
-            message.tool_calls.each do |call|
-              ids[call.id] = call.provider_call_id if call.provider_call_id
+        # Legacy histories may reuse call_N across turns. Correlating each
+        # result to the nearest preceding occurrence keeps a later Gemini call
+        # from rewriting an earlier foreign result's wire semantics.
+        def tool_result_metadata(history)
+          pending = Hash.new { |calls, id| calls[id] = [] }
+          metadata = {}.compare_by_identity
+          history.each do |message|
+            if message.assistant?
+              message.tool_calls.each do |call|
+                pending[call.id] << { provider: message.provider,
+                                      provider_call_id: call.provider_call_id }.freeze
+              end
+            elsif message.tool?
+              matched = pending[message.tool_call_id].pop
+              metadata[message] = matched if matched
             end
           end
+          metadata
         end
 
         def signed(part, signature, own)

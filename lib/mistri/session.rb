@@ -58,6 +58,9 @@ module Mistri
     # What a run killed mid-tool answers in place of the result it never got.
     INTERRUPTED_RESULT = "[interrupted: the run stopped before this result was persisted; " \
                          "the tool may have executed, so verify its effects before retrying]"
+    LEGACY_CALL_ID = /\Acall_[1-9]\d*\z/
+    LEGACY_CALL_PROVIDERS = %i[fake gemini].freeze
+    private_constant :LEGACY_CALL_ID, :LEGACY_CALL_PROVIDERS
 
     # Replay messages paired with the entry index each came from, starting at
     # the latest compaction boundary. The synthetic summary message carries a
@@ -190,9 +193,9 @@ module Mistri
       parsed_calls = message.tool_calls
       tool_calls_from(entry).each_with_index do |call, position|
         id = validated_persisted_call(call)
-        retire_reused_call!(id, calls, reserved, audit)
-        owned = id.dup.freeze
         source_call = parsed_calls.fetch(position)
+        reused = reused_legacy_call(id, source_call, message.provider, calls, reserved)
+        owned = id.dup.freeze
         provider_id = source_call.provider_call_id
         if provider_id && batch[:provider_call_ids].key?(provider_id)
           raise ConfigurationError, "session contains a duplicate provider tool call ID"
@@ -203,36 +206,41 @@ module Mistri
                   source_provider: message.provider,
                   source_stop_reason: message.stop_reason,
                   source_index: index, source_position: position,
-                  batch:, status: :pending }
+                  batch:, status: :pending, reused: !reused.nil? }
         calls[owned] = state
         batch[:calls] << state
+        audit.fetch(:states) << state
         unresolved << owned
         reserved << owned
       end
     end
 
-    # Releases before the identity audit synthesized per-turn call IDs
-    # ("call_1") for Gemini and the Fake provider, so reuse across turns is
-    # the durable norm in legacy histories. Reuse is safe only once the prior
-    # holder was answered: an open, decided, or crash-interrupted holder makes
-    # result pairing and approval references ambiguous, and live turns still
-    # require session-unique IDs at the provider envelope.
-    def retire_reused_call!(id, calls, reserved, audit)
-      return unless reserved.include?(id)
+    # Gemini and Fake once synthesized call_N from a per-turn counter. Only
+    # that known shape without provider correlation IDs may repeat; widening
+    # the exception would turn the session correlation key back into a guess.
+    def reused_legacy_call(id, source_call, provider, calls, reserved)
+      return nil unless reserved.include?(id)
 
       prior = calls[id]
-      unless prior && prior[:status] == :answered
+      safe_status = prior && %i[answered interrupted].include?(prior[:status])
+      legacy_shape = LEGACY_CALL_ID.match?(id) && LEGACY_CALL_PROVIDERS.include?(provider) &&
+                     LEGACY_CALL_PROVIDERS.include?(prior&.fetch(:source_provider, nil)) &&
+                     source_call.provider_call_id.nil? &&
+                     prior&.fetch(:source_call)&.provider_call_id.nil?
+      unless safe_status && legacy_shape
         raise ConfigurationError, "session contains a duplicate tool call ID"
       end
 
-      audit.fetch(:retired) << prior
+      prior
     end
 
     def audit_history(log)
       calls = {}
       unresolved = Set.new
       reserved = Set.new
-      audit = { calls:, unresolved:, reserved:, retired: [] }
+      states = []
+      approval_ids = Set.new
+      audit = { calls:, unresolved:, reserved:, states:, approval_ids: }
       latest_compaction = nil
 
       log.each_with_index do |entry, index|
@@ -248,7 +256,7 @@ module Mistri
           close_unsettled_calls(calls, unresolved)
           record_assistant_calls(entry, message, index, audit) if message.assistant?
         elsif entry["type"] == "approval_request"
-          record_approval_call(entry, calls)
+          record_approval_call(entry, calls, audit)
         elsif entry["type"] == "approval_decision"
           record_approval_decision(entry, calls)
         elsif entry["type"] == "compaction"
@@ -256,7 +264,8 @@ module Mistri
         end
       end
 
-      approvals = open_approval_states(calls)
+      interrupt_ambiguous_reused_approvals!(states)
+      approvals = open_approval_states(states)
       validate_compaction!(audit, approvals, latest_compaction)
       { tool_call_ids: reserved, approvals: }
     end
@@ -326,6 +335,11 @@ module Mistri
     def close_unsettled_calls(calls, unresolved)
       unresolved.each do |id|
         state = calls.fetch(id)
+        if state[:ambiguous_approval] &&
+           %i[approval_requested decided].include?(state[:status])
+          state[:status] = :interrupted
+          next
+        end
         unless state[:status] == :pending
           raise ConfigurationError, "session continues past an unsettled approval"
         end
@@ -335,7 +349,7 @@ module Mistri
       unresolved.clear
     end
 
-    def record_approval_call(entry, calls)
+    def record_approval_call(entry, calls, audit)
       call = entry["call"]
       unless call.is_a?(Hash)
         raise ConfigurationError, "session contains an invalid approval request"
@@ -369,6 +383,8 @@ module Mistri
       state[:batch][:approval_phase_started] = true
       state[:status] = :approval_requested
       state[:approval] = { call:, decision: nil, source_index: state[:source_index] }
+      state[:ambiguous_approval] = state[:reused] && audit.fetch(:approval_ids).include?(id)
+      audit.fetch(:approval_ids) << id
     end
 
     def validate_approval_provenance!(entry, call, state)
@@ -432,8 +448,20 @@ module Mistri
       state[:status] = :decided
     end
 
-    def open_approval_states(calls)
-      calls.values.filter_map do |state|
+    # An old decision names only call_N. Once that ID has already participated
+    # in approval, a later unsettled approval cannot prove which generation a
+    # delayed decision intended, so replay it as interrupted rather than risk
+    # executing a side effect under stale authorization.
+    def interrupt_ambiguous_reused_approvals!(states)
+      states.each do |state|
+        if state[:ambiguous_approval] && %i[approval_requested decided].include?(state[:status])
+          state[:status] = :interrupted
+        end
+      end
+    end
+
+    def open_approval_states(states)
+      states.filter_map do |state|
         state[:approval] if %i[approval_requested decided].include?(state[:status])
       end
     end
@@ -449,8 +477,7 @@ module Mistri
         raise ConfigurationError, "session contains an open approval whose assistant tool call " \
                                   "was removed by compaction"
       end
-      states = audit.fetch(:calls).values + audit.fetch(:retired)
-      split = states.any? do |state|
+      split = audit.fetch(:states).any? do |state|
         state[:result_index] && state[:source_index] < kept_from &&
           state[:result_index] >= kept_from
       end
@@ -546,32 +573,99 @@ module Mistri
       compaction = log.reverse_each.find { |entry| entry["type"] == "compaction" }
       from = compaction ? compaction["kept_from"] : 0
       pairs = log.each_with_index.filter_map do |entry, index|
-        [Message.from_h(entry["message"]), index] if index >= from && entry["type"] == "message"
+        next unless index >= from && entry["type"] == "message"
+
+        [Message.from_h(entry["message"]), index]
       end
-      pairs = heal(pairs, parked_call_ids(log))
+      pairs = heal(pairs, replay_call_states(log, from:))
       compaction ? [[summary_message(compaction["summary"]), nil], *pairs] : pairs
     end
 
-    def heal(pairs, parked)
-      answered = pairs.map(&:first).select(&:tool?).to_set(&:tool_call_id)
+    # Replay only needs occurrence pairing, not the authorization audit. Keep
+    # it tolerant enough to render a rejected history while still ensuring a
+    # reused call_N cannot borrow an earlier result or approval.
+    def replay_call_states(log, from:)
+      replay = { active: {}, seen: Set.new, approval_ids: Set.new, states: [], from: }
+      log.each_with_index do |entry, index|
+        if entry["type"] == "message"
+          track_replay_message(entry, index, replay)
+        else
+          track_replay_control(entry, replay)
+        end
+      end
+      replay.fetch(:states).each do |state|
+        next unless state[:ambiguous_approval]
+        next unless %i[approval_requested decided].include?(state[:status])
+
+        state[:status] = :interrupted
+      end
+    end
+
+    def track_replay_message(entry, index, replay)
+      role = entry.dig("message", "role").to_s
+      if role == "assistant"
+        tool_calls_from(entry).each_with_index do |call, position|
+          id = call["id"]
+          state = { source_index: index, source_position: position, status: :pending,
+                    reused: replay.fetch(:seen).include?(id), approval: false }
+          replay.fetch(:states) << state if index >= replay.fetch(:from)
+          replay.fetch(:active)[id] = state
+          replay.fetch(:seen) << id
+        end
+      elsif role == "tool" &&
+            (state = replay.fetch(:active).delete(entry.dig("message", "tool_call_id")))
+        state[:status] = :answered
+        state[:result_index] = index
+      end
+    end
+
+    def track_replay_control(entry, replay)
+      if entry["type"] == "approval_request"
+        id = entry.dig("call", "id")
+        return unless (state = replay.fetch(:active)[id])
+
+        state[:status] = :approval_requested
+        state[:approval] = true
+        state[:ambiguous_approval] = state[:reused] && replay.fetch(:approval_ids).include?(id)
+        replay.fetch(:approval_ids) << id
+      elsif entry["type"] == "approval_decision"
+        state = replay.fetch(:active)[entry["call_id"]]
+        state[:status] = :decided if state&.dig(:status) == :approval_requested
+      end
+    end
+
+    def heal(pairs, states)
+      by_source = states.group_by { |state| state[:source_index] }
+      by_result = pairs.to_h { |message, index| [index, [message, index]] }
+      consumed = states.filter_map { |state| state[:result_index] }.to_set
       pairs.flat_map do |message, index|
-        dangling = if message.assistant?
-                     message.tool_calls.reject do |call|
-                       answered.include?(call.id) || parked.include?(call.id)
-                     end
-                   else
-                     []
-                   end
-        [[message, index]] + dangling.map do |call|
-          [Message.tool(content: INTERRUPTED_RESULT, tool_call_id: call.id,
-                        tool_name: call.name, tool_error: true), nil]
+        next [] if consumed.include?(index)
+
+        batch = by_source[index]
+        next [[message, index]] unless message.assistant? && batch
+
+        [[message, index], *healed_results(message, batch, by_result)]
+      end
+    end
+
+    def healed_results(message, states, by_result)
+      calls = message.tool_calls
+      [false, true].flat_map do |approval_phase|
+        states.select { |state| state[:approval] == approval_phase }
+              .sort_by { |state| state[:source_position] }
+              .filter_map do |state|
+          if state[:status] == :answered
+            by_result.fetch(state[:result_index])
+          elsif !approval_phase || state[:status] == :interrupted
+            interrupted_pair(calls.fetch(state[:source_position]))
+          end
         end
       end
     end
 
-    def parked_call_ids(log)
-      log.filter_map { |entry| entry.dig("call", "id") if entry["type"] == "approval_request" }
-         .to_set
+    def interrupted_pair(call)
+      [Message.tool(content: INTERRUPTED_RESULT, tool_call_id: call.id,
+                    tool_name: call.name, tool_error: true), nil]
     end
 
     def summary_message(summary)
