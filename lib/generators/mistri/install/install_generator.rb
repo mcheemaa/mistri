@@ -41,13 +41,17 @@ module Mistri
 
       private
 
-      # MySQL TEXT caps at 64KB, which a single large tool result can blow
-      # through; MEDIUMTEXT holds 16MB. Postgres text is unbounded.
+      # A parallel tool turn can legitimately exceed MySQL MEDIUMTEXT even
+      # though each call stays inside its own input limit. Postgres text is unbounded.
       def payload_size
         adapter = ::ActiveRecord::Base.connection_db_config.adapter.to_s
-        adapter.match?(/mysql|trilogy/) ? ", size: :medium" : ""
+        payload_size_for(adapter)
       rescue StandardError
         ""
+      end
+
+      def payload_size_for(adapter)
+        adapter.to_s.match?(/mysql|trilogy/) ? ", size: :long" : ""
       end
     end
   end

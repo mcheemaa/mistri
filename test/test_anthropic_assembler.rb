@@ -63,6 +63,122 @@ class TestAnthropicAssembler < Minitest::Test
     assert_equal :tool_use, message.stop_reason
   end
 
+  def test_completed_tool_arguments_preserve_non_object_json_and_omission
+    { "null" => nil, "false" => false, "7" => 7, '"text"' => "text",
+      '[1,{"x":true}]' => [1, { "x" => true }] }.each do |json, expected|
+      message = tool_call_with(json)
+
+      if expected.nil?
+        assert_nil message.tool_calls.first.arguments
+      else
+        assert_equal expected, message.tool_calls.first.arguments
+      end
+
+      assert_nil message.tool_calls.first.arguments_error
+    end
+
+    assert_equal({}, tool_call_with(nil).tool_calls.first.arguments)
+  end
+
+  def test_fragmented_tool_arguments_release_the_buffer_after_the_aggregate_limit
+    assembler = Mistri::Providers::Anthropic::Assembler.new(model: "claude-opus-4-8")
+    deltas = []
+    emit = ->(event) { deltas << event.delta if event.type == :toolcall_delta }
+    assembler.feed({ "type" => "content_block_start", "index" => 0,
+                     "content_block" => { "type" => "tool_use", "id" => "too-large",
+                                          "name" => "inspect" } }, &emit)
+    chunk = "x" * (tool_argument_limit / 2)
+    fragments = ['{"blob":"', chunk, chunk, "ignored-after-overflow"]
+    fragments.each do |fragment|
+      assembler.feed({ "type" => "content_block_delta", "index" => 0,
+                       "delta" => { "type" => "input_json_delta",
+                                    "partial_json" => fragment } }, &emit)
+    end
+
+    builder = assembler.instance_variable_get(:@current)
+
+    assert_empty builder.json, "the retained bytes are released once the cap is crossed"
+    assert_equal fragments.map(&:bytesize), deltas.map(&:bytesize),
+                 "resource accounting must not hide raw stream deltas"
+    assert_equal fragments.first, deltas.first
+    assert_equal fragments.last, deltas.last
+
+    assembler.feed({ "type" => "content_block_stop", "index" => 0 }, &emit)
+    assembler.feed({ "type" => "message_delta", "delta" => { "stop_reason" => "tool_use" },
+                     "usage" => {} })
+    assembler.feed({ "type" => "message_stop" })
+    call = assembler.finish.tool_calls.first
+
+    assert_nil call.arguments
+    assert_equal "too_large", call.arguments_error
+  end
+
+  def test_partial_argument_parsing_has_a_bounded_work_schedule
+    assembler = Mistri::Providers::Anthropic::Assembler.new(model: "claude-opus-4-8")
+    assembler.feed({ "type" => "content_block_start", "index" => 0,
+                     "content_block" => { "type" => "tool_use", "id" => "bounded-preview",
+                                          "name" => "inspect" } })
+    previews = []
+    fragments = ['{"blob":"'] + Array.new(128) { "x" * 1024 }
+    fragments.each do |fragment|
+      assembler.feed({ "type" => "content_block_delta", "index" => 0,
+                       "delta" => { "type" => "input_json_delta",
+                                    "partial_json" => fragment } })
+      previews << assembler.instance_variable_get(:@current).argument_preview
+    end
+    builder = assembler.instance_variable_get(:@current)
+
+    assert_operator previews.map(&:object_id).uniq.length, :<=, 21
+    assert_operator builder.preview_bytes, :<=, 64 * 1024
+  end
+
+  def test_malformed_completed_tool_arguments_are_not_salvaged_from_partials
+    events = []
+    message = drive(events, tool_call_records('{"query":"ruby"'))
+    call = message.tool_calls.first
+    partial = events.find { |event| event.type == :toolcall_delta }.partial.tool_calls.first
+
+    assert_equal({ "query" => "ruby" }, partial.arguments,
+                 "the live preview may remain readable")
+    assert_nil call.arguments
+    assert_equal "invalid_json", call.arguments_error
+
+    whitespace = tool_call_with("   ").tool_calls.first
+
+    assert_nil whitespace.arguments
+    assert_equal "invalid_json", whitespace.arguments_error
+  end
+
+  def test_message_stop_never_promotes_an_unfinished_tool_block
+    records = tool_call_records('{"config":{"mode":"safe"}}')
+    records.delete_if { |record| record["type"] == "content_block_stop" }
+    events = []
+
+    message = drive(events, records)
+    call = message.tool_calls.first
+
+    assert_equal :error, message.stop_reason
+    assert_nil call.arguments
+    assert_equal "incomplete", call.arguments_error
+    assert_equal %i[toolcall_start toolcall_delta toolcall_end error], events.map(&:type)
+    preview = events.find { |event| event.type == :toolcall_delta }.partial.tool_calls.first
+
+    assert_predicate preview.arguments["config"], :frozen?
+  end
+
+  def test_a_truncated_text_block_closes_before_the_terminal_error
+    events = []
+    message = drive(events, [
+                      { "type" => "content_block_start", "index" => 0,
+                        "content_block" => { "type" => "text" } },
+                      { "type" => "content_block_delta", "index" => 0,
+                        "delta" => { "type" => "text_delta", "text" => "cut" } }
+                    ])
+
+    assert_equal "cut", message.text
+    assert_equal %i[text_start text_delta text_end error], events.map(&:type)
+  end
+
   def test_an_in_stream_error_ends_the_turn_in_band
     events = []
     message = drive(events, [
@@ -71,9 +187,69 @@ class TestAnthropicAssembler < Minitest::Test
                     ])
 
     assert_equal :error, message.stop_reason
-    assert_equal "Mistri::OverloadedError: Overloaded", message.error_message
+    assert_equal "Mistri::OverloadedError: overloaded_error: Overloaded", message.error_message
     assert_equal "OverloadedError", message.error["type"], "overloaded classifies as retryable"
     assert_predicate events.last, :error?
+  end
+
+  def test_wire_error_types_control_retryability
+    policy = Mistri::RetryPolicy.new
+    cases = {
+      "authentication_error" => ["AuthenticationError", false],
+      "invalid_request_error" => ["InvalidRequestError", false],
+      "permission_error" => ["InvalidRequestError", false],
+      "future_policy_error" => ["InvalidRequestError", false],
+      "rate_limit_error" => ["RateLimitError", true],
+      "api_error" => ["ServerError", true],
+      "timeout_error" => ["ProviderError", true],
+      "overloaded_error" => ["OverloadedError", true]
+    }
+
+    cases.each do |wire_type, (error_type, retryable)|
+      message = drive([], [{ "type" => "error",
+                             "error" => { "type" => wire_type, "message" => "no" } }])
+
+      assert_equal error_type, message.error["type"], wire_type
+      assert_equal retryable, policy.retryable?(message.error), wire_type
+    end
+  end
+
+  def test_fragmented_thinking_signatures_have_an_aggregate_ceiling
+    assembler = Mistri::Providers::Anthropic::Assembler.new(model: "claude-opus-4-8")
+    assembler.feed({ "type" => "content_block_start", "index" => 0,
+                     "content_block" => { "type" => "thinking" } })
+    fragment = "s" * (tool_argument_limit / 2)
+    2.times do
+      assembler.feed({ "type" => "content_block_delta", "index" => 0,
+                       "delta" => { "type" => "signature_delta",
+                                    "signature" => fragment } })
+    end
+
+    error = assert_raises(Mistri::ResponseTooLargeError) do
+      assembler.feed({ "type" => "content_block_delta", "index" => 0,
+                       "delta" => { "type" => "signature_delta", "signature" => "x" } })
+    end
+
+    assert_equal :thinking_signature, error.kind
+  end
+
+  def test_interrupted_thinking_never_replays_a_partial_signature
+    message = drive([], [
+                      { "type" => "content_block_start", "index" => 0,
+                        "content_block" => { "type" => "thinking" } },
+                      { "type" => "content_block_delta", "index" => 0,
+                        "delta" => { "type" => "thinking_delta", "thinking" => "Plan" } },
+                      { "type" => "content_block_delta", "index" => 0,
+                        "delta" => { "type" => "signature_delta",
+                                     "signature" => "partial-secret" } }
+                    ])
+    thinking = message.content.first
+    replay = Mistri::Providers::Anthropic::Serializer.messages([message]).first
+
+    assert_nil thinking.signature
+    refute_predicate thinking, :redacted?
+    assert_equal [{ type: "text", text: "Plan" }], replay[:content]
+    refute(replay[:content].any? { |block| %w[thinking redacted_thinking].include?(block[:type]) })
   end
 
   def test_redacted_thinking_and_unknown_events_are_handled
@@ -236,6 +412,32 @@ class TestAnthropicAssembler < Minitest::Test
   end
 
   private
+
+  def tool_argument_limit
+    Mistri.const_get(:ToolArguments, false)::MAX_BYTES
+  end
+
+  def tool_call_with(json)
+    drive([], tool_call_records(json))
+  end
+
+  def tool_call_records(json)
+    records = [
+      { "type" => "content_block_start", "index" => 0,
+        "content_block" => { "type" => "tool_use", "id" => "toolu_args",
+                             "name" => "inspect" } }
+    ]
+    if json
+      records << { "type" => "content_block_delta", "index" => 0,
+                   "delta" => { "type" => "input_json_delta", "partial_json" => json } }
+    end
+    records + [
+      { "type" => "content_block_stop", "index" => 0 },
+      { "type" => "message_delta", "delta" => { "stop_reason" => "tool_use" },
+        "usage" => {} },
+      { "type" => "message_stop" }
+    ]
+  end
 
   def drive(events, records)
     assembler = Mistri::Providers::Anthropic::Assembler.new(model: "claude-opus-4-8")

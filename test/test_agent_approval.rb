@@ -97,7 +97,8 @@ class TestAgentApproval < Minitest::Test
   def test_conditional_gating_only_parks_the_risky_calls
     sent = []
     tool = Mistri::Tool.define("pay", "Pay an amount.",
-                               needs_approval: ->(args) { args["amount"].to_i > 100 }) do |args|
+                               needs_approval: ->(args) { args["amount"].to_i > 100 },
+                               schema: -> { integer :amount, "Amount", required: true }) do |args|
       sent << args["amount"]
       "paid"
     end

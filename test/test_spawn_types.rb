@@ -57,7 +57,8 @@ class TestSpawnTypes < Minitest::Test
     assert_equal "Parent done.", result.text, "the parent reads the refusal and continues"
     tool_message = session.messages.select(&:tool?).last
 
-    assert_match(/needs instructions/, tool_message.text)
+    assert_includes tool_message.text, "$.instructions is required"
+    assert_predicate tool_message, :tool_error?
     assert_empty session.children, "no child is born from a refused spawn"
   end
 
@@ -71,8 +72,8 @@ class TestSpawnTypes < Minitest::Test
 
     tool_message = session.messages.select(&:tool?).last
 
-    assert_match(/Unknown worker type "designer"/, tool_message.text)
-    assert_match(/general-purpose, researcher/, tool_message.text)
+    assert_includes tool_message.text, "$.type must match enum"
+    assert_predicate tool_message, :tool_error?
   end
 
   def test_a_type_with_placeholders_fails_at_construction

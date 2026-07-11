@@ -15,7 +15,7 @@ module Mistri
     #   create_table :mistri_entries do |t|
     #     t.string :session_id, null: false, index: true
     #     t.integer :position, null: false
-    #     t.text :payload, size: :medium, null: false
+    #     t.text :payload, size: :long, null: false
     #     t.timestamps
     #   end
     #   add_index :mistri_entries, [:session_id, :position], unique: true

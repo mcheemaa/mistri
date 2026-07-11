@@ -51,6 +51,22 @@ class TestStores < Minitest::Test
     end
   end
 
+  def test_memory_owns_appends_and_returns_independent_deep_snapshots
+    store = Mistri::Stores::Memory.new
+    source = { "nested" => { "approved" => false }, "items" => ["first"] }
+    store.append("s", source)
+
+    source["nested"]["approved"] = true
+    source["items"] << "source mutation"
+    first = store.load("s")
+
+    first.first["nested"]["approved"] = true
+    first.first["items"] << "loaded mutation"
+
+    assert_equal [{ "nested" => { "approved" => false }, "items" => ["first"] }],
+                 store.load("s")
+  end
+
   private
 
   def each_store

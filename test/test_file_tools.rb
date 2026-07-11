@@ -39,6 +39,15 @@ class TestFileTools < Minitest::Test
     assert_equal "b\nb\n", @workspace.read("x.txt")
   end
 
+  def test_edit_file_rejects_ambiguous_aliases
+    error = assert_raises(ArgumentError) do
+      @tools["edit_file"].call({ "file" => "x.txt", "path" => "y.txt",
+                                 "oldText" => "a", "newText" => "b" })
+    end
+
+    assert_includes error.message, "map to \"path\""
+  end
+
   def test_edit_file_failures_come_back_in_band_with_the_near_miss
     reply = @tools["edit_file"].call({ "path" => "hero.html",
                                        "old_string" => "<h1>Welcom</h1>",

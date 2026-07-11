@@ -6,11 +6,12 @@ module Mistri
       # Folds the Messages API stream into the event union, building the
       # assistant message block by block. Every emitted event carries an
       # immutable snapshot of the message so far; in-flight tool arguments
-      # parse via PartialJson so consumers can read them mid-stream.
+      # expose a bounded, cached PartialJson preview so hostile fragmentation
+      # cannot make snapshot construction quadratic.
       #
       # Unknown event and block types are skipped by contract: the API adds
       # types over time and a live stream must survive them.
-      class Assembler
+      class Assembler # rubocop:disable Metrics/ClassLength -- one stream owns block order
         def initialize(model:, catalog_pricing: true)
           @model = model
           @catalog_pricing = catalog_pricing
@@ -20,17 +21,30 @@ module Mistri
           @usage = Usage.new
           @stop_reason = nil
           @done = false
+          @next_wire_index = 0
+          @open_wire_index = nil
+          @message_phase = false
         end
 
+        STREAM_EVENTS = %w[
+          message_start content_block_start content_block_delta content_block_stop
+          message_delta message_stop error
+        ].freeze
+
         def feed(record, &)
-          case record["type"]
+          type = record["type"]
+          if @done && STREAM_EVENTS.include?(type)
+            return protocol_error("stream continued after message_stop", &)
+          end
+
+          case type
           when "message_start" then message_start(record)
           when "content_block_start" then start_block(record, &)
           when "content_block_delta" then delta_block(record, &)
           when "content_block_stop" then stop_block(record, &)
-          when "message_delta" then message_delta(record)
-          when "message_stop" then @done = true
-          when "error" then @error = wire_error(record["error"])
+          when "message_delta" then message_delta(record, &)
+          when "message_stop" then stop_message(&)
+          when "error" then @error ||= wire_error(record["error"])
           end
         end
 
@@ -45,6 +59,9 @@ module Mistri
                                usage_known: @done && @usage_authoritative, &emit)
           end
           return fail_stream("stream ended without message_stop", &emit) unless @done
+          if @open_wire_index
+            return fail_stream("content block ended without content_block_stop", &emit)
+          end
 
           invalidate_cost unless @usage_authoritative
           @message = assemble(stop_reason: @stop_reason || StopReason::STOP)
@@ -53,7 +70,7 @@ module Mistri
         end
 
         def abort(&emit)
-          finalize_current
+          close_current(interrupted: true, &emit)
           invalidate_cost
           @message = assemble(stop_reason: StopReason::ABORTED, error_message: "aborted")
           emit&.call(Event.new(type: :error, reason: StopReason::ABORTED, message: @message,
@@ -65,12 +82,21 @@ module Mistri
         # as retryable, not fold into prose.
         def wire_error(payload)
           message = payload&.dig("message") || "provider error"
-          klass = payload&.dig("type").to_s.include?("overloaded") ? OverloadedError : ProviderError
-          klass.new(message)
+          type = payload&.dig("type").to_s
+          klass = case type
+                  when "authentication_error" then AuthenticationError
+                  when "rate_limit_error" then RateLimitError
+                  when "overloaded_error" then OverloadedError
+                  when "api_error" then ServerError
+                  when "timeout_error" then ProviderError
+                  else InvalidRequestError
+                  end
+          detail = type.empty? ? message : "#{type}: #{message}"
+          klass.new(detail)
         end
 
         def fail_stream(reason, usage_known: false, &emit)
-          finalize_current
+          close_current(interrupted: true, &emit)
           invalidate_cost unless usage_known
           text = case reason
                  when ProviderError then "#{reason.class}: #{reason.describe}"
@@ -86,7 +112,24 @@ module Mistri
 
         def message = @message ||= finish
 
-        Builder = Struct.new(:kind, :index, :text, :json, :signature, :id, :name, :redacted)
+        Builder = Struct.new(:kind, :index, :text, :json, :signature, :id, :name, :redacted,
+                             :argument_bytes, :argument_error, :argument_preview, :preview_bytes)
+        DELTA_KINDS = {
+          "text_delta" => :text,
+          "thinking_delta" => :thinking,
+          "signature_delta" => :thinking,
+          "input_json_delta" => :toolcall
+        }.freeze
+
+        PREVIEW_EAGER_BYTES = 4 * 1024
+        PREVIEW_STEP_BYTES = 4 * 1024
+        PREVIEW_MAX_BYTES = 64 * 1024
+        MAX_SIGNATURE_BYTES = ToolArguments::MAX_BYTES
+        MAX_REFUSAL_BYTES = 2048
+
+        def start(&emit)
+          emit&.call(Event.new(type: :start, partial: assemble))
+        end
 
         private
 
@@ -97,28 +140,80 @@ module Mistri
         end
 
         def start_block(record, &)
+          return if @error
+          return protocol_error("stream opened content after the message delta phase", &) \
+            if @message_phase
+          if @open_wire_index
+            return protocol_error("stream opened a content block before closing the prior block", &)
+          end
+
+          index = record["index"]
+          unless index == @next_wire_index
+            return protocol_error("stream opened a content block at an unexpected index", &)
+          end
+
+          @open_wire_index = index
+          @next_wire_index += 1
+
           block = record["content_block"] || {}
+          if block["type"] == "tool_use" && block.key?("input") &&
+             (!block["input"].is_a?(Hash) || !block["input"].empty?)
+            return protocol_error("tool_use started with nonempty input before its deltas", &)
+          end
+
           kind = { "text" => :text, "thinking" => :thinking, "redacted_thinking" => :thinking,
                    "tool_use" => :toolcall }[block["type"]]
           return unless kind
 
           @current = Builder.new(kind, @blocks.size, +"", +"", nil,
-                                 block["id"], block["name"], block["type"] == "redacted_thinking")
+                                 block["id"], block["name"], block["type"] == "redacted_thinking",
+                                 0, nil, ToolArguments::EMPTY_OBJECT, 0)
           @current.signature = block["data"] if @current.redacted
           emit_event(:"#{kind}_start", content_index: @current.index, &)
         end
 
         def delta_block(record, &)
+          return if @error
+          return protocol_error("stream sent content after the message delta phase", &) \
+            if @message_phase
+          unless @open_wire_index && record["index"] == @open_wire_index
+            return protocol_error("stream sent a delta for a different content block", &)
+          end
           return unless @current
 
           delta = record["delta"] || {}
-          case delta["type"]
-          when "text_delta" then text_delta(delta["text"], &)
-          when "thinking_delta" then thinking_delta(delta["thinking"], &)
-          when "signature_delta"
-            @current.signature = "#{@current.signature}#{delta["signature"]}"
-          when "input_json_delta" then input_delta(delta["partial_json"], &)
+          expected = DELTA_KINDS[delta["type"]]
+          return unless expected
+          unless @current.kind == expected
+            return protocol_error("stream sent a delta outside its matching content block", &)
           end
+
+          route_delta(delta, &)
+        end
+
+        def route_delta(delta, &)
+          case delta["type"]
+          when "text_delta"
+            text_delta(delta["text"], &)
+          when "thinking_delta"
+            thinking_delta(delta["thinking"], &)
+          when "signature_delta"
+            signature_delta(delta["signature"])
+          when "input_json_delta"
+            input_delta(delta["partial_json"], &)
+          end
+        end
+
+        def signature_delta(fragment)
+          fragment = fragment.to_s
+          current = @current.signature || +""
+          if fragment.bytesize > MAX_SIGNATURE_BYTES - current.bytesize
+            raise ResponseTooLargeError.new(kind: :thinking_signature,
+                                            limit: MAX_SIGNATURE_BYTES)
+          end
+
+          @current.signature = current
+          current << fragment
         end
 
         def text_delta(text, &)
@@ -132,22 +227,59 @@ module Mistri
         end
 
         def input_delta(fragment, &)
-          @current.json << fragment.to_s
+          append_arguments(@current, fragment.to_s)
           emit_event(:toolcall_delta, content_index: @current.index, delta: fragment, &)
         end
 
-        def stop_block(_record, &)
-          return unless @current
+        def append_arguments(builder, fragment)
+          return if builder.argument_error
 
-          block = finalize_current
-          kind = block.is_a?(ToolCall) ? :toolcall : block.type
-          fields = { content_index: @blocks.size - 1 }
-          fields[:tool_call] = block if block.is_a?(ToolCall)
-          fields[:content] = @blocks.last.is_a?(ToolCall) ? nil : builder_text(block)
-          emit_event(:"#{kind}_end", **fields.compact, &)
+          if fragment.bytesize > ToolArguments::MAX_BYTES - builder.argument_bytes
+            builder.argument_error = "too_large"
+            # String#clear may retain its backing allocation.
+            builder.json = +""
+            return
+          end
+
+          builder.json << fragment
+          builder.argument_bytes += fragment.bytesize
+          refresh_argument_preview(builder)
         end
 
-        def message_delta(record)
+        def refresh_argument_preview(builder)
+          target = [builder.argument_bytes, PREVIEW_MAX_BYTES].min
+          eager = target <= PREVIEW_EAGER_BYTES
+          milestone = target - builder.preview_bytes >= PREVIEW_STEP_BYTES
+          return unless eager || milestone || target == PREVIEW_MAX_BYTES
+          return if target == builder.preview_bytes
+
+          source = if target == builder.json.bytesize
+                     builder.json
+                   else
+                     builder.json.byteslice(0, target)
+                   end
+          builder.argument_preview = ToolArguments.freeze_partial(PartialJson.parse(source))
+          builder.preview_bytes = target
+        end
+
+        def stop_block(record, &)
+          return if @error
+          return protocol_error("stream stopped content after the message delta phase", &) \
+            if @message_phase
+          unless @open_wire_index && record["index"] == @open_wire_index
+            return protocol_error("stream stopped a different content block", &)
+          end
+
+          close_current(&) if @current
+          @open_wire_index = nil
+        end
+
+        def message_delta(record, &)
+          @message_phase = true
+          if @open_wire_index
+            return protocol_error("message delta arrived before the content block stopped", &)
+          end
+
           reason = record.dig("delta", "stop_reason")
           @stop_reason = map_stop_reason(reason) if reason
           if reason == "refusal"
@@ -163,30 +295,54 @@ module Mistri
           @usage_authoritative = true
         end
 
-        def finalize_current
+        def stop_message(&)
+          protocol_error("message stopped before the content block stopped", &) if @open_wire_index
+          @done = true
+        end
+
+        def close_current(interrupted: false, &)
           return unless @current
 
-          built = build_block(@current)
+          built = build_block(@current, interrupted:)
           @blocks << built
           @current = nil
+          kind = built.is_a?(ToolCall) ? :toolcall : built.type
+          fields = { content_index: @blocks.size - 1 }
+          fields[:tool_call] = built if built.is_a?(ToolCall)
+          fields[:content] = builder_text(built) unless built.is_a?(ToolCall)
+          emit_event(:"#{kind}_end", **fields, &)
           built
         end
 
-        def build_block(builder)
+        def build_block(builder, final: true, interrupted: false)
           case builder.kind
           when :text then Content::Text.new(text: builder.text)
           when :thinking
-            Content::Thinking.new(thinking: builder.text, signature: builder.signature,
-                                  redacted: builder.redacted)
+            signature = interrupted ? nil : builder.signature
+            redacted = interrupted ? false : builder.redacted
+            Content::Thinking.new(thinking: builder.text, signature:, redacted:)
           when :toolcall
+            arguments, error = if interrupted
+                                 [nil, "incomplete"]
+                               elsif final
+                                 if builder.argument_error
+                                   [nil, builder.argument_error]
+                                 else
+                                   parsed_arguments(builder.json)
+                                 end
+                               else
+                                 [builder.argument_preview, nil]
+                               end
             ToolCall.new(id: builder.id, name: builder.name,
-                         arguments: parsed_arguments(builder.json), signature: nil)
+                         arguments:, signature: nil, arguments_error: error,
+                         canonicalize: final)
           end
         end
 
         def parsed_arguments(json)
-          parsed = json.strip.empty? ? {} : PartialJson.parse(json)
-          parsed.is_a?(Hash) ? parsed : {}
+          return [{}, nil] if json.empty?
+
+          ToolArguments.parse_json(json)
         end
 
         def builder_text(block)
@@ -197,9 +353,24 @@ module Mistri
           emit&.call(Event.new(type:, partial: assemble, **fields))
         end
 
+        def protocol_error(message, &)
+          @error ||= ProviderError.new(message)
+          close_current(interrupted: true, &)
+          @blocks.map! do |block|
+            if block.is_a?(ToolCall)
+              block.with(arguments: nil,
+                         arguments_error: "incomplete")
+            else
+              block
+            end
+          end
+          @open_wire_index = nil
+          nil
+        end
+
         def assemble(**meta)
           blocks = @blocks.dup
-          blocks << build_block(@current) if @current
+          blocks << build_block(@current, final: false) if @current
           Message.assistant(content: blocks, model: @model, provider: :anthropic,
                             usage: @usage, **meta)
         end
@@ -218,10 +389,31 @@ module Mistri
         # retry of this one, so it fails fast; stop_details names the policy
         # category when the API provides one.
         def refusal_error
-          details = [@refusal&.dig("category"), @refusal&.dig("explanation")].compact.join(": ")
+          details = bounded_refusal(@refusal&.dig("category"),
+                                    @refusal&.dig("explanation"))
           text = +"the model refused to respond"
           text << " (#{details})" unless details.empty?
           InvalidRequestError.new(text)
+        end
+
+        def bounded_refusal(*values)
+          output = +""
+          values.each do |value|
+            next unless value.is_a?(String)
+
+            separator = output.empty? ? "" : ": "
+            remaining = MAX_REFUSAL_BYTES - output.bytesize - separator.bytesize
+            break unless remaining.positive?
+
+            output << separator << utf8_prefix(value, remaining)
+          end
+          output
+        end
+
+        def utf8_prefix(value, limit)
+          prefix = value.byteslice(0, limit).dup.force_encoding(value.encoding)
+          prefix.encode(Encoding::UTF_8, invalid: :replace, undef: :replace, replace: "?")
+                .scrub.byteslice(0, limit).to_s.force_encoding(Encoding::UTF_8).scrub
         end
 
         def parse_usage(raw)
@@ -245,7 +437,7 @@ module Mistri
         def invalidate_cost
           @usage = @usage.with(cost: @usage.cost.with(known: false))
         end
-      end
+      end # rubocop:enable Metrics/ClassLength
     end
   end
 end

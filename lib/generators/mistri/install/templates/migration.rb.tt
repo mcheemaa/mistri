@@ -7,8 +7,8 @@ class Create<%= table_name.camelize %> < ActiveRecord::Migration[<%= ActiveRecor
       t.timestamps
     end
 
-    # One session has one writer; a colliding append must raise, never
-    # silently reorder entries.
+    # The unique position is the optimistic concurrency boundary for
+    # independent appenders; a collision retries at the next position.
     add_index :<%= table_name %>, [:session_id, :position], unique: true
   end
 end

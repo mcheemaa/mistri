@@ -221,7 +221,10 @@ class TestBackgroundMode < Minitest::Test
 
   def test_a_dispatched_child_that_needs_approval_leaves_no_open_requests
     risky = Mistri::Tool.define("risky", "Needs a human sometimes.",
-                                needs_approval: ->(args) { args["danger"] == true }) { "did it" }
+                                needs_approval: ->(args) { args["danger"] == true },
+                                schema: -> { boolean :danger, "Whether it is dangerous" }) do
+      "did it"
+    end
     child_fake = fake({ tool_calls: [{ name: "risky", arguments: { "danger" => true } }] })
     dropper = drop_dispatcher
     spawn = Mistri::SubAgent.spawner(provider: child_fake, tools: [risky], dispatcher: dropper)
@@ -248,8 +251,8 @@ class TestBackgroundMode < Minitest::Test
     dispatched = Mistri::SubAgent.spawner(provider: fake,
                                           dispatcher: Mistri::Dispatchers::Inline.new)
 
-    refute bare.input_schema[:properties].key?("mode")
-    assert dispatched.input_schema[:properties].key?("mode")
-    assert dispatched.input_schema[:properties].key?("workspace")
+    refute bare.input_schema["properties"].key?("mode")
+    assert dispatched.input_schema["properties"].key?("mode")
+    assert dispatched.input_schema["properties"].key?("workspace")
   end
 end

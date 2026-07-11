@@ -103,14 +103,94 @@ end
 ```
 
 This gives providers an open JSON object schema, where `{}` remains valid. Tool
-arguments remain untrusted input: use the description for generation guidance
-and validate domain semantics in the handler. An empty object block currently
-emits the same open schema.
+arguments remain untrusted input. Mistri owns each completed JSON value and the
+tool's provider-facing schema as immutable UTF-8, requires each completed
+argument value to be an object, and validates its portable schema subset before
+hooks, approval predicates, or handlers can see it. An invalid call receives an
+error result the model can correct; valid calls from the same turn still run.
+The core boundary never coerces model input; an explicit per-tool normalizer,
+described below, is the deliberate compatibility exception. Arguments are
+bounded at 8 MiB, 64 levels, 10,000 JSON nodes, and 64 KiB per numeric token;
+the numeric ceiling applies to both encoded JSON and programmatic
+custom-provider values. The byte ceiling includes the complete serialized JSON
+shape, not only string payloads. Encoded Anthropic/OpenAI arguments take a
+linear lexical width/depth pass before `JSON.parse`, so a wide or pathological
+numeric document stops before allocating its full tree. Each completed outer
+SSE record receives its own 20,001-token lexical preflight plus depth and 64 KiB
+numeric-token ceilings. This bounds Gemini arguments before their enclosing
+record is decoded; it is not a claim that an SSE envelope has already been
+reduced to 10,000 canonical argument nodes. For fragmented Anthropic and OpenAI
+calls, the byte ceiling applies across every delta; raw delta events still
+arrive, while partial snapshots retain a bounded, deeply frozen preview that
+refreshes on a capped schedule.
+
+Completed calls also need non-empty UTF-8 string names, IDs, and opaque pairing
+metadata, with IDs unique for the lifetime of the session. If a custom provider
+violates that envelope, Mistri rejects the whole attempt before persistence or
+policy and lets the configured provider retry request a clean turn; no sibling
+tool runs from the malformed attempt.
+
+`ToolCall#arguments_error?` is the public distinction between usable arguments
+and a durable malformed call. Its non-nil string is an opaque diagnostic, not a
+stable enum for application branching; use the predicate and the typed tool
+result instead.
+
+Every tool input schema must be a JSON Schema object with `type: "object"`.
+A tool defined without a schema is a closed no-argument tool; undeclared model
+fields are rejected before policy. Once a schema is supplied, object schemas
+keep JSON Schema's default-open semantics unless a raw schema explicitly sets
+`additionalProperties: false`. This includes DSL schemas with named properties,
+so handlers should extract declared fields rather than mass-assign the argument
+hash. Use a raw closed schema when extra keys must be rejected.
+Mistri uses JSON Schema 2020-12; an omitted `$schema` means that dialect, an
+explicit older dialect is rejected, and tuple arrays use `prefixItems` rather
+than the pre-2020-12 array form of `items`. The built-in validator enforces JSON
+types and type unions, `enum`, `required`, declared `properties`, `prefixItems`,
+one-schema array `items`, nested boolean schemas, and boolean or schema-valued
+`additionalProperties`. Other keywords remain provider-facing generation
+guidance unless the tool supplies a complete validator. This includes
+constraints such as `pattern`, `format`, and numeric or length bounds. An empty
+object block currently emits the same open schema.
 
 This freeform DSL shape cannot be represented by strict constrained output
 without changing its meaning, so `Schema.strict` raises instead of silently
 narrowing it to an object that only accepts `{}`. Use declared properties, or an
 explicitly closed raw schema, for constrained task output.
+
+Use `argument_validator:` for supplemental host or domain rules. It receives
+the same deeply frozen arguments and canonical schema that policy and execution
+use, and returns an array of model-readable violations. It cannot replace the
+arguments or weaken a core failure:
+
+```ruby
+invoice = Mistri::Tool.define(
+  "pay_invoice", "Pays an approved invoice.",
+  input_schema: invoice_schema,
+  argument_validator: lambda { |args, _schema|
+    args["invoice_id"].start_with?("inv_") ? [] : ["$.invoice_id must identify an invoice"]
+  }
+) do |args|
+  Invoices.pay!(args.fetch("invoice_id"))
+end
+```
+
+Use `complete_argument_validator:` when a host validator implements the full
+schema. It has the same `(args, schema)` contract, still runs only after core
+passes, and is deliberately distinct from a supplemental validator. Any
+non-empty `patternProperties` requires this explicit authority because core
+cannot enforce a pattern's value schema even when unmatched keys remain open.
+The two validator options are mutually exclusive.
+
+Validator errors are bounded before they reach a model; they should still
+describe expectations rather than include received field values or secrets.
+
+`argument_normalizer:` is the separate, explicit compatibility seam for a tool
+that intentionally accepts legacy aliases. It runs once before validation and
+must return a JSON object; the normalized value is what policy sees, what a
+human approves, and what the handler receives. It should be pure,
+deterministic, and idempotent. A direct `Tool#call` is a trusted host invocation:
+it applies that tool's normalizer for compatibility but does not run the Agent's
+model-input validation boundary.
 
 A tool result carries model content, host-only UI, and a failure fact. The
 `ui` payload rides the `:tool_result` event and persists with the session, but
@@ -118,12 +198,16 @@ never reaches a provider. Return `error: true` for an expected tool failure
 that the model should handle rather than treating as a successful answer:
 
 ```ruby
-Mistri::Tool.define("edit_page", "Applies a page edit.") do |args|
-  page = apply(args)
+Mistri::Tool.define("edit_page", "Applies a page edit.", schema: -> {
+  object :changes, "Page changes", required: true
+}) do |args|
+  page = apply(args.fetch("changes"))
   Mistri::ToolResult.new(content: "Saved.", ui: { "html" => page })
 end
 
-Mistri::Tool.define("lookup", "Looks up an account.") do |args|
+Mistri::Tool.define("lookup", "Looks up an account.", schema: -> {
+  string :id, "Account ID", required: true
+}) do |args|
   account = Accounts.find_by(id: args["id"])
   account || Mistri::ToolResult.new(content: "Account not found.", error: true)
 end
@@ -156,8 +240,10 @@ without closure gymnastics:
 agent = Mistri.agent("claude-opus-4-8", tools: tools,
                      context: { traveler: current_traveler })
 
-Mistri::Tool.define("book_hotel", "Books the chosen hotel.") do |args, context|
-  Bookings.create!(args, traveler: context.app[:traveler])
+Mistri::Tool.define("book_hotel", "Books the chosen hotel.", schema: -> {
+  string :hotel_id, "Hotel ID", required: true
+}) do |args, context|
+  Bookings.create!(args.fetch("hotel_id"), traveler: context.app[:traveler])
 end
 ```
 
@@ -186,8 +272,11 @@ The decision is a one-line session write from any process, any time later;
 
 ```ruby
 book_hotel = Mistri::Tool.define("book_hotel", "Books the chosen hotel.",
-                                 needs_approval: ->(args) { args["total_usd"].to_i > 500 }) do |args|
-  Bookings.create!(args)
+                                 schema: lambda {
+                                   number :total_usd, "Quoted total", required: true
+                                 },
+                                 needs_approval: ->(args) { args["total_usd"] > 500 }) do |args|
+  Bookings.create!(total_usd: args.fetch("total_usd"))
 end
 
 result = agent.run("Book the corner suite for the Lisbon trip")
@@ -202,6 +291,25 @@ Mistri.agent("claude-opus-4-8", tools: tools, session: reloaded).resume
 
 The harness renders nothing: it emits an `:approval_needed` event and your
 app draws the UI.
+
+The preceding assistant message remains the durable provider source. When a
+normalizer changes arguments, the approval stores the exact prepared call the
+human reviewed plus an explicit source marker. `resume` verifies pairing
+metadata and revalidates those approved arguments without rerunning a
+normalizer. Tool-call IDs are session-wide correlation keys; duplicate or
+malformed legacy histories fail before a handler or provider runs. Persisted
+results must follow one matching call with the same name and settle in call
+order within each direct or approval phase; a compaction boundary cannot hide
+an open approval or split a completed call from its result.
+
+Only one Agent may actively call `run` or `resume` for a session at a time.
+Concurrent appenders such as approval decisions, steers, and worker reports are
+supported. The current execution contract is still at-least-once across the
+gap between handler invocation and durable result persistence: a crash, store
+failure, or subscriber exception in that gap can leave an approved call open,
+and a later resume can execute it again. Simultaneous runners widen the same
+risk. Until durable atomic claims land, hosts must serialize active runners and
+make side effects idempotent or reconcilable.
 
 ## Steering
 
@@ -234,6 +342,11 @@ resumed = Mistri.agent("claude-opus-4-8", session: Mistri::Session.new(store:, i
 resumed.run("Now finish it.")
 ```
 
+Sessions can move between built-in providers. Opaque reasoning and pairing
+metadata only replays to its provider of origin. In particular, a completed
+foreign tool exchange becomes ordinary text for Gemini, preserving its result
+without manufacturing a signed Gemini function call.
+
 In Rails, generate a model (name it whatever you like) and use the
 ActiveRecord store:
 
@@ -244,6 +357,16 @@ $ bin/rails generate mistri:install AgentEntry
 ```ruby
 require "mistri/stores/active_record"
 store = Mistri::Stores::ActiveRecord.new(AgentEntry)
+```
+
+The `Stores::ActiveRecord` store needs LONGTEXT for `payload` on MySQL and Trilogy
+because one legal parallel tool turn can exceed MEDIUMTEXT even when each call
+stays inside its own limit. The generator uses `size: :long` for new
+MySQL-family tables. An existing installation needs its own migration; changing
+the generator cannot widen a table that already exists:
+
+```ruby
+change_column :agent_entries, :payload, :text, size: :long, null: false
 ```
 
 ## Compaction
@@ -283,7 +406,16 @@ its kept tail.
 A run that must end in JSON matching a schema. Tools run as usual; providers
 constrain the final answer natively where they can, and the answer is
 validated client-side everywhere. A violation goes back to the model once,
-then raises. You get a guaranteed shape or a loud error, never silence.
+then raises. Task output uses the same portable subset and 8 MiB, 64-level,
+10,000-node, and 64 KiB numeric-token limits as tool input. A schema containing
+an assertion outside that subset fails at configuration time instead of
+claiming a guarantee Mistri cannot enforce. The prompt and final local check
+share one deeply frozen strict schema snapshot. Each provider derives a native
+constraint only when its structured-output subset can represent that contract,
+the model is catalogued for that provider, and documented complexity ceilings
+are satisfied. Otherwise Mistri omits the native constraint and relies on the
+same prompt, validation, and correction loop. You get a guaranteed shape or a
+loud error, never silence.
 
 ```ruby
 schema = {
@@ -444,6 +576,24 @@ tools = Mistri::MCP.tools(client, prefix: "linear",
 agent = Mistri.agent("claude-opus-4-8", tools: tools)
 ```
 
+Common MCP map input schemas work with Mistri's portable validator through
+schema-valued `additionalProperties`. Because a remote schema can guard approval
+policy, any standard assertion outside that subset requires the host's explicit,
+zero-coercion complete validator:
+
+```ruby
+tools = Mistri::MCP.tools(
+  client,
+  complete_argument_validator: ->(args, schema) { validator.errors(args, schema) }
+)
+```
+
+Omitted MCP `inputSchema` means a no-argument object. Explicit `null` and
+non-object roots are configuration errors. Same-document `$ref` and
+`$dynamicRef` values are accepted only with a complete validator; external
+references are rejected so validation never performs hidden network or file
+resolution.
+
 Remote URLs are untrusted input. Mistri accepts public HTTPS destinations by
 default, rejects the whole DNS result when any answer is non-public, and pins an
 approved address while keeping the hostname for Host, SNI, and certificate
@@ -485,11 +635,21 @@ collisions fail loud instead of one server's tool silently shadowing another's.
 
 Inbound JSON bodies, individual SSE lines, and stdio JSON records default to an
 8 MiB `max_record_bytes:` ceiling. It limits one atomic record, not the total
-length of a stream. Oversized responses close the transport; for `tools/call`,
-the error explicitly says the operation may have completed and must not be
-retried automatically. For a trusted server, configure a larger explicit limit.
-Other paths surface `ResponseTooLargeError`; its `kind` and `limit` also ride a
-provider error turn as machine-readable data.
+length of a stream. Each completed SSE JSON record also gets one bounded linear
+lexical scan with a 20,001-token ceiling, plus depth and 64 KiB numeric-token
+ceilings, before parsing. That scan can raise `ResponseTooComplexError`; byte
+overflow raises `ResponseTooLargeError`. Both errors carry `kind` and `limit` as
+machine-readable data.
+
+Either boundary closes and resets the MCP wire, including its session, protocol
+version, and server information, so the next operation performs a fresh
+handshake. If an unconfirmed `tools/call` crosses either boundary, Mistri raises
+`AmbiguousDeliveryError`: the operation may have completed and must not be
+retried automatically. A matching result received before an invalid trailing
+SSE record remains authoritative, but the wire is still reset. For a trusted
+server, configure a larger explicit byte limit; the structural ceilings remain
+fixed.
+
 Large tool output is better stored by the server or host and returned as an MCP
 `resource_link`; Mistri renders its URI for the model and never fetches the
 target itself.
@@ -620,6 +780,19 @@ are loop-owned: `:done` and `:error` reach the subscriber only for the
 accepted attempt, so a recovered retry never flashes an error it then walks
 back.
 
+Every provider attempt begins with one `:start` event carrying an immutable
+empty assistant snapshot. Each opened text, thinking, or tool-call block then
+has a matched start/delta/end sequence, including before a terminal failure.
+
+Built-in assemblers fail malformed known stream lifecycles instead of accepting
+content that could become executable. Terminal records fence later known
+content. Anthropic requires sequential/open block indexes and a delta kind that
+matches the open block. OpenAI requires one open item, checks its kind and any
+present item/output correlation fields on known deltas, and requires terminal
+event and response status to agree. Unknown future event and block types remain
+ignorable for forward compatibility. Interrupted tool calls remain marked
+incomplete and are removed before Agent persistence or execution.
+
 Tool execution emits `:tool_started` when each resolved call commits to
 execution, then `:tool_result` with an explicit `tool_error` boolean. Calls
 still queued behind `max_concurrency`, blocked by policy, waiting for approval,
@@ -660,9 +833,10 @@ Mistri.agent("gemini-3.1-pro-preview",
 ## Testing
 
 `rake test` is hermetic and fast. The Fake provider streams like the real
-ones, tool-call arguments included: each delta's partial carries the
-in-progress call with arguments parsed so far, so a UI that renders tool
-input as it arrives tests headless. `rake integration` runs every feature
+ones for ordinary small fixtures, tool-call arguments included: its eager
+partials make UI tests simple, while real Anthropic/OpenAI assemblers expose a
+bounded cached preview under adversarial fragmentation. A UI that renders tool
+input as it arrives still tests headless. `rake integration` runs every feature
 end to end against real provider APIs, once per model in the matrix: an
 Anthropic, an OpenAI, and a Gemini model by default. Scenarios assert that
 coined codenames (a ghost of a word like `Wraithowyn` exists in no training
@@ -676,8 +850,9 @@ $ MISTRI_INTEGRATION_MODELS=claude-opus-4-8 bundle exec rake integration
 
 ## Roadmap
 
-Next up: strict tool schemas, provider-native MCP passthrough, and the
-hardening that falls out of the first production applications.
+Next up: atomic cross-process claims for active session runners,
+provider-native MCP passthrough, optional full JSON Schema adapters, and
+resource-backed handling for very large tool results.
 
 ## Credits
 

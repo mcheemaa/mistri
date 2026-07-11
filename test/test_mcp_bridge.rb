@@ -29,6 +29,145 @@ class TestMcpBridge < Minitest::Test
                  tools.first.spec[:input_schema])
   end
 
+  def test_mcp_map_schemas_validate_without_an_adapter
+    listed = [{ "name" => "headers", "description" => "Accepts headers.",
+                "inputSchema" => {
+                  "type" => "object",
+                  "additionalProperties" => { "type" => "string" }
+                } }]
+    tool = Mistri::MCP.tools(Struct.new(:tools).new(listed)).first
+
+    assert_empty tool.argument_violations("authorization" => "redacted")
+    assert_equal ["$.attempts must be string, got integer"],
+                 tool.argument_violations("attempts" => 2)
+  end
+
+  def test_mcp_complete_validator_seam_is_explicit_and_names_bad_tools
+    listed = [{ "name" => "labels", "description" => "Accepts labels.",
+                "inputSchema" => {
+                  "type" => "object",
+                  "patternProperties" => { "^x-" => { "type" => "string" } },
+                  "additionalProperties" => false
+                } }]
+    client = Struct.new(:tools).new(listed)
+
+    error = assert_raises(Mistri::ConfigurationError) { Mistri::MCP.tools(client) }
+
+    assert_match(/MCP tool "labels"/, error.message)
+    validated = []
+    tool = Mistri::MCP.tools(
+      client,
+      complete_argument_validator: lambda { |arguments, _schema|
+        validated << arguments
+        []
+      }
+    ).first
+
+    assert_empty tool.argument_violations("x-team" => "platform")
+    assert_equal [{ "x-team" => "platform" }], validated
+  end
+
+  def test_mcp_rejects_a_non_object_tool_schema
+    client = Struct.new(:tools).new(
+      [{ "name" => "disabled", "description" => "Disabled.", "inputSchema" => false }]
+    )
+
+    error = assert_raises(Mistri::ConfigurationError) { Mistri::MCP.tools(client) }
+
+    assert_match(/MCP tool "disabled"/, error.message)
+    assert_match(/must declare type object/, error.message)
+  end
+
+  def test_mcp_distinguishes_an_omitted_schema_from_explicit_null
+    omitted = Struct.new(:tools).new([{ "name" => "ping", "description" => "Pings." }])
+    null = Struct.new(:tools).new(
+      [{ "name" => "broken", "description" => "Broken.", "inputSchema" => nil }]
+    )
+
+    tool = Mistri::MCP.tools(omitted).first
+    error = assert_raises(Mistri::ConfigurationError) { Mistri::MCP.tools(null) }
+
+    assert_equal({ "type" => "object", "properties" => {},
+                   "additionalProperties" => false }, tool.input_schema)
+    assert_equal ["$.surprise is not allowed"], tool.argument_violations("surprise" => true)
+    assert_match(/MCP tool "broken"/, error.message)
+    assert_match(/inputSchema must be an object, not null/, error.message)
+  end
+
+  def test_mcp_requires_a_complete_validator_for_unimplemented_assertions
+    listed = [{ "name" => "bounded", "description" => "Checks a bounded value.",
+                "inputSchema" => {
+                  "type" => "object",
+                  "properties" => { "count" => { "type" => "integer", "minimum" => 1 } }
+                } }]
+    client = Struct.new(:tools).new(listed)
+
+    error = assert_raises(Mistri::ConfigurationError) { Mistri::MCP.tools(client) }
+
+    assert_match(/MCP input schema uses assertions Mistri cannot validate/, error.message)
+    assert_match(/\$\.properties\.count\.minimum/, error.message)
+
+    tool = Mistri::MCP.tools(
+      client,
+      complete_argument_validator: ->(*) { [] }
+    ).first
+
+    assert_empty tool.argument_violations("count" => 1)
+  end
+
+  def test_mcp_does_not_promote_format_annotations_into_assertions
+    client = Struct.new(:tools).new(
+      [{ "name" => "notify", "description" => "Notifies.",
+         "inputSchema" => {
+           "type" => "object",
+           "properties" => { "email" => { "type" => "string", "format" => "email" } }
+         } }]
+    )
+
+    tool = Mistri::MCP.tools(client).first
+
+    assert_empty tool.argument_violations("email" => "host-policy-validates-if-needed")
+  end
+
+  def test_mcp_rejects_malformed_unimplemented_assertions_before_bridging
+    client = Struct.new(:tools).new(
+      [{ "name" => "broken_dependencies", "description" => "Broken.",
+         "inputSchema" => { "type" => "object", "dependentRequired" => [] } }]
+    )
+
+    error = assert_raises(Mistri::ConfigurationError) { Mistri::MCP.tools(client) }
+
+    assert_match(/MCP tool "broken_dependencies"/, error.message)
+    assert_match(/dependentRequired must be an object/, error.message)
+  end
+
+  def test_mcp_allows_only_same_document_references_with_a_complete_validator
+    base = {
+      "type" => "object",
+      "$defs" => { "id" => { "type" => "string" } },
+      "properties" => { "id" => { "$ref" => "#/$defs/id" } }
+    }
+    complete = ->(*) { [] }
+    local = Struct.new(:tools).new(
+      [{ "name" => "local", "description" => "Local ref.", "inputSchema" => base }]
+    )
+    external_schema = base.merge(
+      "properties" => { "id" => { "$ref" => "https://example.com/id.json" } }
+    )
+    external = Struct.new(:tools).new(
+      [{ "name" => "external", "description" => "External ref.",
+         "inputSchema" => external_schema }]
+    )
+
+    assert Mistri::MCP.tools(local, complete_argument_validator: complete).first
+    error = assert_raises(Mistri::ConfigurationError) do
+      Mistri::MCP.tools(external, complete_argument_validator: complete)
+    end
+
+    assert_match(/MCP tool "external"/, error.message)
+    assert_match(/same-document reference beginning with #/, error.message)
+  end
+
   def test_answers_map_text_errors_images_and_structured_content
     text = { "content" => [{ "type" => "text", "text" => "found 3" },
                            { "type" => "text", "text" => "more" }] }

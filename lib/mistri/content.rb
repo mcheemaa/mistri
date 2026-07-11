@@ -17,7 +17,10 @@ module Mistri
     # `signature` carries opaque provider metadata that must round-trip, such as
     # the OpenAI Responses message id and output phase.
     Text = Data.define(:text, :signature) do
-      def initialize(text:, signature: nil) = super(text: Content.freeze_string(text), signature:)
+      def initialize(text:, signature: nil)
+        signature = Content.freeze_string(signature) if signature.is_a?(String)
+        super(text: Content.freeze_string(text), signature:)
+      end
 
       def type = :text
 
@@ -29,6 +32,7 @@ module Mistri
     # filter hid, leaving only the signature.
     Thinking = Data.define(:thinking, :signature, :redacted) do
       def initialize(thinking:, signature: nil, redacted: false)
+        signature = Content.freeze_string(signature) if signature.is_a?(String)
         super(thinking: Content.freeze_string(thinking), signature:, redacted:)
       end
 
@@ -89,8 +93,10 @@ module Mistri
                      redacted: h.fetch("redacted", false))
       when "image" then Image.new(data: h["data"], mime_type: h["mime_type"])
       when "tool_call"
-        ToolCall.new(id: h["id"], name: h["name"], arguments: h["arguments"] || {},
-                     signature: h["signature"])
+        arguments = h.key?("arguments") ? h["arguments"] : {}
+        ToolCall.new(id: h["id"], name: h["name"], arguments:,
+                     signature: h["signature"], arguments_error: h["arguments_error"],
+                     provider_call_id: h["provider_call_id"])
       else raise ArgumentError, "unknown content block type #{h["type"].inspect}"
       end
     end

@@ -172,11 +172,22 @@ module Mistri
       calls = blocks.filter_map do |block|
         next unless block.is_a?(Hash) && block["type"] == "tool_call"
 
-        "#{block["name"]}(#{JSON.generate(block["arguments"] || {})[0, 80]})"
+        "#{block["name"]}(#{Console.render_arguments(block)})"
       end
       text = Console.text_of(message["content"])
       parts = [text[0, 240], *calls].reject { |part| part.to_s.empty? }
       "#{message["role"]}: #{parts.join(" | ")}" unless parts.empty?
+    end
+
+    def render_arguments(block)
+      if block["arguments_error"]
+        details = { "arguments_error" => block["arguments_error"] }
+        details = { "arguments" => block["arguments"] }.merge(details) if block.key?("arguments")
+        return JSON.generate(details)[0, 80]
+      end
+
+      arguments = block.key?("arguments") ? block["arguments"] : {}
+      JSON.generate(arguments)[0, 80]
     end
 
     def text_of(content)

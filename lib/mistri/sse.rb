@@ -70,6 +70,18 @@ module Mistri
       line.strip!
       return if line.empty? || line == "[DONE]"
 
+      case ToolArguments.raw_json_resource_error(line)
+      when "too_many_nodes"
+        raise ResponseTooComplexError.new(kind: :sse_record_tokens,
+                                          limit: ToolArguments::MAX_LEXICAL_TOKENS)
+      when "too_deep"
+        raise ResponseTooComplexError.new(kind: :sse_record_depth,
+                                          limit: ToolArguments::MAX_DEPTH)
+      when "number_too_large"
+        raise ResponseTooComplexError.new(kind: :sse_numeric_token,
+                                          limit: ToolArguments::MAX_NUMBER_BYTES)
+      end
+
       decoded = JSON.parse(line)
       yield decoded if decoded.is_a?(Hash)
     rescue JSON::ParserError

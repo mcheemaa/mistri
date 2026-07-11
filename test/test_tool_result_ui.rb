@@ -73,13 +73,15 @@ class TestToolResultUi < Minitest::Test
     )
 
     anthropic = Mistri::Providers::Anthropic::Serializer.messages([legacy])
-    gemini = Mistri::Providers::Gemini::Serializer.contents([legacy])
+    call = Mistri::ToolCall.new(id: "c1", name: "lookup", arguments: {})
+    source = Mistri::Message.assistant(content: [call], provider: :gemini)
+    gemini = Mistri::Providers::Gemini::Serializer.contents([source, legacy])
     openai = Mistri::Providers::OpenAI::Serializer.input_items([legacy])
 
     refute_predicate legacy, :tool_error_known?
     refute anthropic.first[:content].first.key?(:is_error)
     assert_equal({ "result" => "old result" },
-                 gemini.first[:parts].first[:functionResponse][:response])
+                 gemini.last[:parts].first[:functionResponse][:response])
     assert_equal "old result", openai.first[:output]
   end
 

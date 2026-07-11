@@ -65,7 +65,19 @@ module Mistri
       @kind = kind
       @limit = limit
       label = kind.to_s.tr("_", " ")
-      super("#{label} exceeded max_record_bytes (#{limit} bytes)")
+      super("#{label} exceeded the byte limit (#{limit} bytes)")
+    end
+  end
+
+  # A JSON protocol record crossed a structural boundary before parsing.
+  class ResponseTooComplexError < Error
+    attr_reader :kind, :limit
+
+    def initialize(kind:, limit:)
+      @kind = kind
+      @limit = limit
+      label = kind.to_s.tr("_", " ")
+      super("#{label} exceeded the complexity limit (#{limit})")
     end
   end
 
@@ -129,6 +141,9 @@ module Mistri
           "retry_after" => reason.retry_after }.compact
       when ResponseTooLargeError
         { "type" => "ResponseTooLargeError", "kind" => reason.kind.to_s,
+          "limit" => reason.limit }
+      when ResponseTooComplexError
+        { "type" => "ResponseTooComplexError", "kind" => reason.kind.to_s,
           "limit" => reason.limit }
       when ProviderError
         { "type" => reason.class.name.split("::").last, "status" => reason.status }.compact

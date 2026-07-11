@@ -6,7 +6,8 @@ class TestErrors < Minitest::Test
   def test_every_error_rescues_as_mistri_error
     [Mistri::ConfigurationError, Mistri::ProviderError, Mistri::AuthenticationError,
      Mistri::RateLimitError, Mistri::OverloadedError, Mistri::ServerError,
-     Mistri::ResponseTooLargeError, Mistri::AmbiguousDeliveryError,
+     Mistri::ResponseTooLargeError, Mistri::ResponseTooComplexError,
+     Mistri::AmbiguousDeliveryError,
      Mistri::InvalidRequestError, Mistri::SchemaError, Mistri::AbortError,
      Mistri::BudgetError].each do |klass|
       assert_operator klass, :<, Mistri::Error
@@ -40,6 +41,16 @@ class TestErrors < Minitest::Test
 
     assert_equal :json_body, error.kind
     assert_equal 1024, error.limit
-    assert_equal "json body exceeded max_record_bytes (1024 bytes)", error.message
+    assert_equal "json body exceeded the byte limit (1024 bytes)", error.message
+  end
+
+  def test_response_too_complex_error_carries_only_boundary_metadata
+    error = Mistri::ResponseTooComplexError.new(kind: :sse_record_nodes, limit: 10_000)
+
+    assert_equal :sse_record_nodes, error.kind
+    assert_equal 10_000, error.limit
+    assert_equal "sse record nodes exceeded the complexity limit (10000)", error.message
+    assert_equal({ "type" => "ResponseTooComplexError", "kind" => "sse_record_nodes",
+                   "limit" => 10_000 }, Mistri::ErrorData.for(error))
   end
 end

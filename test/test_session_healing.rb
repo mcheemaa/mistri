@@ -90,4 +90,25 @@ class TestSessionHealing < Minitest::Test
     assert_predicate result, :completed?
     assert_includes agent.session.messages.select(&:tool?).map(&:text), "sent"
   end
+
+  def test_approval_reconstruction_preserves_null_and_argument_errors
+    session = Mistri::Session.new(store: Mistri::Stores::Memory.new)
+    null = { "type" => "tool_call", "id" => "null", "name" => "inspect",
+             "arguments" => nil }
+    bad = { "type" => "tool_call", "id" => "bad", "name" => "inspect",
+            "arguments" => nil, "arguments_error" => "invalid_json" }
+    session.append("message", "message" => {
+                     "role" => "assistant", "content" => [null, bad],
+                     "stop_reason" => "tool_use"
+                   })
+    session.append("approval_request", "call" => null)
+    session.append("approval_request", "call" => bad)
+
+    calls = session.open_approvals.map { |entry| entry[:call] }
+
+    assert_nil calls.first.arguments
+    assert_nil calls.first.arguments_error
+    assert_nil calls.last.arguments
+    assert_equal "invalid_json", calls.last.arguments_error
+  end
 end

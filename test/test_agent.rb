@@ -10,7 +10,10 @@ class TestAgent < Minitest::Test
                                                                            "b" => 3 } }] },
                                              { text: "The sum is 5." }
                                            ])
-    add = Mistri::Tool.define("add", "Add two numbers.") { |args| (args["a"] + args["b"]).to_s }
+    add = Mistri::Tool.define("add", "Add two numbers.", schema: lambda {
+      integer :a, "First number", required: true
+      integer :b, "Second number", required: true
+    }) { |args| (args["a"] + args["b"]).to_s }
     agent = Mistri::Agent.new(provider:, tools: [add])
 
     message = agent.run("What is 2 plus 3?")
@@ -66,6 +69,18 @@ class TestAgent < Minitest::Test
     assert_predicate tool_result, :tool?
     assert_equal Mistri::ToolExecutor::INTERRUPTED, tool_result.text
     assert_predicate tool_result, :tool_error?
+  end
+
+  def test_a_length_limited_turn_never_executes_its_tool_calls
+    turn = { tool_calls: [{ name: "danger", arguments: {} }], stop_reason: :length }
+    provider = Mistri::Providers::Fake.new(turns: [turn])
+    danger = Mistri::Tool.define("danger", "Must not run.") { flunk "executed after truncation" }
+    agent = Mistri::Agent.new(provider:, tools: [danger])
+
+    message = agent.run("go")
+
+    assert_equal :length, message.stop_reason
+    assert_equal Mistri::ToolExecutor::INTERRUPTED, agent.session.messages.last.text
   end
 
   def test_a_budget_stops_the_run_between_turns

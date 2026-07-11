@@ -1,5 +1,7 @@
 # frozen_string_literal: true
 
+require_relative "schema_capabilities"
+
 module Mistri
   module Providers
     # The Gemini API (v1beta generateContent), streamed over SSE and
@@ -32,11 +34,18 @@ module Mistri
         @catalog_pricing && Models.priced?(model) && tier_known
       end
 
+      def native_output_schema(schema)
+        return unless Models.find(model)&.provider == :gemini
+
+        SchemaCapabilities.derive(schema, :gemini)
+      end
+
       def stream(messages:, system: nil, tools: [], signal: nil, **overrides, &emit)
         model = overrides.fetch(:model, @model)
         service_tier = overrides.fetch(:service_tier, @service_tier)
         assembler = Gemini::Assembler.new(model: model, catalog_pricing: @catalog_pricing,
                                           service_tier:)
+        assembler.start(&emit)
         body = build_body(messages, system, tools, overrides)
         path = "/v1beta/models/#{model}:streamGenerateContent?alt=sse"
         outcome = @transport.stream_post(path, body: body, headers: headers,

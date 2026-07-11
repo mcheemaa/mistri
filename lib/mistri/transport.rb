@@ -91,7 +91,7 @@ module Mistri
           end
           parsed
         end
-      rescue ResponseTooLargeError, ProviderError, JSON::ParserError
+      rescue ResponseTooLargeError, ResponseTooComplexError, ProviderError, JSON::ParserError
         teardown
         raise
       end
@@ -131,7 +131,7 @@ module Mistri
           read_either(response, &block)
         end
         response_headers
-      rescue ResponseTooLargeError, ProviderError
+      rescue ResponseTooLargeError, ResponseTooComplexError, ProviderError
         teardown
         raise
       rescue IOError, SocketError, SystemCallError, Timeout::Error, JSON::ParserError,
@@ -183,7 +183,7 @@ module Mistri
         # than let the next request read stale frames.
         teardown if aborted
         aborted ? :aborted : nil
-      rescue ResponseTooLargeError, ProviderError
+      rescue ResponseTooLargeError, ResponseTooComplexError, ProviderError
         teardown
         raise
       rescue IOError, SocketError, SystemCallError, Timeout::Error => e

@@ -3,13 +3,197 @@
 require "json"
 require_relative "test_helper"
 
-class TestTool < Minitest::Test
-  def test_a_raw_json_schema_passes_straight_through
-    raw = { type: "object", properties: { x: { type: "string" } } }
+class TestTool < Minitest::Test # rubocop:disable Metrics/ClassLength -- one public tool contract
+  def test_argument_violations_report_numeric_resource_limits_honestly
+    arguments = Mistri.const_get(:ToolArguments, false)
+    huge_integer = 1 << ((arguments::MAX_NUMBER_BYTES + 1) * 4)
+    tool = Mistri::Tool.define("measure", "Measures.", schema: lambda {
+      integer :value, "Value", required: true
+    }) { "ok" }
+
+    assert_equal ["$ validation limit exceeded"],
+                 tool.argument_violations({ "value" => huge_integer })
+  end
+
+  def test_empty_schema_is_deeply_frozen
+    assert_predicate Mistri::Tool::EMPTY_SCHEMA, :frozen?
+    assert_predicate Mistri::Tool::EMPTY_SCHEMA.fetch(:properties), :frozen?
+    assert_predicate Mistri::Tool::EMPTY_SCHEMA.fetch(:required), :frozen?
+    refute Mistri::Tool::EMPTY_SCHEMA.fetch(:additionalProperties)
+  end
+
+  def test_a_raw_json_schema_becomes_provider_equivalent_json
+    raw = { type: :object, properties: { x: { type: :string } } }
     tool = Mistri::Tool.define("echo", "Echoes.", input_schema: raw) { |args| args["x"] }
 
-    assert_equal(raw, tool.spec[:input_schema])
+    assert_equal({ "type" => "object",
+                   "properties" => { "x" => { "type" => "string" } } },
+                 tool.spec[:input_schema])
     assert_equal "hi", tool.call({ "x" => "hi" })
+  end
+
+  def test_a_tool_owns_one_immutable_provider_and_validation_schema
+    raw = { type: "object", properties: { value: { type: "string" } } }
+    tool = Mistri::Tool.define("echo", "Echoes.", input_schema: raw) { "ok" }
+
+    raw[:properties][:value][:type] = "number"
+
+    assert_equal "string", tool.input_schema.dig("properties", "value", "type")
+    assert_predicate tool.input_schema, :frozen?
+    assert_predicate tool.input_schema.dig("properties", "value"), :frozen?
+    assert_empty tool.argument_violations("value" => "text")
+  end
+
+  def test_raw_and_built_schemas_are_mutually_exclusive
+    error = assert_raises(ArgumentError) do
+      Mistri::Tool.define(
+        "ambiguous", "Ambiguous.", input_schema: { type: "object" }, schema: -> {}
+      ) { "ran" }
+    end
+
+    assert_equal "choose input_schema or schema, not both", error.message
+  end
+
+  def test_false_input_schema_never_becomes_an_open_default
+    error = assert_raises(Mistri::ConfigurationError) do
+      Mistri::Tool.define("never", "Accepts nothing.", input_schema: false) { "ran" }
+    end
+
+    assert_equal "$ must declare type object for tool arguments", error.message
+  end
+
+  def test_complete_validation_authority_is_explicit
+    schema = {
+      type: "object",
+      patternProperties: { "^x-" => { type: "integer" } },
+      additionalProperties: false
+    }
+    supplemental = ->(*) { [] }
+
+    assert_raises(Mistri::ConfigurationError) do
+      Mistri::Tool.define("plain", "Plain.", input_schema: schema) { "ran" }
+    end
+    assert_raises(Mistri::ConfigurationError) do
+      Mistri::Tool.define(
+        "supplemental", "Supplemental.", input_schema: schema,
+                                         argument_validator: supplemental
+      ) { "ran" }
+    end
+
+    checked = []
+    tool = Mistri::Tool.define(
+      "complete", "Complete.",
+      input_schema: schema,
+      complete_argument_validator: lambda { |arguments, owned_schema|
+        checked << [arguments, owned_schema]
+        arguments.key?("x-count") ? [] : ["$.x-count is required by the host validator"]
+      }
+    ) { "ran" }
+
+    assert_empty tool.argument_violations("x-count" => 1)
+    assert_equal ["$.x-count is required by the host validator"], tool.argument_violations({})
+    assert_same tool.input_schema, checked.first.last
+  end
+
+  def test_public_argument_validation_gives_custom_rules_the_owned_core_value
+    observed = nil
+    tool = Mistri::Tool.define(
+      "inspect", "Inspects.",
+      input_schema: {
+        type: "object", properties: { value: { type: "integer" } },
+        required: ["value"], additionalProperties: false
+      },
+      argument_validator: lambda { |arguments, _schema|
+        observed = arguments
+        []
+      }
+    ) { "done" }
+
+    assert_empty tool.argument_violations(value: 1)
+    assert_equal({ "value" => 1 }, observed)
+    assert_predicate observed, :frozen?
+    assert_raises(FrozenError) { observed["value"] = 2 }
+  end
+
+  def test_tuple_items_use_json_schema_2020_12_prefix_items
+    legacy = {
+      type: "object",
+      properties: {
+        "pair" => { type: "array", items: [{ type: "string" }, { type: "integer" }] }
+      },
+      required: ["pair"]
+    }
+
+    error = assert_raises(Mistri::ConfigurationError) do
+      Mistri::Tool.define("legacy_tuple", "Legacy tuple.", input_schema: legacy) { "ran" }
+    end
+    assert_equal "$.properties.pair.items must be a schema in JSON Schema 2020-12; " \
+                 "use prefixItems for tuples",
+                 error.message
+
+    assert_raises(Mistri::ConfigurationError) do
+      Mistri::Tool.define(
+        "legacy_complete", "Legacy tuple.",
+        input_schema: legacy, complete_argument_validator: ->(*) { [] }
+      ) { "ran" }
+    end
+
+    schema = {
+      type: "object",
+      properties: {
+        "pair" => {
+          type: "array", prefixItems: [{ type: "string" }, { type: "integer" }], items: false
+        }
+      },
+      required: ["pair"]
+    }
+    tool = Mistri::Tool.define("tuple", "Tuple.", input_schema: schema) { "ran" }
+
+    assert_empty tool.argument_violations("pair" => ["sku", 2])
+    assert_includes tool.argument_violations("pair" => [2, "sku"]),
+                    "$.pair[0] must be string, got integer"
+    assert_includes tool.argument_violations("pair" => ["sku", 2, true]),
+                    "$.pair[2] is not allowed"
+  end
+
+  def test_supplemental_and_complete_validators_are_mutually_exclusive
+    error = assert_raises(ArgumentError) do
+      Mistri::Tool.define(
+        "ambiguous", "Ambiguous.",
+        argument_validator: ->(*) { [] },
+        complete_argument_validator: ->(*) { [] }
+      ) do
+        "ran"
+      end
+    end
+
+    assert_match(/choose argument_validator or complete_argument_validator/, error.message)
+  end
+
+  def test_argument_hooks_must_be_callable
+    %i[argument_normalizer argument_validator complete_argument_validator].each do |option|
+      error = assert_raises(ArgumentError) do
+        Mistri::Tool.define("invalid_#{option}", "Invalid hook.", option => true) { "ran" }
+      end
+
+      assert_equal "#{option} must be callable", error.message
+    end
+  end
+
+  def test_custom_argument_validators_must_return_arrays_of_strings
+    validators = {
+      argument_validator: ->(*) {},
+      complete_argument_validator: ->(*) { [1] }
+    }
+
+    validators.each do |option, validator|
+      tool = Mistri::Tool.define("invalid_#{option}", "Invalid validator.",
+                                 option => validator) { "ran" }
+
+      error = assert_raises(TypeError) { tool.argument_violations({}) }
+
+      assert_equal "#{option} must return an Array of Strings", error.message
+    end
   end
 
   def test_the_schema_block_builds_provider_ready_json_schema
@@ -17,14 +201,18 @@ class TestTool < Minitest::Test
       string :city, "City name", required: true
       string :units, "Units", enum: %w[celsius fahrenheit]
       integer :days, "Forecast length"
+      array :alerts, "Alert codes", items: { type: "string" }, required: true, minItems: 1
     }) { |args| args["city"] }
 
     schema = tool.spec[:input_schema]
 
-    assert_equal "object", schema[:type]
-    assert_equal %w[city units days], schema[:properties].keys
-    assert_equal %w[celsius fahrenheit], schema[:properties]["units"][:enum]
-    assert_equal ["city"], schema[:required]
+    assert_equal "object", schema["type"]
+    assert_equal %w[city units days alerts], schema["properties"].keys
+    assert_equal %w[celsius fahrenheit], schema["properties"]["units"]["enum"]
+    assert_equal({ "type" => "array", "items" => { "type" => "string" },
+                   "description" => "Alert codes", "minItems" => 1 },
+                 schema["properties"]["alerts"])
+    assert_equal %w[city alerts], schema["required"]
   end
 
   def test_a_blockless_nested_object_is_freeform
@@ -34,12 +222,12 @@ class TestTool < Minitest::Test
     }) { |args| args["config"] }
 
     schema = tool.spec[:input_schema]
-    config = schema[:properties]["config"]
+    config = schema["properties"]["config"]
 
-    assert_equal({ type: "object", properties: {},
-                   description: "Provider-neutral chart configuration" }, config)
-    assert_equal ["config"], schema[:required]
-    assert_equal "string", schema.dig(:properties, "title", :type)
+    assert_equal({ "type" => "object", "properties" => {},
+                   "description" => "Provider-neutral chart configuration" }, config)
+    assert_equal ["config"], schema["required"]
+    assert_equal "string", schema.dig("properties", "title", "type")
     assert_empty Mistri::Schema.violations(
       { "config" => { "series" => [{ "type" => "bar", "data" => [1, 2] }] } },
       schema
@@ -58,15 +246,15 @@ class TestTool < Minitest::Test
 
     assert_equal(
       {
-        type: "object",
-        properties: {
-          "city" => { type: "string", description: "City name" },
-          "country" => { type: "string", description: "Country code" }
+        "type" => "object",
+        "properties" => {
+          "city" => { "type" => "string", "description" => "City name" },
+          "country" => { "type" => "string", "description" => "Country code" }
         },
-        required: ["city"],
-        description: "Place to locate"
+        "required" => ["city"],
+        "description" => "Place to locate"
       },
-      tool.spec[:input_schema][:properties]["location"]
+      tool.spec[:input_schema]["properties"]["location"]
     )
   end
 
@@ -83,12 +271,14 @@ class TestTool < Minitest::Test
   def test_results_serialize_by_type
     string_tool = Mistri::Tool.define("s", "d") { "text" }
     hash_tool = Mistri::Tool.define("h", "d") { { ok: true } }
+    nil_tool = Mistri::Tool.define("n", "d") { nil }
     image_tool = Mistri::Tool.define("i", "d") do
       Mistri::Content::Image.from_bytes("png!", mime_type: "image/png")
     end
 
     assert_equal "text", string_tool.call({})
     assert_equal({ "ok" => true }, JSON.parse(hash_tool.call({})))
+    assert_equal "", nil_tool.call({})
     assert_instance_of Mistri::Content::Image, image_tool.call({})
   end
 
@@ -113,7 +303,8 @@ class TestTool < Minitest::Test
   def test_a_no_argument_tool_gets_a_valid_object_schema
     tool = Mistri::Tool.define("now", "Current time.") { Time.now.to_s }
 
-    assert_equal({ type: "object", properties: {} }, tool.spec[:input_schema])
+    assert_equal({ "type" => "object", "properties" => {}, "required" => [],
+                   "additionalProperties" => false }, tool.spec[:input_schema])
   end
 
   def test_eager_streaming_shows_up_in_the_spec
@@ -214,4 +405,4 @@ class TestTool < Minitest::Test
     assert_operator durations.first, :>=, 0.0
     assert_kind_of Float, durations.first
   end
-end
+end # rubocop:enable Metrics/ClassLength

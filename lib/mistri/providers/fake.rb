@@ -1,6 +1,7 @@
 # frozen_string_literal: true
 
 require "json"
+require "securerandom"
 
 module Mistri
   module Providers
@@ -31,6 +32,8 @@ module Mistri
         end
         @chunk_size = [chunk_size, 1].max
         @requests = []
+        @tool_call_prefix = SecureRandom.uuid
+        @tool_call_sequence = 0
       end
 
       def prices_usage? = @prices_usage
@@ -72,14 +75,15 @@ module Mistri
         kind == :text ? Content::Text.new(text:) : Content::Thinking.new(thinking: text)
       end
 
-      # Arguments stream in chunks, and every delta's partial carries the
-      # in-progress call with the arguments parsed so far, the same shape a
-      # real assembler builds, so a consumer that renders tool input as it
-      # arrives (a page preview, a code block) is testable headless.
-      def stream_tool_call(spec, position, blocks, emit)
+      # Small scripted arguments parse eagerly on every chunk for precise UI
+      # tests. Real assemblers cap their refresh schedule under hostile fragmentation.
+      def stream_tool_call(spec, _position, blocks, emit)
         spec = spec.transform_keys(&:to_sym)
-        call = ToolCall.new(id: spec[:id] || "call_#{position + 1}", name: spec[:name],
-                            arguments: (spec[:arguments] || {}).transform_keys(&:to_s))
+        arguments = spec.key?(:arguments) ? spec[:arguments] : {}
+        id = spec.key?(:id) ? spec[:id] : next_tool_call_id
+        call = ToolCall.new(id:, name: spec[:name], arguments:, signature: spec[:signature],
+                            arguments_error: spec[:arguments_error],
+                            provider_call_id: spec[:provider_call_id])
         index = blocks.size
         emit_event(emit, :toolcall_start, blocks, content_index: index)
         built = +""
@@ -93,9 +97,16 @@ module Mistri
       end
 
       def in_progress(call, json)
-        parsed = PartialJson.parse(json)
+        parsed = ToolArguments.freeze_partial(PartialJson.parse(json))
         ToolCall.new(id: call.id, name: call.name,
-                     arguments: parsed.is_a?(Hash) ? parsed : {})
+                     arguments: parsed, signature: call.signature,
+                     provider_call_id: call.provider_call_id,
+                     canonicalize: false)
+      end
+
+      def next_tool_call_id
+        @tool_call_sequence += 1
+        "fake_#{@tool_call_prefix}_#{@tool_call_sequence}"
       end
 
       def finish(turn, blocks, emit)
