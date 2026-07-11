@@ -27,6 +27,59 @@ class TestTool < Minitest::Test
     assert_equal ["city"], schema[:required]
   end
 
+  def test_a_blockless_nested_object_is_freeform
+    tool = Mistri::Tool.define("render_chart", "Renders a chart.", schema: lambda {
+      object :config, "Provider-neutral chart configuration", required: true
+      string :title, "Chart title"
+    }) { |args| args["config"] }
+
+    schema = tool.spec[:input_schema]
+    config = schema[:properties]["config"]
+
+    assert_equal({ type: "object", properties: {},
+                   description: "Provider-neutral chart configuration" }, config)
+    assert_equal ["config"], schema[:required]
+    assert_equal "string", schema.dig(:properties, "title", :type)
+    assert_empty Mistri::Schema.violations(
+      { "config" => { "series" => [{ "type" => "bar", "data" => [1, 2] }] } },
+      schema
+    )
+    assert_equal ["$.config must be object, got string"],
+                 Mistri::Schema.violations({ "config" => "bar" }, schema)
+  end
+
+  def test_a_nested_object_block_keeps_its_declared_shape
+    tool = Mistri::Tool.define("locate", "Locates a place.", schema: lambda {
+      object :location, "Place to locate", required: true do
+        string :city, "City name", required: true
+        string :country, "Country code"
+      end
+    }) { |args| args["location"] }
+
+    assert_equal(
+      {
+        type: "object",
+        properties: {
+          "city" => { type: "string", description: "City name" },
+          "country" => { type: "string", description: "Country code" }
+        },
+        required: ["city"],
+        description: "Place to locate"
+      },
+      tool.spec[:input_schema][:properties]["location"]
+    )
+  end
+
+  def test_schema_build_requires_a_root_block
+    error = assert_raises(Mistri::ConfigurationError) { Mistri::Schema.build }
+
+    assert_equal "schema needs a block", error.message
+  end
+
+  def test_schema_build_accepts_an_explicit_empty_block
+    assert_equal({ type: "object", properties: {} }, Mistri::Schema.build { nil })
+  end
+
   def test_results_serialize_by_type
     string_tool = Mistri::Tool.define("s", "d") { "text" }
     hash_tool = Mistri::Tool.define("h", "d") { { ok: true } }

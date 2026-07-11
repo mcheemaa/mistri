@@ -5,6 +5,16 @@ require_relative "test_helper"
 class TestAnthropicSerializer < Minitest::Test
   SERIALIZER = Mistri::Providers::Anthropic::Serializer
 
+  def test_a_freeform_object_schema_passes_through
+    tool = Mistri::Tool.define("render", "d", schema: lambda {
+      object :config, "Open configuration", required: true
+    }) { "ok" }
+
+    wire = SERIALIZER.tools([tool.spec])
+
+    assert_equal tool.input_schema, wire.first[:input_schema]
+  end
+
   def test_parallel_tool_results_merge_into_one_user_turn
     call_a = Mistri::ToolCall.new(id: "a", name: "x", arguments: {})
     call_b = Mistri::ToolCall.new(id: "b", name: "y", arguments: {})

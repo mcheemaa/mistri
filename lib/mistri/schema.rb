@@ -16,9 +16,11 @@ module Mistri
   class Schema
     # instance_exec, not instance_eval: it binds self to the builder without
     # passing an argument, so a zero-arity lambda works as naturally as a proc.
-    def self.build(&)
+    def self.build(&block)
+      raise ConfigurationError, "schema needs a block" unless block
+
       builder = new
-      builder.instance_exec(&)
+      builder.instance_exec(&block)
       builder.to_h
     end
 
@@ -46,8 +48,8 @@ module Mistri
       nil
     end
 
-    def object(name, description = nil, required: false, &)
-      prop = self.class.build(&)
+    def object(name, description = nil, required: false, &block)
+      prop = block ? self.class.build(&block) : self.class.new.to_h
       prop[:description] = description if description
       @properties[name.to_s] = prop
       @required << name.to_s if required
@@ -82,27 +84,35 @@ module Mistri
         errors
       end
 
-      # Prepares a schema for constrained decoding: every object gains
-      # additionalProperties: false (Anthropic and OpenAI both demand it),
-      # and all_required marks every property required (OpenAI strict mode's
-      # rule). String keys throughout, ready for the wire.
+      # Prepares a schema for constrained decoding without turning a freeform
+      # object into one that accepts only {}. Direct objects with declared
+      # properties close for provider strict modes; explicit openness fails.
       def strict(schema, all_required: false)
+        strict_at(schema, all_required: all_required, path: "$")
+      end
+
+      def strict_at(schema, all_required:, path:)
         spec = schema.transform_keys(&:to_s)
         out = spec.dup
         if spec["type"] == "object" || spec.key?("properties")
-          props = (spec["properties"] || {}).to_h do |key, member|
-            [key.to_s, strict(member, all_required: all_required)]
+          raw_props = spec["properties"] || {}
+          reject_open_object!(spec, raw_props, path)
+          props = raw_props.to_h do |key, member|
+            member_path = "#{path}.#{key}"
+            [key.to_s, strict_at(member, all_required: all_required, path: member_path)]
           end
           out["properties"] = props
           out["additionalProperties"] = false
           out["required"] = all_required ? props.keys : Array(spec["required"]).map(&:to_s)
         end
         if spec["items"].is_a?(Hash)
-          out["items"] =
-            strict(spec["items"], all_required: all_required)
+          out["items"] = strict_at(
+            spec["items"], all_required: all_required, path: "#{path}[]"
+          )
         end
         out
       end
+      private :strict_at
 
       TYPES = {
         "object" => ->(v) { v.is_a?(Hash) }, "array" => ->(v) { v.is_a?(Array) },
@@ -112,6 +122,17 @@ module Mistri
       }.freeze
 
       private
+
+      def reject_open_object!(spec, properties, path)
+        if spec.key?("additionalProperties") && spec["additionalProperties"] != false
+          raise ConfigurationError,
+                "#{path} is open and cannot be represented by a strict schema"
+        end
+        return unless properties.empty? && spec["additionalProperties"] != false
+
+        raise ConfigurationError,
+              "#{path} is freeform and cannot be represented by a strict schema"
+      end
 
       def type_violation(value, spec, path)
         names = Array(spec["type"]).map(&:to_s)

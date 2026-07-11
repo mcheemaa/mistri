@@ -5,6 +5,15 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+- A blockless nested object in the tool-schema DSL now declares a freeform JSON
+  object instead of leaking `LocalJumpError` during application boot. A bare
+  top-level `Schema.build` raises `ConfigurationError` with a useful message.
+  Constrained-output preparation now refuses this freeform shape, and directly
+  encountered explicitly open objects, with a schema path instead of silently
+  closing them and changing their meaning. Existing block-built and raw tool
+  schemas keep their wire shape. Tool-schema work remains definition-time;
+  constrained-output request building adds one openness check to its existing
+  property/item traversal, with no streaming or token-path work.
 - Provider and MCP JSON bodies, individual SSE lines, and stdio JSON records
   now default to an 8 MiB ceiling, configurable with `max_record_bytes:`.
   Successful bodies are counted incrementally, declared oversized bodies fail

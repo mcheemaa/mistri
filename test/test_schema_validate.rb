@@ -81,4 +81,36 @@ class TestSchemaValidate < Minitest::Test
     assert_equal %w[name tiers count note], strict["required"]
     assert_equal %w[price label], strict.dig("properties", "tiers", "items", "required")
   end
+
+  def test_strict_rejects_a_freeform_object_instead_of_closing_it
+    schema = {
+      type: "object",
+      properties: { "config" => { type: "object", properties: {} } }
+    }
+
+    error = assert_raises(Mistri::ConfigurationError) { Mistri::Schema.strict(schema) }
+
+    assert_equal "$.config is freeform and cannot be represented by a strict schema", error.message
+  end
+
+  def test_strict_rejects_explicit_open_objects
+    schema = {
+      type: "object",
+      properties: { "metadata" => { type: "object", properties: { "name" => {
+        type: "string"
+      } }, additionalProperties: true } }
+    }
+
+    error = assert_raises(Mistri::ConfigurationError) { Mistri::Schema.strict(schema) }
+
+    assert_equal "$.metadata is open and cannot be represented by a strict schema", error.message
+  end
+
+  def test_strict_preserves_an_explicitly_closed_empty_object
+    schema = { type: "object", properties: {}, additionalProperties: false }
+
+    assert_equal({ "type" => "object", "properties" => {},
+                   "additionalProperties" => false, "required" => [] },
+                 Mistri::Schema.strict(schema))
+  end
 end

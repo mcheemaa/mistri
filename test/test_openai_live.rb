@@ -60,6 +60,28 @@ class TestOpenAILive < Minitest::Test
     provider&.close
   end
 
+  def test_a_nested_freeform_object_schema_is_accepted
+    provider = Mistri::Providers::OpenAI.new(api_key: ENV.fetch("OPENAI_API_KEY"),
+                                             model: "gpt-5.5")
+    tool = Mistri::Tool.define("render_chart", "Renders the requested chart.", schema: lambda {
+      object :config, "Chart config; include a series array.", required: true
+    }) { |_args| "rendered" }
+
+    message = provider.stream(
+      messages: [Mistri::Message.user(
+        'Call render_chart with config {"series":[{"type":"bar","data":[1,2]}]}. No prose.'
+      )],
+      tools: [tool.spec]
+    ) { |_event| nil }
+
+    assert_equal :tool_use, message.stop_reason
+    config = message.tool_calls.first.arguments["config"]
+
+    assert_kind_of Hash, config
+  ensure
+    provider&.close
+  end
+
   def test_gpt_5_6_cache_writes_are_accounted
     provider = Mistri::Providers::OpenAI.new(api_key: ENV.fetch("OPENAI_API_KEY"),
                                              model: "gpt-5.6-luna",

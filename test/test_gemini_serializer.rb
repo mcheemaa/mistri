@@ -5,6 +5,16 @@ require_relative "test_helper"
 class TestGeminiSerializer < Minitest::Test
   SERIALIZER = Mistri::Providers::Gemini::Serializer
 
+  def test_a_freeform_object_schema_passes_through
+    tool = Mistri::Tool.define("render", "d", schema: lambda {
+      object :config, "Open configuration", required: true
+    }) { "ok" }
+
+    wire = SERIALIZER.tools([tool.spec])
+
+    assert_equal tool.input_schema, wire.first[:functionDeclarations].first[:parameters]
+  end
+
   def test_a_gemini_turn_replays_with_signatures_and_merged_tool_results
     call = Mistri::ToolCall.new(id: "c1", name: "search", arguments: { "q" => "ruby" },
                                 signature: "tsig")
