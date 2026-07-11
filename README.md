@@ -581,9 +581,13 @@ agent = Mistri.agent("claude-opus-4-8", tools: tools)
 ```
 
 Common MCP map input schemas work with Mistri's portable validator through
-schema-valued `additionalProperties`. Because a remote schema can guard approval
-policy, any standard assertion outside that subset requires the host's explicit,
-zero-coercion complete validator:
+schema-valued `additionalProperties`. Standard assertions outside that subset
+(`minimum`, `pattern`, `anyOf`, same-document `$ref`, ...) bridge as guidance:
+Mistri enforces its portable subset locally and the server validates the full
+contract, which the MCP spec already requires of it. Two stricter stances are
+explicit host choices. `strict_schemas: true` refuses to bridge any tool whose
+contract core cannot enforce, and a complete validator takes whole-contract
+authority locally:
 
 ```ruby
 tools = Mistri::MCP.tools(
@@ -592,10 +596,11 @@ tools = Mistri::MCP.tools(
 )
 ```
 
-Omitted MCP `inputSchema` means a no-argument object. Explicit `null` and
-non-object roots are configuration errors. Same-document `$ref` and
-`$dynamicRef` values are accepted only with a complete validator; external
-references are rejected so validation never performs hidden network or file
+Non-empty `patternProperties` always requires the complete validator, because
+which argument keys are even legal becomes a regex question core will not
+approximate. Omitted MCP `inputSchema` means a no-argument object. Explicit
+`null` and non-object roots are configuration errors. External references are
+rejected in every mode so validation never performs hidden network or file
 resolution.
 
 Remote URLs are untrusted input. Mistri accepts public HTTPS destinations by

@@ -69,10 +69,14 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   declaring them must add an explicit schema. Supplied object schemas preserve
   JSON Schema's default-open semantics unless a raw schema explicitly sets
   `additionalProperties: false`; handlers should extract named fields instead
-  of mass-assigning model input. MCP bridging requires the complete validator
-  for every unimplemented standard constraint or applicator, rejects external
-  references and explicit `inputSchema: null`, and still defaults an omitted
-  schema to a no-argument object. Common map schemas work in core. Task mode
+  of mass-assigning model input. MCP bridging enforces the portable subset
+  locally and keeps unimplemented standard assertions as guidance for the
+  server, which the MCP spec obligates to validate its own tool inputs;
+  `strict_schemas: true` refuses such contracts outright, and a complete
+  validator still takes whole-contract authority. External references and
+  explicit `inputSchema: null` are rejected in every mode, an omitted schema
+  still defaults to a no-argument object, and non-empty `patternProperties`
+  still requires complete authority. Common map schemas work in core. Task mode
   rejects assertions and required vocabularies local validation cannot guarantee
   before making a provider request, then shares one deeply frozen strict schema
   between its prompt and compiled local validator.

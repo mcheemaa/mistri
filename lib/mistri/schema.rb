@@ -84,12 +84,16 @@ module Mistri
         Compiled.new(schema, tool: true, complete: complete)
       end
 
-      # MCP schemas are untrusted contracts. Core may preserve unsupported
-      # assertions as provider guidance for host-authored tools, but a remote
-      # schema needs an explicitly complete validator before policy can trust it.
-      def validate_mcp!(schema, complete: false)
+      # MCP schemas get the same stance as host-authored tools: the portable
+      # subset is enforced locally and other standard assertions stay provider
+      # guidance, because the MCP spec already obligates the server to validate
+      # its own tool inputs. strict: true refuses any contract core cannot
+      # enforce; complete: true hands the whole contract to the host validator.
+      # External references are rejected in every mode.
+      def validate_mcp!(schema, complete: false, strict: false)
         compiled = Compiled.new(schema, tool: true, complete: complete)
-        AssertionContract.new(complete:, context: "MCP input schema").call(compiled.schema)
+        AssertionContract.new(complete:, context: "MCP input schema",
+                              enforce: strict).call(compiled.schema)
         compiled.schema
       end
 
@@ -688,18 +692,21 @@ module Mistri
     end
     private_constant :AssertionScanner
 
-    # Unsupported assertions are safe as generation guidance for a local Tool,
-    # but not as a claimed validation or remote-policy boundary.
+    # Unsupported assertions are safe as generation guidance, but not as a
+    # claimed validation boundary; enforce is the caller's stance on refusing
+    # them outright. External references are rejected in every mode so
+    # validation never implies hidden network or file resolution.
     class AssertionContract
-      def initialize(complete:, context:)
+      def initialize(complete:, context:, enforce: true)
         @complete = complete
         @context = context
+        @enforce = enforce
       end
 
       def call(schema)
         findings = AssertionScanner.new.call(schema)
         reject_external_references(findings)
-        return if @complete || findings.empty?
+        return if @complete || !@enforce || findings.empty?
 
         paths = findings.first(3).map(&:first).join(", ")
         suffix = findings.length > 3 ? ", and #{findings.length - 3} more" : ""

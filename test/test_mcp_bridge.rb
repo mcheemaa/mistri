@@ -11,6 +11,24 @@ class TestMcpBridge < Minitest::Test
                             allow_non_public: Mistri::Test::ALLOW_LOOPBACK)
   end
 
+  def recording_client(listed)
+    Class.new do
+      def initialize(listed)
+        @listed = listed
+        @calls = []
+      end
+
+      attr_reader :calls
+
+      def tools = @listed
+
+      def call_tool(name, args)
+        @calls << [name, args]
+        { "content" => [{ "type" => "text", "text" => "within bounds" }] }
+      end
+    end.new(listed)
+  end
+
   def test_tools_map_with_prefix_filters_and_gates
     listed = [{ "name" => "create", "description" => "Creates.",
                 "inputSchema" => { "type" => "object",
@@ -94,7 +112,26 @@ class TestMcpBridge < Minitest::Test
     assert_match(/inputSchema must be an object, not null/, error.message)
   end
 
-  def test_mcp_requires_a_complete_validator_for_unimplemented_assertions
+  def test_mcp_bridges_unimplemented_assertions_as_server_validated_guidance
+    listed = [{ "name" => "bounded", "description" => "Checks a bounded value.",
+                "inputSchema" => {
+                  "type" => "object",
+                  "properties" => { "count" => { "type" => "integer", "minimum" => 1 } },
+                  "required" => ["count"]
+                } }]
+    client = recording_client(listed)
+
+    tool = Mistri::MCP.tools(client).first
+
+    assert_equal ["$.count must be integer, got string"],
+                 tool.argument_violations("count" => "one")
+    assert_empty tool.argument_violations("count" => 0),
+                 "minimum stays guidance for the server, which the MCP spec obligates to validate"
+    assert_equal "within bounds", tool.call({ "count" => 0 })
+    assert_equal [["bounded", { "count" => 0 }]], client.calls
+  end
+
+  def test_mcp_strict_schemas_refuses_unimplemented_assertions
     listed = [{ "name" => "bounded", "description" => "Checks a bounded value.",
                 "inputSchema" => {
                   "type" => "object",
@@ -102,17 +139,32 @@ class TestMcpBridge < Minitest::Test
                 } }]
     client = Struct.new(:tools).new(listed)
 
-    error = assert_raises(Mistri::ConfigurationError) { Mistri::MCP.tools(client) }
+    error = assert_raises(Mistri::ConfigurationError) do
+      Mistri::MCP.tools(client, strict_schemas: true)
+    end
 
     assert_match(/MCP input schema uses assertions Mistri cannot validate/, error.message)
     assert_match(/\$\.properties\.count\.minimum/, error.message)
 
     tool = Mistri::MCP.tools(
-      client,
-      complete_argument_validator: ->(*) { [] }
+      client, strict_schemas: true,
+              complete_argument_validator: ->(*) { [] }
     ).first
 
     assert_empty tool.argument_violations("count" => 1)
+  end
+
+  def test_mcp_pattern_properties_still_require_complete_authority_by_default
+    listed = [{ "name" => "labels", "description" => "Labels.",
+                "inputSchema" => {
+                  "type" => "object",
+                  "patternProperties" => { "^x-" => { "type" => "string" } }
+                } }]
+    client = Struct.new(:tools).new(listed)
+
+    error = assert_raises(Mistri::ConfigurationError) { Mistri::MCP.tools(client) }
+
+    assert_match(/pattern properties require a complete argument validator/, error.message)
   end
 
   def test_mcp_does_not_promote_format_annotations_into_assertions
@@ -160,12 +212,17 @@ class TestMcpBridge < Minitest::Test
     )
 
     assert Mistri::MCP.tools(local, complete_argument_validator: complete).first
+    assert Mistri::MCP.tools(local).first, "same-document refs bridge as guidance by default"
     error = assert_raises(Mistri::ConfigurationError) do
       Mistri::MCP.tools(external, complete_argument_validator: complete)
     end
 
     assert_match(/MCP tool "external"/, error.message)
     assert_match(/same-document reference beginning with #/, error.message)
+
+    default_mode = assert_raises(Mistri::ConfigurationError) { Mistri::MCP.tools(external) }
+
+    assert_match(/same-document reference beginning with #/, default_mode.message)
   end
 
   def test_answers_map_text_errors_images_and_structured_content
