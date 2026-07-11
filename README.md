@@ -296,8 +296,12 @@ The preceding assistant message remains the durable provider source. When a
 normalizer changes arguments, the approval stores the exact prepared call the
 human reviewed plus an explicit source marker. `resume` verifies pairing
 metadata and revalidates those approved arguments without rerunning a
-normalizer. Tool-call IDs are session-wide correlation keys; duplicate or
-malformed legacy histories fail before a handler or provider runs. Persisted
+normalizer. Tool-call IDs are session-wide correlation keys; live provider
+turns require session-unique IDs, while a persisted ID may recur across turns
+once its earlier call was answered, the per-turn shape earlier releases wrote
+for Gemini and the Fake provider. Unanswered, open-approval, or same-turn
+reuse and malformed legacy histories fail before a handler or provider runs.
+Persisted
 results must follow one matching call with the same name and settle in call
 order within each direct or approval phase; a compaction boundary cannot hide
 an open approval or split a completed call from its result.

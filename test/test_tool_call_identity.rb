@@ -35,7 +35,7 @@ class TestToolCallIdentity < Minitest::Test
     assert_equal 1, retries_recorded
   end
 
-  def test_duplicate_ids_in_legacy_history_fail_before_a_run_writes_or_calls_a_provider
+  def test_reusing_an_unanswered_call_id_in_history_fails_before_a_run_writes_or_calls_a_provider
     session = Mistri::Session.new(store: Mistri::Stores::Memory.new)
     append_assistant_call(session, "same")
     append_assistant_call(session, "same")
@@ -49,6 +49,69 @@ class TestToolCallIdentity < Minitest::Test
     assert_match(/duplicate tool call ID/, error.message)
     assert_equal before, session.entries.length
     assert_empty provider.requests
+  end
+
+  # Releases before the identity audit synthesized per-turn IDs ("call_1")
+  # for Gemini and the Fake provider, so answered reuse across turns is the
+  # normal shape of a durable legacy history and must stay loadable.
+  def test_settled_legacy_call_ids_reuse_across_turns_and_the_session_still_runs
+    session = Mistri::Session.new(store: Mistri::Stores::Memory.new)
+    session.append_message(Mistri::Message.user("look twice"))
+    2.times { |round| append_answered_call(session, "call_1", result: "ok #{round}") }
+    ran = false
+    tool = Mistri::Tool.define("write", "Write.") do
+      ran = true
+      "written"
+    end
+    turns = [{ tool_calls: [{ id: "fresh-1", name: "write", arguments: {} }] }, { text: "done" }]
+    agent = Mistri::Agent.new(provider: Mistri::Providers::Fake.new(turns:), tools: [tool],
+                              session:)
+
+    assert_empty session.open_approvals
+    assert_equal Set["call_1"], session.tool_call_ids
+
+    result = agent.run("continue")
+
+    assert_predicate result, :completed?
+    assert ran, "a run on top of the legacy history executes normally"
+    assert_equal 3, session.messages.count(&:tool?)
+    assert_equal Set["call_1", "fresh-1"], session.tool_call_ids
+  end
+
+  def test_a_call_id_may_be_reused_after_its_approval_settled
+    session = Mistri::Session.new(store: Mistri::Stores::Memory.new)
+    call = Mistri::ToolCall.new(id: "call_1", name: "write", arguments: {})
+    session.append_message(Mistri::Message.assistant(tool_calls: [call], stop_reason: :tool_use))
+    session.append("approval_request", "call" => call.to_h)
+    session.append("approval_decision", "call_id" => "call_1", "approved" => true)
+    session.append_message(Mistri::Message.tool(content: "written", tool_call_id: "call_1",
+                                                tool_name: "write"))
+    append_answered_call(session, "call_1")
+
+    assert_empty session.open_approvals
+    assert_equal Set["call_1"], session.tool_call_ids
+  end
+
+  def test_same_turn_duplicate_ids_still_fail_closed
+    session = Mistri::Session.new(store: Mistri::Stores::Memory.new)
+    calls = Array.new(2) { Mistri::ToolCall.new(id: "call_1", name: "write", arguments: {}) }
+    session.append_message(Mistri::Message.assistant(tool_calls: calls, stop_reason: :tool_use))
+
+    error = assert_raises(Mistri::ConfigurationError) { session.tool_call_ids }
+
+    assert_match(/duplicate tool call ID/, error.message)
+  end
+
+  def test_compaction_still_cannot_split_a_retired_call_from_its_result
+    session = Mistri::Session.new(store: Mistri::Stores::Memory.new)
+    session.append_message(Mistri::Message.user("start"))
+    append_answered_call(session, "call_1")
+    append_answered_call(session, "call_1")
+    session.append("compaction", "summary" => "s", "kept_from" => 2)
+
+    error = assert_raises(Mistri::ConfigurationError) { session.tool_call_ids }
+
+    assert_match(/splits a tool call from its result/, error.message)
   end
 
   def test_one_legacy_decision_cannot_execute_duplicate_approval_requests
@@ -269,6 +332,15 @@ class TestToolCallIdentity < Minitest::Test
   def append_assistant_call(session, id)
     call = Mistri::ToolCall.new(id:, name: "write", arguments: {})
     session.append_message(Mistri::Message.assistant(tool_calls: [call], stop_reason: :tool_use))
+    call
+  end
+
+  def append_answered_call(session, id, provider: :gemini, result: "ok")
+    call = Mistri::ToolCall.new(id:, name: "write", arguments: {})
+    session.append_message(Mistri::Message.assistant(tool_calls: [call], stop_reason: :tool_use,
+                                                     provider: provider))
+    session.append_message(Mistri::Message.tool(content: result, tool_call_id: id,
+                                                tool_name: "write"))
     call
   end
 

@@ -190,10 +190,7 @@ module Mistri
       parsed_calls = message.tool_calls
       tool_calls_from(entry).each_with_index do |call, position|
         id = validated_persisted_call(call)
-        if reserved.include?(id)
-          raise ConfigurationError, "session contains a duplicate tool call ID"
-        end
-
+        retire_reused_call!(id, calls, reserved, audit)
         owned = id.dup.freeze
         source_call = parsed_calls.fetch(position)
         provider_id = source_call.provider_call_id
@@ -214,11 +211,28 @@ module Mistri
       end
     end
 
+    # Releases before the identity audit synthesized per-turn call IDs
+    # ("call_1") for Gemini and the Fake provider, so reuse across turns is
+    # the durable norm in legacy histories. Reuse is safe only once the prior
+    # holder was answered: an open, decided, or crash-interrupted holder makes
+    # result pairing and approval references ambiguous, and live turns still
+    # require session-unique IDs at the provider envelope.
+    def retire_reused_call!(id, calls, reserved, audit)
+      return unless reserved.include?(id)
+
+      prior = calls[id]
+      unless prior && prior[:status] == :answered
+        raise ConfigurationError, "session contains a duplicate tool call ID"
+      end
+
+      audit.fetch(:retired) << prior
+    end
+
     def audit_history(log)
       calls = {}
       unresolved = Set.new
       reserved = Set.new
-      audit = { calls:, unresolved:, reserved: }
+      audit = { calls:, unresolved:, reserved:, retired: [] }
       latest_compaction = nil
 
       log.each_with_index do |entry, index|
@@ -243,7 +257,7 @@ module Mistri
       end
 
       approvals = open_approval_states(calls)
-      validate_compaction!(calls, approvals, latest_compaction)
+      validate_compaction!(audit, approvals, latest_compaction)
       { tool_call_ids: reserved, approvals: }
     end
 
@@ -424,7 +438,7 @@ module Mistri
       end
     end
 
-    def validate_compaction!(calls, approvals, compaction)
+    def validate_compaction!(audit, approvals, compaction)
       return unless compaction
 
       kept_from = compaction["kept_from"]
@@ -435,7 +449,8 @@ module Mistri
         raise ConfigurationError, "session contains an open approval whose assistant tool call " \
                                   "was removed by compaction"
       end
-      split = calls.values.any? do |state|
+      states = audit.fetch(:calls).values + audit.fetch(:retired)
+      split = states.any? do |state|
         state[:result_index] && state[:source_index] < kept_from &&
           state[:result_index] >= kept_from
       end

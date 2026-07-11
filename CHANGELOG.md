@@ -17,8 +17,13 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   errors, and do not prevent valid siblings from running. Results settled in
   the same phase return in model-call order.
   Completed tool-call IDs, names, signatures, and provider correlation IDs must
-  be non-empty UTF-8 strings. Internal IDs are unique for the session, and
-  provider correlation IDs are unique within one assistant turn. A malformed
+  be non-empty UTF-8 strings. Live provider turns require IDs unique for the
+  session, and provider correlation IDs are unique within one assistant turn.
+  A persisted history may reuse an ID across turns once its earlier call was
+  answered, because earlier releases synthesized per-turn IDs ("call_1") for
+  Gemini and the Fake provider; those sessions load and resume unchanged, and
+  the compaction split check still covers every retired holder. Unanswered,
+  open-approval, or same-turn reuse still fails closed. A malformed
   call envelope or a non-assistant provider result rejects the whole provider
   attempt before persistence, policy, or execution. The normal provider retry
   contract retries unchanged history; exhaustion persists a pairable error with
