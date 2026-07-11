@@ -39,4 +39,27 @@ class TestCoreLoopIntegration < Minitest::Test
     refute Integration.saw?(result.text, revision),
            "the model mentioned a value it should never have seen"
   end
+
+  Integration.scenario(self, :tool_failure_round_trips_as_data) do |model|
+    code = Integration.codename
+    diagnose = Mistri::Tool.define("diagnose_service", "Runs one service diagnostic.") do
+      Mistri::ToolResult.new(
+        content: "The diagnostic failed permanently with code #{code}. Do not retry it.",
+        error: true
+      )
+    end
+    failures = []
+    agent = Mistri::Agent.new(
+      provider: Mistri.provider(model), tools: [diagnose],
+      system: "Call diagnose_service exactly once. Then report its failure code and stop."
+    )
+
+    result = agent.run("Diagnose the service.") do |event|
+      failures << event.tool_error if event.type == :tool_result
+    end
+
+    refute_empty failures, "the live tool was never called"
+    assert_predicate failures, :all?, "the live lifecycle lost its error fact"
+    assert Integration.saw?(result.text, code), "the failed result never replayed: #{result.text}"
+  end
 end

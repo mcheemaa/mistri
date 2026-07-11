@@ -51,7 +51,9 @@ module Mistri
             # The API rejects an empty tool_result; a space stands in for a
             # tool that returned nothing.
             blocks = [{ type: "text", text: " " }] if blocks.empty?
-            { type: "tool_result", tool_use_id: msg.tool_call_id, content: blocks }
+            result = { type: "tool_result", tool_use_id: msg.tool_call_id, content: blocks }
+            result[:is_error] = true if msg.tool_error?
+            result
           end }
         end
 

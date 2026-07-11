@@ -8,11 +8,34 @@ module Mistri
   # concurrently up to max_concurrency; each runs inside the Rails executor
   # when Rails is present, so ActiveRecord connections return to the pool.
   #
-  # A tool that raises becomes an in-band error string the model can read. An
-  # abort never starts a not-yet-started call: it gets an interrupted result
-  # instead, so the turn always pairs and the session replays cleanly.
+  # A tool that fails becomes an in-band ToolResult with an explicit error
+  # fact. An abort never starts a not-yet-started call: it gets an interrupted
+  # result instead, so the turn always pairs and the session replays cleanly.
   module ToolExecutor
+    # Separates Mistri's deadline from a handler's own Timeout::Error.
+    class InvocationTimeout < StandardError
+    end
+    private_constant :InvocationTimeout
+
+    # Carries subscriber failures past the handler outcome boundary.
+    class SubscriberError < StandardError
+      attr_reader :original
+
+      def initialize(original)
+        @original = original
+        super(original.message)
+        set_backtrace(original.backtrace)
+      end
+    end
+    private_constant :SubscriberError
+
     INTERRUPTED = "[interrupted: this tool call never ran]"
+    OUTCOME_UNKNOWN = "[interrupted: this tool call's outcome is unavailable; the tool may have " \
+                      "executed, so verify its effects before retrying]"
+    VERIFY_BEFORE_RETRY = "The tool may have completed partially; verify its effects before " \
+                          "retrying."
+    COMMITTED = Object.new.freeze
+    private_constant :COMMITTED
 
     module_function
 
@@ -20,65 +43,116 @@ module Mistri
              app: nil)
       return [] if calls.empty?
 
-      context = ToolContext.new(session: session, signal: signal, emit: thread_safe(emit),
+      context = ToolContext.new(session: session, signal: signal, emit: thread_safe(emit, signal),
                                 app: app)
       results = Array.new(calls.length)
       queue = Queue.new
+      errors = Queue.new
       calls.each_with_index { |call, index| queue << [call, index] }
       workers = max_concurrency.clamp(1, calls.length)
-      Array.new(workers) { worker(queue, results, tools_by_name, context) }.each(&:join)
-      calls.zip(results).map do |call, entry|
-        value, seconds = entry || [INTERRUPTED, nil]
+      Array.new(workers) { worker(queue, results, tools_by_name, context, errors) }.each(&:join)
+      unless errors.empty?
+        error = errors.pop
+        raise(error.is_a?(SubscriberError) ? error.original : error)
+      end
+
+      calls.each_with_index.map do |call, index|
+        entry = results[index]
+        entry = [failure(OUTCOME_UNKNOWN), nil] if entry.equal?(COMMITTED)
+        value, seconds = entry || [failure(INTERRUPTED), nil]
         [call, value, seconds]
       end
     end
 
-    def worker(queue, results, tools_by_name, context)
+    def worker(queue, results, tools_by_name, context, errors)
       Thread.new do
         loop do
+          break unless errors.empty?
+
           call, index = begin
             queue.pop(true)
           rescue ThreadError
             break
           end
           if context.signal&.aborted?
-            results[index] = [INTERRUPTED, nil]
+            results[index] = [failure(INTERRUPTED), nil]
             next
           end
 
-          started = Process.clock_gettime(Process::CLOCK_MONOTONIC)
-          value = run_one(call, tools_by_name, context)
-          results[index] = [value, Process.clock_gettime(Process::CLOCK_MONOTONIC) - started]
+          results[index] = run_one(call, index, results, tools_by_name, context)
         end
+      rescue StandardError => e
+        errors << e
       end
     end
 
-    def run_one(call, tools_by_name, context)
+    def run_one(call, index, results, tools_by_name, context)
       tool = tools_by_name[call.name]
-      return "Error: unknown tool #{call.name.inspect}" unless tool
+      return [failure("Error: unknown tool #{call.name.inspect}"), nil] unless tool
 
-      with_rails_executor { invoke(tool, call, context) }
-    rescue StandardError => e
-      "Error running tool #{call.name.inspect}: #{e.class}: #{e.message}"
+      return [failure(INTERRUPTED), nil] unless commit(call, context)
+
+      results[index] = COMMITTED
+      invoke_one(tool, call, context)
     end
 
-    # A tool with a timeout answers in band when it stalls, so one hung
-    # handler cannot stall the whole run.
+    def invoke_one(tool, call, context)
+      started = Process.clock_gettime(Process::CLOCK_MONOTONIC)
+      value = with_rails_executor { invoke(tool, call, context) }
+      [value, elapsed(started)]
+    rescue SubscriberError
+      raise
+    rescue InvocationTimeout
+      content = "Error running tool #{call.name.inspect}: timed out after #{tool.timeout}s. " \
+                "#{VERIFY_BEFORE_RETRY}"
+      [failure(content), elapsed(started)]
+    rescue StandardError => e
+      [failure("Error running tool #{call.name.inspect}: #{e.class}: #{e.message}. " \
+               "#{VERIFY_BEFORE_RETRY}"),
+       elapsed(started)]
+    end
+
     def invoke(tool, call, context)
       return tool.call(call.arguments, context) unless tool.timeout
 
-      Timeout.timeout(tool.timeout) { tool.call(call.arguments, context) }
-    rescue Timeout::Error
-      "Error running tool #{call.name.inspect}: timed out after #{tool.timeout}s"
+      Timeout.timeout(tool.timeout, InvocationTimeout) { tool.call(call.arguments, context) }
+    end
+
+    def commit(call, context)
+      return false if context.signal&.aborted?
+      return true unless context.emit
+
+      context.emit.call(Event.new(type: :tool_started, tool_call: call))
+    end
+
+    def failure(content) = ToolResult.new(content:, error: true)
+
+    def elapsed(started)
+      started && (Process.clock_gettime(Process::CLOCK_MONOTONIC) - started)
     end
 
     # Concurrent tools share the caller's sink; sinks are not required to be
     # thread-safe, so forwarded events serialize here.
-    def thread_safe(emit)
+    def thread_safe(emit, signal)
       return nil unless emit
 
       mutex = Mutex.new
-      ->(event) { mutex.synchronize { emit.call(event) } }
+      failed = false
+      lambda do |event|
+        mutex.synchronize do
+          next false if event.type == :tool_started && (failed || signal&.aborted?)
+
+          result = begin
+            emit.call(event)
+          rescue InvocationTimeout
+            raise
+          rescue StandardError => e
+            failed = true
+            raise SubscriberError, e
+          end
+          event.type == :tool_started ? true : result
+        end
+      end
     end
 
     def with_rails_executor(&)

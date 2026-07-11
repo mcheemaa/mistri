@@ -53,8 +53,9 @@ module Mistri
               raise SchemaError, "Gemini tool results need tool_name to pair with their call"
             end
 
+            key = msg.tool_error? ? "error" : "result"
             { functionResponse: { name: msg.tool_name,
-                                  response: { "result" => result_text(msg) } } }
+                                  response: { key => result_text(msg) } } }
           end }
         end
 

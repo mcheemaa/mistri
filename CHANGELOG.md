@@ -5,6 +5,38 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+- Tool execution now emits `:tool_started` when each resolved call commits to
+  invocation and carries a structured failure fact end to end. A handler may
+  return `ToolResult(error: true)`; unknown tools, policy blocks,
+  handler exceptions, timeouts, pre-invocation interruptions, failed result
+  hooks, healed dangling calls, and MCP `isError` results set it automatically.
+  The flag is sticky through `after_tool` rewrites, so changing error text
+  cannot relabel a failed operation as successful. `Event#tool_error` is always
+  true or false on `:tool_result`; new tool messages persist the same value, and legacy
+  messages without it remain unknown and replay with the historical unmarked
+  provider shape. Human approval denial remains a normal control outcome rather
+  than an execution error. Anthropic receives
+  `is_error: true`; Gemini receives the documented `error` function-response
+  key; OpenAI retains textual output because its function-call output has no
+  execution-error member. Error text is not classified by prefix, and an error
+  bit never authorizes a mechanical replay because a side effect may already
+  have happened; the model may still choose a new call, so hosts retain
+  idempotency and reconciliation policy. `ends_turn` remains the host's stronger
+  floor-transfer policy even when a result is errored; `handed_off?` does not
+  claim confirmed tool success. The new lifecycle signal adds one synchronous
+  sink event per committed call. Partial streaming Event construction adds two
+  primitive checks and one immutable nil slot; partial Message construction
+  adds one nil check and one immutable nil slot, with no parsing, buffering,
+  I/O, or string work;
+  tool batches add one sentinel write at commitment and one identity check per
+  result so a hard worker exit distinguishes started calls from untouched queue
+  entries; same-batch ordering adds one short-lived identity map and a linear
+  post-join pass, plus a second identity map only when `after_tool` is configured;
+  starts arrive on serialized worker-thread callbacks, while same-batch results
+  still emit in model-call order after the batch joins. `:tool_started` and handler-progress
+  subscriber exceptions propagate and never become tool failures.
+  Unknown, blocked, denied, queued, and pre-invocation interrupted calls add no
+  start event.
 - A blockless nested object in the tool-schema DSL now declares a freeform JSON
   object instead of leaking `LocalJumpError` during application boot. A bare
   top-level `Schema.build` raises `ConfigurationError` with a useful message.

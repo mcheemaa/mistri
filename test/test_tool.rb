@@ -136,7 +136,67 @@ class TestTool < Minitest::Test
     result = agent.run("go")
 
     assert_predicate result, :completed?
-    assert_match(/timed out after 0.1s/, agent.session.messages.select(&:tool?).last.text)
+    answer = agent.session.messages.select(&:tool?).last
+
+    assert_match(/timed out after 0.1s/, answer.text)
+    assert_predicate answer, :tool_error?
+  end
+
+  def test_a_handler_timeout_error_is_not_mislabeled_as_the_configured_timeout
+    tool = Mistri::Tool.define("upstream", "Calls upstream.", timeout: 1) do
+      raise Timeout::Error, "upstream timed out"
+    end
+    provider = Mistri::Providers::Fake.new(turns: [
+                                             { tool_calls: [{ name: "upstream",
+                                                              arguments: {} }] },
+                                             { text: "done" }
+                                           ])
+    agent = Mistri::Agent.new(provider:, tools: [tool])
+
+    agent.run("go")
+
+    answer = agent.session.messages.select(&:tool?).last
+
+    assert_includes answer.text, "Timeout::Error: upstream timed out"
+    refute_includes answer.text, "timed out after 1s"
+    assert_predicate answer, :tool_error?
+  end
+
+  def test_abort_at_the_serialized_start_boundary_never_announces_the_next_call
+    signal = Mistri::AbortSignal.new
+    resolved = Queue.new
+    ran = []
+    definitions = %w[a b].to_h do |name|
+      tool = Mistri::Tool.define(name, "Runs.") do
+        ran << name
+        name
+      end
+      [name, tool]
+    end
+    lookup = Object.new
+    lookup.define_singleton_method(:[]) do |name|
+      resolved << name
+      definitions[name]
+    end
+    calls = %w[a b].map { |name| Mistri::ToolCall.new(id: name, name:, arguments: {}) }
+    started = []
+    emit = lambda do |event|
+      next unless event.type == :tool_started
+
+      2.times { resolved.pop } if started.empty?
+      started << event.tool_call.name
+      signal.abort!(:test) if started.length == 1
+    end
+
+    results = Mistri::ToolExecutor.call(calls, lookup, signal:, max_concurrency: 2, emit:)
+
+    assert_equal 1, started.length
+    assert_equal started, ran
+    interrupted = results.find { |call, _result, _duration| call.name != started.first }
+
+    assert_predicate interrupted[1], :error?
+    assert_equal Mistri::ToolExecutor::INTERRUPTED, interrupted[1].content
+    assert_nil interrupted[2]
   end
 
   def test_tool_results_carry_their_duration

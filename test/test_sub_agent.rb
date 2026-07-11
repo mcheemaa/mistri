@@ -137,6 +137,7 @@ class TestSubAgent < Minitest::Test
     answer = agent.session.messages.select(&:tool?).last
 
     assert_includes answer.text, "cannot wait"
+    assert_predicate answer, :tool_error?
 
     child = Mistri::Session.new(store:, id: answer.ui["session_id"])
 
@@ -144,6 +145,7 @@ class TestSubAgent < Minitest::Test
     denial = child.messages.select(&:tool?).last
 
     assert_includes denial.text, "cannot pause"
+    assert_predicate denial, :tool_error?
   end
 
   def test_gating_the_delegation_itself_suspends_the_parent
@@ -185,7 +187,10 @@ class TestSubAgent < Minitest::Test
     result = agent.run("go")
 
     assert_predicate result, :completed?
-    assert_includes agent.session.messages.select(&:tool?).last.text, "failed"
+    answer = agent.session.messages.select(&:tool?).last
+
+    assert_includes answer.text, "failed"
+    assert_predicate answer, :tool_error?
   end
 
   def test_child_models_come_only_from_the_host_allowlist

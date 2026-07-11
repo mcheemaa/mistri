@@ -41,7 +41,8 @@ module Mistri
     def messages = replay.map(&:first)
 
     # What a run killed mid-tool answers in place of the result it never got.
-    INTERRUPTED_RESULT = "[interrupted: the run stopped before this tool returned]"
+    INTERRUPTED_RESULT = "[interrupted: the run stopped before this result was persisted; " \
+                         "the tool may have executed, so verify its effects before retrying]"
 
     # Replay messages paired with the entry index each came from, starting at
     # the latest compaction boundary. The synthetic summary message carries a
@@ -197,7 +198,7 @@ module Mistri
                    end
         [[message, index]] + dangling.map do |call|
           [Message.tool(content: INTERRUPTED_RESULT, tool_call_id: call.id,
-                        tool_name: call.name), nil]
+                        tool_name: call.name, tool_error: true), nil]
         end
       end
     end

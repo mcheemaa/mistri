@@ -64,12 +64,20 @@ module Mistri
     end
 
     # An MCP result becomes model-readable content: text joins, images ride
-    # as image blocks, and isError answers in band so the model can react.
+    # as image blocks, and isError remains structured failure data end to end.
     def answer(result)
       blocks = Array(result["content"]).map { |block| convert(block) }
       if result["isError"]
-        text = blocks.grep(String).join("\n")
-        return "MCP tool error: #{text.empty? ? "unknown error" : text}"
+        text_blocks = blocks.grep(String)
+        if result["structuredContent"]
+          structured = JSON.generate(result["structuredContent"])
+          text_blocks << structured unless text_blocks.include?(structured)
+        end
+        text = text_blocks.join("\n")
+        content = "MCP tool error: #{text.empty? ? "unknown error" : text}"
+        non_text = blocks.grep_v(String)
+        content = [content, *non_text] unless non_text.empty?
+        return ToolResult.new(content:, error: true)
       end
       if blocks.empty? && result["structuredContent"]
         return JSON.generate(result["structuredContent"])

@@ -29,15 +29,25 @@ class TestAgentHooks < Minitest::Test
     provider = Mistri::Providers::Fake.new(turns: two_call_turns)
     agent = Mistri::Agent.new(provider:, tools: tools(log), before_tool: policy)
 
-    result = agent.run("clean up")
+    events = []
+    result = agent.run("clean up") { |event| events << event }
 
     assert_predicate result, :completed?
     assert_equal [:read], log, "the blocked tool never ran"
 
-    answers = agent.session.messages.select(&:tool?).map(&:text)
+    answers = agent.session.messages.select(&:tool?)
 
-    assert_includes answers, "Blocked: org policy forbids purging"
-    assert_includes answers, "data"
+    assert_equal %w[read purge], answers.map(&:tool_name)
+    assert_equal ["data", "Blocked: org policy forbids purging"], answers.map(&:text)
+    errors = answers.map(&:tool_error)
+    starts = events.select { |event| event.type == :tool_started }
+                   .map { |event| event.tool_call.name }
+    results = events.select { |event| event.type == :tool_result }
+                    .map { |event| event.tool_call.name }
+
+    assert_equal [false, true], errors
+    assert_equal ["read"], starts
+    assert_equal %w[read purge], results
   end
 
   def test_before_tool_outranks_the_approval_gate
@@ -135,7 +145,62 @@ class TestAgentHooks < Minitest::Test
     agent = Mistri::Agent.new(provider:, tools: [tool], after_tool: boom)
     agent.run("go")
 
-    assert_includes agent.session.messages.select(&:tool?).last.text, "after_tool hook"
+    answer = agent.session.messages.select(&:tool?).last
+
+    assert_includes answer.text, "after_tool hook"
+    assert_includes answer.text, "already returned"
+    assert_predicate answer, :tool_error?
+  end
+
+  def test_after_tool_sees_typed_failures_and_cannot_clear_them
+    seen = nil
+    tool = Mistri::Tool.define("boom", "B.") { raise "secret detail" }
+    redact = lambda do |_call, result, _context|
+      seen = result
+      Mistri::ToolResult.new(content: "The operation failed.", error: false)
+    end
+    provider = Mistri::Providers::Fake.new(turns: [
+                                             { tool_calls: [{ name: "boom", arguments: {} }] },
+                                             { text: "done" }
+                                           ])
+    agent = Mistri::Agent.new(provider:, tools: [tool], after_tool: redact)
+
+    agent.run("go")
+
+    assert_instance_of Mistri::ToolResult, seen
+    assert_predicate seen, :error?
+    answer = agent.session.messages.select(&:tool?).last
+
+    assert_equal "The operation failed.", answer.text
+    assert_predicate answer, :tool_error?
+  end
+
+  def test_after_tool_stays_interleaved_with_each_persisted_result
+    observed = []
+    audit = lambda do |call, result, context|
+      persisted = context.session.entries.count do |entry|
+        entry["type"] == "message" && entry.dig("message", "role") == "tool"
+      end
+      observed << [call.name, persisted]
+      context.emit.call(Mistri::Event.new(type: :compacting, content: call.name))
+      result
+    end
+    provider = Mistri::Providers::Fake.new(turns: two_call_turns)
+    events = []
+    agent = Mistri::Agent.new(provider:, tools: tools([]), after_tool: audit,
+                              max_concurrency: 1)
+
+    agent.run("go") { |event| events << event }
+
+    assert_equal [["read", 0], ["purge", 1]], observed
+    lifecycle = events.filter_map do |event|
+      case event.type
+      when :compacting then "hook:#{event.content}"
+      when :tool_result then "result:#{event.tool_call.name}"
+      end
+    end
+
+    assert_equal %w[hook:read result:read hook:purge result:purge], lifecycle
   end
 
   def test_hooks_receive_the_callers_context

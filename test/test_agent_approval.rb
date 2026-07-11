@@ -17,6 +17,7 @@ class TestAgentApproval < Minitest::Test
     assert_equal "send_gift", result.pending.first.name
     assert_empty sent, "the gated tool must not execute before approval"
     assert(events.any? { |e| e.type == :approval_needed })
+    refute(events.any? { |e| e.type == :tool_started })
   end
 
   def test_approval_days_later_from_a_fresh_process_completes_the_run
@@ -51,10 +52,11 @@ class TestAgentApproval < Minitest::Test
 
     assert_predicate result, :completed?
     assert_empty sent
-    denial = agent.session.messages.select(&:tool?).last.text
+    denial = agent.session.messages.select(&:tool?).last
 
-    assert_match(/denied/i, denial)
-    assert_match(/too expensive/, denial)
+    assert_match(/denied/i, denial.text)
+    assert_match(/too expensive/, denial.text)
+    refute_predicate denial, :tool_error?, "human denial is an expected control outcome"
   end
 
   def test_resume_before_a_decision_returns_still_suspended
@@ -108,6 +110,79 @@ class TestAgentApproval < Minitest::Test
 
     assert_predicate result, :completed?
     assert_equal [5], sent
+  end
+
+  def test_a_raising_approval_policy_fails_closed_per_call
+    ran = []
+    broken = Mistri::Tool.define("broken", "B.", needs_approval: lambda { |_args|
+      raise "policy unavailable"
+    }) { flunk "ran despite an unavailable approval policy" }
+    safe_a = Mistri::Tool.define("safe_a", "A.") do
+      ran << :safe_a
+      "ok"
+    end
+    safe_b = Mistri::Tool.define("safe_b", "B.") do
+      ran << :safe_b
+      "ok"
+    end
+    provider = Mistri::Providers::Fake.new(turns: [
+                                             { tool_calls: [{ name: "safe_a", arguments: {} },
+                                                            { name: "broken", arguments: {} },
+                                                            { name: "safe_b", arguments: {} }] },
+                                             { text: "done" }
+                                           ])
+    events = []
+    agent = Mistri::Agent.new(provider:, tools: [safe_a, broken, safe_b], max_concurrency: 1)
+
+    result = agent.run("go") { |event| events << event }
+
+    assert_predicate result, :completed?
+    assert_equal %i[safe_a safe_b], ran
+    answers = agent.session.messages.select(&:tool?)
+
+    assert_equal %w[safe_a broken safe_b], answers.map(&:tool_name)
+    assert_equal [false, true, false], answers.map(&:tool_error)
+    assert_includes answers[1].text, "approval policy"
+    starts = events.select { |event| event.type == :tool_started }.map(&:tool_call)
+    results = events.select { |event| event.type == :tool_result }.map(&:tool_call)
+
+    assert_equal %w[safe_a safe_b], starts.map(&:name)
+    assert_equal %w[safe_a broken safe_b], results.map(&:name)
+    replay = provider.requests.last[:messages].select(&:tool?)
+
+    assert_equal %w[safe_a broken safe_b], replay.map(&:tool_name)
+  end
+
+  def test_mixed_approval_decisions_settle_in_original_call_order
+    ran = []
+    first = Mistri::Tool.define("first", "First.", needs_approval: true) do
+      flunk "denied call ran"
+    end
+    second = Mistri::Tool.define("second", "Second.", needs_approval: true) do
+      ran << :second
+      "done"
+    end
+    provider = Mistri::Providers::Fake.new(turns: [
+                                             { tool_calls: [{ name: "first", arguments: {} },
+                                                            { name: "second", arguments: {} }] },
+                                             { text: "noted" }
+                                           ])
+    agent = Mistri::Agent.new(provider:, tools: [first, second])
+    pending = agent.run("go").pending
+    agent.session.deny(pending[0].id)
+    agent.session.approve(pending[1].id)
+    events = []
+
+    agent.resume { |event| events << event }
+
+    assert_equal [:second], ran
+    answers = agent.session.messages.select(&:tool?)
+
+    assert_equal %w[first second], answers.map(&:tool_name)
+    assert_equal [false, false], answers.map(&:tool_error)
+    results = events.select { |event| event.type == :tool_result }
+
+    assert_equal(%w[first second], results.map { |event| event.tool_call.name })
   end
 
   private

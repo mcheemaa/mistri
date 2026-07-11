@@ -41,9 +41,9 @@ module Mistri
       @handler = handler
     end
 
-    # A handler may return a ToolResult to speak on two channels; its ui
-    # payload is canonicalized through JSON here so the live event and a
-    # reloaded session read the identical shape.
+    # A handler may return a ToolResult to add host-only UI or declare a
+    # model-readable failure. Its ui payload is canonicalized through JSON
+    # here so the live event and a reloaded session read the identical shape.
     #
     # Handlers receive (arguments, context). A proc that declares one
     # parameter ignores the context invisibly; a lambda opts in by arity.

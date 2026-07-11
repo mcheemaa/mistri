@@ -195,7 +195,7 @@ module Mistri
           child.deny(call.id, note: "sub-agents cannot pause for human approval")
           child.append_message(Message.tool(
                                  content: "Denied: sub-agents cannot pause for human approval.",
-                                 tool_call_id: call.id, tool_name: call.name
+                                 tool_call_id: call.id, tool_name: call.name, tool_error: true
                                ))
         end
       end
@@ -301,12 +301,14 @@ module Mistri
         when :awaiting_approval
           deny_pending(result, child)
           ToolResult.new(content: "The #{label} sub-agent stopped: it needed human " \
-                                  "approval, which sub-agents cannot wait for.", ui: link)
+                                  "approval, which sub-agents cannot wait for.", ui: link,
+                         error: true)
         when :aborted
-          ToolResult.new(content: "[the #{label} sub-agent was stopped]", ui: link)
+          ToolResult.new(content: "[the #{label} sub-agent was stopped]", ui: link, error: true)
         else
           reason = result.error_message || result.status
-          ToolResult.new(content: "The #{label} sub-agent failed: #{reason}", ui: link)
+          ToolResult.new(content: "The #{label} sub-agent failed: #{reason}", ui: link,
+                         error: true)
         end
       end
 

@@ -81,6 +81,7 @@ class TestChildStop < Minitest::Test
     tool_message = session.messages.select(&:tool?).last
 
     assert_match(/was stopped/, tool_message.text)
+    assert_predicate tool_message, :tool_error?
     refute Mistri.locks.flag?(Mistri::Child.stop_key(child.session_id)),
            "the stop flag clears when the child ends"
   end

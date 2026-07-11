@@ -53,6 +53,15 @@ class TestGeminiSerializer < Minitest::Test
     assert_raises(Mistri::SchemaError) { SERIALIZER.contents([result]) }
   end
 
+  def test_failed_tool_results_use_the_documented_error_key
+    failed = Mistri::Message.tool(content: "unavailable", tool_call_id: "c1",
+                                  tool_name: "search", tool_error: true)
+
+    response = SERIALIZER.contents([failed]).first[:parts].first[:functionResponse][:response]
+
+    assert_equal({ "error" => "unavailable" }, response)
+  end
+
   def test_images_ride_as_inline_data
     image = Mistri::Content::Image.from_bytes("png!", mime_type: "image/png")
     contents = SERIALIZER.contents([Mistri::Message.user(["see", image])])

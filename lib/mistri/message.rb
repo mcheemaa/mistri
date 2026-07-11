@@ -10,26 +10,33 @@ module Mistri
   # them, which is what lets a later turn replay history across models, plus
   # usage and the stop reason.
   #
-  # ui is a tool result's host-only channel: it persists with the message and
-  # rides its :tool_result event, but no serializer ever sends it to a model.
-  # error is the machine-readable failure on an errored turn (ErrorData
-  # shape); error_message stays the human story.
+  # ui is a tool result's host-only channel. tool_error is true or false on
+  # newly produced tool results and nil on legacy records that predate the
+  # field. error is the machine-readable failure on an errored provider turn
+  # (ErrorData shape); error_message stays the human story.
   class Message < Data.define(:role, :content, :tool_call_id, :tool_name,
                               :model, :provider, :usage, :stop_reason, :error_message, :ui,
-                              :error)
+                              :error, :tool_error)
     ROLES = %i[system user assistant tool].freeze
 
     def initialize(role:, content: nil, tool_call_id: nil, tool_name: nil, model: nil,
                    provider: nil, usage: nil, stop_reason: nil, error_message: nil, ui: nil,
-                   error: nil)
+                   error: nil, tool_error: nil)
       role = role.to_sym
       raise ArgumentError, "unknown role #{role.inspect}" unless ROLES.include?(role)
       if stop_reason && !StopReason.valid?(stop_reason)
         raise ArgumentError, "unknown stop reason #{stop_reason.inspect}"
       end
 
+      unless tool_error.nil?
+        unless [true, false].include?(tool_error)
+          raise ArgumentError, "tool_error must be true, false, or nil"
+        end
+        raise ArgumentError, "tool_error is only valid on tool messages" if role != :tool
+      end
+
       super(role:, content: Content.wrap(content).freeze, tool_call_id:, tool_name:,
-            model:, provider:, usage:, stop_reason:, error_message:, ui:, error:)
+            model:, provider:, usage:, stop_reason:, error_message:, ui:, error:, tool_error:)
     end
 
     def self.system(content) = new(role: :system, content:)
@@ -50,8 +57,8 @@ module Mistri
       new(role: :assistant, content: [*Content.wrap(content), *tool_calls], **meta)
     end
 
-    def self.tool(content:, tool_call_id:, tool_name: nil, ui: nil)
-      new(role: :tool, content:, tool_call_id:, tool_name:, ui:)
+    def self.tool(content:, tool_call_id:, tool_name: nil, ui: nil, tool_error: false)
+      new(role: :tool, content:, tool_call_id:, tool_name:, ui:, tool_error:)
     end
 
     def self.from_h(hash)
@@ -62,13 +69,15 @@ module Mistri
           model: h["model"], provider: h["provider"]&.to_sym,
           usage: h["usage"] && Usage.from_h(h["usage"]),
           stop_reason: h["stop_reason"]&.to_sym, error_message: h["error_message"],
-          ui: h["ui"], error: h["error"])
+          ui: h["ui"], error: h["error"], tool_error: h["tool_error"])
     end
 
     def system? = role == :system
     def user? = role == :user
     def assistant? = role == :assistant
     def tool? = role == :tool
+    def tool_error? = tool_error == true
+    def tool_error_known? = !tool_error.nil?
 
     # Every Text block joined, or nil when the turn carried no text.
     def text
@@ -84,7 +93,8 @@ module Mistri
     # never with new(**to_h).
     def to_h
       { role:, content: content.map(&:to_h), tool_call_id:, tool_name:, model:,
-        provider:, usage: usage&.to_h, stop_reason:, error_message:, ui:, error: }.compact
+        provider:, usage: usage&.to_h, stop_reason:, error_message:, ui:, error:,
+        tool_error: }.compact
     end
   end
 end

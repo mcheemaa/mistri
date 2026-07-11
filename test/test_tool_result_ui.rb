@@ -7,6 +7,10 @@ require_relative "test_helper"
 class TestToolResultUi < Minitest::Test
   MARKER = "UI_ONLY_PAYLOAD_9Z"
 
+  def test_error_must_be_boolean
+    assert_raises(ArgumentError) { Mistri::ToolResult.new(content: "x", error: nil) }
+  end
+
   def test_content_reaches_the_model_and_ui_reaches_the_host
     store = Mistri::Stores::Memory.new
     provider = Mistri::Providers::Fake.new(turns: [
@@ -62,6 +66,23 @@ class TestToolResultUi < Minitest::Test
     end
   end
 
+  def test_legacy_unknown_tool_status_keeps_the_historical_provider_wire_shape
+    legacy = Mistri::Message.from_h(
+      "role" => "tool", "content" => [{ "type" => "text", "text" => "old result" }],
+      "tool_call_id" => "c1", "tool_name" => "lookup"
+    )
+
+    anthropic = Mistri::Providers::Anthropic::Serializer.messages([legacy])
+    gemini = Mistri::Providers::Gemini::Serializer.contents([legacy])
+    openai = Mistri::Providers::OpenAI::Serializer.input_items([legacy])
+
+    refute_predicate legacy, :tool_error_known?
+    refute anthropic.first[:content].first.key?(:is_error)
+    assert_equal({ "result" => "old result" },
+                 gemini.first[:parts].first[:functionResponse][:response])
+    assert_equal "old result", openai.first[:output]
+  end
+
   def test_plain_returns_still_carry_no_ui
     provider = Mistri::Providers::Fake.new(turns: [
                                              { tool_calls: [{ name: "plain", arguments: {} }] },
@@ -87,5 +108,29 @@ class TestToolResultUi < Minitest::Test
 
     assert_equal '{"total":42}', result.content, "data content still serializes as JSON"
     assert_equal({ "rows" => [[1], [2]] }, result.ui)
+  end
+
+  def test_handler_declared_failure_keeps_ui_and_error_through_the_session
+    store = Mistri::Stores::Memory.new
+    provider = Mistri::Providers::Fake.new(turns: [
+                                             { tool_calls: [{ name: "lookup",
+                                                              arguments: {} }] },
+                                             { text: "done" }
+                                           ])
+    tool = Mistri::Tool.define("lookup", "Looks up.") do
+      Mistri::ToolResult.new(content: "Unavailable.", ui: { retryable: false }, error: true)
+    end
+    session = Mistri::Session.new(store:)
+    events = []
+
+    Mistri::Agent.new(provider:, tools: [tool], session:).run("go") { |event| events << event }
+
+    event = events.find { |item| item.type == :tool_result }
+    reloaded = Mistri::Session.new(store:, id: session.id).messages.find(&:tool?)
+
+    assert event.tool_error
+    assert_predicate event.message, :tool_error?
+    assert_predicate reloaded, :tool_error?
+    assert_equal({ "retryable" => false }, reloaded.ui)
   end
 end

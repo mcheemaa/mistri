@@ -45,9 +45,11 @@ class TestAgent < Minitest::Test
     agent = Mistri::Agent.new(provider:, tools: [boom])
 
     agent.run("go")
-    tool_result = agent.session.messages[2].text
+    tool_result = agent.session.messages[2]
 
-    assert_match(/Error running tool "boom".*kaboom/, tool_result)
+    assert_match(/Error running tool "boom".*kaboom/, tool_result.text)
+    assert_match(/verify.*before retrying/i, tool_result.text)
+    assert_predicate tool_result, :tool_error?
   end
 
   def test_an_errored_turn_with_tool_calls_pairs_without_executing
@@ -63,6 +65,7 @@ class TestAgent < Minitest::Test
 
     assert_predicate tool_result, :tool?
     assert_equal Mistri::ToolExecutor::INTERRUPTED, tool_result.text
+    assert_predicate tool_result, :tool_error?
   end
 
   def test_a_budget_stops_the_run_between_turns
