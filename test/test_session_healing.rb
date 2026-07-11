@@ -37,6 +37,29 @@ class TestSessionHealing < Minitest::Test
                  "the stored log gained nothing"
   end
 
+  def test_gemini_replay_keeps_persisted_and_healed_siblings_in_call_order
+    cases = [
+      ["call_1", "first", [{ "result" => "first" }, { "error" => INTERRUPTED }]],
+      ["call_2", "second", [{ "error" => INTERRUPTED }, { "result" => "second" }]]
+    ]
+    cases.each do |answered_id, content, expected|
+      session = Mistri::Session.new(store: Mistri::Stores::Memory.new)
+      calls = %w[call_1 call_2].map do |id|
+        Mistri::ToolCall.new(id:, name: "lookup", arguments: {})
+      end
+      session.append_message(Mistri::Message.assistant(tool_calls: calls,
+                                                       stop_reason: :tool_use,
+                                                       provider: :gemini))
+      session.append_message(Mistri::Message.tool(content:, tool_call_id: answered_id,
+                                                  tool_name: "lookup"))
+
+      contents = Mistri::Providers::Gemini::Serializer.contents(session.messages)
+      responses = contents.last[:parts].map { |part| part[:functionResponse][:response] }
+
+      assert_equal expected, responses, answered_id
+    end
+  end
+
   def test_a_resumed_run_sends_a_fully_paired_context
     session = bricked_session
     provider = Mistri::Providers::Fake.new(turns: [{ text: "picking up where we left off" }])
@@ -69,6 +92,21 @@ class TestSessionHealing < Minitest::Test
     session.replay
 
     assert_equal 1, store.loads - before, "context assembly is one store read, healing included"
+  end
+
+  def test_replay_does_not_deserialize_messages_removed_by_compaction
+    store = Mistri::Stores::Memory.new
+    session = Mistri::Session.new(store:)
+    store.append(session.id, {
+                   "type" => "message",
+                   "message" => { "role" => "invalid-before-compaction", "content" => [] }
+                 })
+    session.append("compaction", "summary" => "old context", "kept_from" => 1)
+
+    replay = session.messages
+
+    assert_equal 1, replay.length
+    assert_includes replay.first.text, "old context"
   end
 
   def test_calls_parked_for_approval_are_not_healed_away

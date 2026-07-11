@@ -84,12 +84,14 @@ module Mistri
         Compiled.new(schema, tool: true, complete: complete)
       end
 
-      # MCP schemas are untrusted contracts. Core may preserve unsupported
-      # assertions as provider guidance for host-authored tools, but a remote
-      # schema needs an explicitly complete validator before policy can trust it.
+      # MCP schemas get the same stance as host-authored tools: directly
+      # reachable portable constraints are enforced locally, while unsupported
+      # applicator subtrees stay server guidance. Complete validators own the
+      # whole local contract; external references are rejected in either mode.
       def validate_mcp!(schema, complete: false)
         compiled = Compiled.new(schema, tool: true, complete: complete)
-        AssertionContract.new(complete:, context: "MCP input schema").call(compiled.schema)
+        AssertionContract.new(complete:, context: "MCP input schema",
+                              allow_guidance: true).call(compiled.schema)
         compiled.schema
       end
 
@@ -385,6 +387,7 @@ module Mistri
         validate_prefix_items(schema, path)
         validate_additional_properties(schema, path)
         validate_dependent_required(schema, path)
+        validate_dependencies(schema, path)
         SCHEMA_MAPS.each { |keyword| validate_schema_map(schema, keyword, path) }
         SCHEMA_ARRAYS.each { |keyword| validate_schema_array(schema, keyword, path) }
         SCHEMA_VALUES.each { |keyword| validate_schema_value(schema, keyword, path) }
@@ -542,6 +545,22 @@ module Mistri
         end
       end
 
+      def validate_dependencies(spec, path)
+        return unless spec.key?("dependencies")
+
+        dependencies = spec["dependencies"]
+        configuration!("#{path}.dependencies", "must be an object") unless dependencies.is_a?(Hash)
+        dependencies.each do |key, member|
+          member_path = ValidationSupport.child_path("#{path}.dependencies", key)
+          if member.is_a?(Array)
+            valid = member.all?(String) && member.uniq == member
+            configuration!(member_path, "must be a schema or array of unique strings") unless valid
+          else
+            walk_schema(member, member_path)
+          end
+        end
+      end
+
       def validate_schema_map(spec, keyword, path)
         return unless spec.key?(keyword)
 
@@ -622,9 +641,11 @@ module Mistri
         not if then else contains propertyNames unevaluatedProperties
         unevaluatedItems additionalProperties items
       ].freeze
+      REFERENCE_SCHEMA_VALUES = [*SCHEMA_VALUES, "contentSchema"].freeze
 
-      def call(schema)
+      def call(schema, references_only: false)
         @findings = []
+        @references_only = references_only
         walk(schema, "$")
         @findings.freeze
       end
@@ -638,20 +659,16 @@ module Mistri
         walk_maps(schema, path)
         walk_arrays(schema, path)
         walk_values(schema, path)
+        walk_dependencies(schema, path)
       end
 
       def record_assertions(schema, path)
-        ASSERTIONS.each do |keyword|
+        keywords = @references_only ? %w[$ref $dynamicRef] : ASSERTIONS
+        keywords.each do |keyword|
           next unless schema.key?(keyword)
           next if ignorable_empty_map?(schema, keyword)
 
           @findings << ["#{path}.#{keyword}".freeze, keyword, schema[keyword]].freeze
-        end
-        schema.fetch("$vocabulary", {}).each do |uri, required|
-          next unless required
-
-          vocabulary_path = ValidationSupport.child_path("#{path}.$vocabulary", uri)
-          @findings << [vocabulary_path.freeze, "$vocabulary", uri].freeze
         end
       end
 
@@ -680,26 +697,38 @@ module Mistri
       end
 
       def walk_values(schema, path)
-        SCHEMA_VALUES.each do |keyword|
+        values = @references_only ? REFERENCE_SCHEMA_VALUES : SCHEMA_VALUES
+        values.each do |keyword|
           member = schema[keyword]
           walk(member, "#{path}.#{keyword}") if member.is_a?(Hash)
+        end
+      end
+
+      def walk_dependencies(schema, path)
+        schema.fetch("dependencies", {}).each do |key, member|
+          next if member.is_a?(Array)
+
+          walk(member, ValidationSupport.child_path("#{path}.dependencies", key))
         end
       end
     end
     private_constant :AssertionScanner
 
-    # Unsupported assertions are safe as generation guidance for a local Tool,
-    # but not as a claimed validation or remote-policy boundary.
+    # Unsupported assertions are safe as MCP server guidance, but not as a
+    # claimed local validation boundary. External references are rejected in
+    # every mode so validation never implies hidden network or file resolution.
     class AssertionContract
-      def initialize(complete:, context:)
+      def initialize(complete:, context:, allow_guidance: false)
         @complete = complete
         @context = context
+        @allow_guidance = allow_guidance
       end
 
       def call(schema)
         findings = AssertionScanner.new.call(schema)
-        reject_external_references(findings)
-        return if @complete || findings.empty?
+        references = AssertionScanner.new.call(schema, references_only: true)
+        reject_external_references(references)
+        return if @complete || @allow_guidance || findings.empty?
 
         paths = findings.first(3).map(&:first).join(", ")
         suffix = findings.length > 3 ? ", and #{findings.length - 3} more" : ""
@@ -711,12 +740,12 @@ module Mistri
 
       def reject_external_references(findings)
         finding = findings.find do |(_, keyword, value)|
-          %w[$ref $dynamicRef].include?(keyword) && !value.start_with?("#")
+          %w[$ref $dynamicRef].include?(keyword) && !value.empty? && !value.start_with?("#")
         end
         return unless finding
 
         raise ConfigurationError,
-              "#{finding.first} must be a same-document reference beginning with #"
+              "#{finding.first} must be empty or a same-document reference beginning with #"
       end
     end
     private_constant :AssertionContract
@@ -774,6 +803,11 @@ module Mistri
         end
         items = spec["items"]
         block.call(items, ValidationSupport.item_path(path)) if items.is_a?(Hash)
+        spec.fetch("dependencies", {}).each do |key, member|
+          next if member.is_a?(Array)
+
+          block.call(member, ValidationSupport.child_path("#{path}.dependencies", key))
+        end
       end
 
       def configuration!(path, problem)

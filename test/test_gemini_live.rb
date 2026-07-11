@@ -101,4 +101,46 @@ class TestGeminiLive < Minitest::Test
   ensure
     provider&.close
   end
+
+  def test_reused_legacy_ids_preserve_each_results_wire_origin
+    provider = Mistri::Providers::Gemini.new(api_key: ENV.fetch("GEMINI_API_KEY"))
+    lookup = { name: "lookup", description: "Looks up one record.",
+               input_schema: { type: "object", properties: { record: { type: "string" } },
+                               required: ["record"] } }
+    generated = provider.stream(
+      messages: [Mistri::Message.user("Call lookup with record two. No prose.")],
+      tools: [lookup]
+    ) { |_event| nil }
+
+    assert_equal :tool_use, generated.stop_reason
+
+    current = generated.tool_calls.fetch(0)
+    legacy_native = Mistri::ToolCall.new(id: "call_1", name: current.name,
+                                         arguments: current.arguments,
+                                         signature: current.signature)
+    foreign = Mistri::ToolCall.new(id: "call_1", name: "lookup", arguments: { "record" => "one" })
+    first_fact = "first-#{SecureRandom.hex(4)}"
+    second_fact = "second-#{SecureRandom.hex(4)}"
+    history = [
+      Mistri::Message.user("Look up record one."),
+      Mistri::Message.assistant(content: [foreign], provider: :fake,
+                                stop_reason: :tool_use),
+      Mistri::Message.tool(content: first_fact, tool_call_id: foreign.id,
+                           tool_name: foreign.name),
+      Mistri::Message.user("Now look up record two."),
+      Mistri::Message.assistant(content: [legacy_native], provider: :gemini,
+                                stop_reason: :tool_use),
+      Mistri::Message.tool(content: second_fact, tool_call_id: legacy_native.id,
+                           tool_name: legacy_native.name),
+      Mistri::Message.user("Return both exact lookup results, separated by one space.")
+    ]
+
+    message = provider.stream(messages: history, tools: [lookup]) { |_event| nil }
+
+    assert_equal :stop, message.stop_reason
+    assert_includes message.text, first_fact
+    assert_includes message.text, second_fact
+  ensure
+    provider&.close
+  end
 end

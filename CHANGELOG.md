@@ -17,13 +17,21 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   errors, and do not prevent valid siblings from running. Results settled in
   the same phase return in model-call order.
   Completed tool-call IDs, names, signatures, and provider correlation IDs must
-  be non-empty UTF-8 strings. Internal IDs are unique for the session, and
-  provider correlation IDs are unique within one assistant turn. A malformed
-  call envelope or a non-assistant provider result rejects the whole provider
-  attempt before persistence, policy, or execution. The normal provider retry
-  contract retries unchanged history; exhaustion persists a pairable error with
-  no tool calls. An abort during normalization, validation, policy, or approval
-  evaluation interrupts every uncommitted call and parks no approval. Custom
+  be non-empty UTF-8 strings. Live provider turns require IDs unique for the
+  session, and provider correlation IDs are unique within one assistant turn.
+  Persisted histories recognize only the `call_N` reuse without provider
+  correlation IDs that earlier releases synthesized for Gemini and the Fake
+  provider, after the prior occurrence was answered or crash-interrupted.
+  Replay, provider metadata, and compaction track each occurrence independently
+  while live IDs remain reserved for the full session. An unsettled reused-ID
+  approval that cannot distinguish its generation becomes an interrupted result
+  rather than executable stale authorization. Every other duplicate ID,
+  malformed call envelope, or non-assistant provider result rejects the whole
+  provider attempt before persistence, policy, or execution. The normal
+  provider retry contract retries unchanged history; exhaustion persists a
+  pairable error with no tool calls. An abort during normalization, validation,
+  policy, or approval evaluation interrupts every uncommitted call and parks no
+  approval. Custom
   providers that emitted missing, blank, non-string, non-UTF-8, or duplicate
   identifiers must correct their completed call contract. Each run or resume
   validates every persisted message and audits call identity in one control-state
@@ -57,18 +65,25 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   boolean schemas, and boolean or schema-valued `additionalProperties`.
   `argument_validator:` adds domain rules without weakening core;
   `complete_argument_validator:` is separate explicit authority for every
-  non-empty `patternProperties` contract. Tool inputs use
+  argument-applicable non-empty `patternProperties` contract. Tool inputs use
   JSON Schema 2020-12 and require an object root; legacy array-form `items` is
   rejected in favor of `prefixItems`. A schema-less Tool is now a genuinely
   closed no-argument contract; hosts that accepted model fields without
-  declaring them must add an explicit schema. Supplied object schemas preserve
+  declaring them must add an explicit schema. The schema-less wire shape
+  changed with it, so provider prompt caches re-warm once per affected tool
+  set after upgrading. Supplied object schemas preserve
   JSON Schema's default-open semantics unless a raw schema explicitly sets
   `additionalProperties: false`; handlers should extract named fields instead
-  of mass-assigning model input. MCP bridging requires the complete validator
-  for every unimplemented standard constraint or applicator, rejects external
-  references and explicit `inputSchema: null`, and still defaults an omitted
-  schema to a no-argument object. Common map schemas work in core. Task mode
-  rejects assertions and required vocabularies local validation cannot guarantee
+  of mass-assigning model input. MCP bridging enforces directly reachable
+  portable constraints locally and keeps unsupported applicator subtrees and
+  other unimplemented standard assertions as guidance for the server, which the
+  MCP spec obligates to validate its own tool inputs. A complete validator takes
+  explicit whole-contract authority when local policy depends on those
+  assertions. External references and
+  explicit `inputSchema: null` are rejected in every mode, an omitted schema
+  still defaults to a no-argument object, and argument-applicable non-empty
+  `patternProperties` still requires complete authority. Common map schemas
+  work in core. Task mode rejects assertions local validation cannot guarantee
   before making a provider request, then shares one deeply frozen strict schema
   between its prompt and compiled local validator.
   Providers derive a native constraint only for schema shapes their documented

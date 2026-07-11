@@ -35,7 +35,7 @@ class TestToolCallIdentity < Minitest::Test
     assert_equal 1, retries_recorded
   end
 
-  def test_duplicate_ids_in_legacy_history_fail_before_a_run_writes_or_calls_a_provider
+  def test_reusing_an_unanswered_call_id_in_history_fails_before_a_run_writes_or_calls_a_provider
     session = Mistri::Session.new(store: Mistri::Stores::Memory.new)
     append_assistant_call(session, "same")
     append_assistant_call(session, "same")
