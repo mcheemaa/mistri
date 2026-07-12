@@ -41,19 +41,22 @@ module Mistri
       end
 
       def stream(messages:, system: nil, tools: [], signal: nil, **overrides, &emit)
+        delivery = EventDelivery.wrap(emit)
         model = overrides.fetch(:model, @model)
         service_tier = overrides.fetch(:service_tier, @service_tier)
         assembler = Gemini::Assembler.new(model: model, catalog_pricing: @catalog_pricing,
                                           service_tier:)
-        assembler.start(&emit)
+        assembler.start(&delivery)
         body = build_body(messages, system, tools, overrides)
         path = "/v1beta/models/#{model}:streamGenerateContent?alt=sse"
         outcome = @transport.stream_post(path, body: body, headers: headers,
                                                signal: signal) do |record|
           assembler.feed(record,
-                         &emit)
+                         &delivery)
         end
-        outcome == :aborted ? assembler.abort(&emit) : assembler.finish(&emit)
+        outcome == :aborted ? assembler.abort(&delivery) : assembler.finish(&delivery)
+      rescue EventDelivery::Failure => e
+        raise EventDelivery.unwrap(e, delivery)
       rescue Error => e
         assembler.fail_stream(e, &emit)
       end

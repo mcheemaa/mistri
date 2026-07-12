@@ -215,7 +215,14 @@ module Mistri
       return nil unless @compaction.needed?(tokens, context_window,
                                             max_output: Models.shared_output(@provider.model))
 
-      Compactor.call(session: @session, provider: @provider, settings: @compaction, &)
+      compact_automatically(&)
+    end
+
+    def compact_automatically(&emit)
+      delivery = EventDelivery.wrap(emit)
+      Compactor.call(session: @session, provider: @provider, settings: @compaction, &delivery)
+    rescue EventDelivery::Failure => e
+      raise EventDelivery.unwrap(e, delivery)
     rescue CompactionError => e
       { usage: e.usage || Usage.new }
     end
@@ -791,6 +798,8 @@ module Mistri
 
         reason = begin
           @before_tool.call(call, context)
+        rescue EventDelivery::Failure => e
+          raise EventDelivery.unwrap(e, context.emit)
         rescue StandardError => e
           "the before_tool hook failed: #{e.class}: #{e.message}"
         end
@@ -812,6 +821,8 @@ module Mistri
       else
         ToolResult.new(content: rewritten, error: true)
       end
+    rescue EventDelivery::Failure => e
+      raise EventDelivery.unwrap(e, context.emit)
     rescue StandardError => e
       ToolResult.new(
         content: "Error in after_tool hook: #{e.class}: #{e.message}. The tool already returned; " \
@@ -821,7 +832,8 @@ module Mistri
     end
 
     def hook_context(signal, emit)
-      ToolContext.new(session: @session, signal: signal, emit: emit, app: @context)
+      ToolContext.new(session: @session, signal: signal, emit: EventDelivery.wrap(emit),
+                      app: @context)
     end
 
     # The tool message carries both channels; the :tool_result event exposes

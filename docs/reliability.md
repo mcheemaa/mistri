@@ -200,6 +200,27 @@ abort an operation and, after a handler starts, create the same unknown-outcome
 gap as a process crash. Do not raise intentionally from a sink; keep it small,
 observable, thread-safe, and independently retryable where possible.
 
+Across Mistri's synchronous delivery boundaries, the exact subscriber exception
+object propagates to the caller. The gem does not retry it or reinterpret it as
+a provider, transport, hook, tool, parse, or compaction failure, even when its
+class belongs to one of those error families. This applies through nested
+inline sub-agents as well as the top-level Agent. A custom provider must likewise
+let its event callback escape rather than folding it into a provider result. A
+background child emitting after its spawn call returned has no synchronous
+caller to raise into. A callback that aborts its execution records the original
+failure class in the failed child terminal and dispatcher diagnostic. If only
+the post-terminal `:subagent_report` callback fails, the completed child and
+already-delivered parent inbox report remain durable; the dispatcher diagnoses
+the callback failure.
+
+Propagation does not roll back durable facts. `:tool_result` and
+`:approval_needed` run after their Session entries append, and `:compaction`
+runs after its checkpoint appends. Provider terminal events run before the
+assistant Message append. `:tool_started` runs before handler invocation, while
+a handler progress failure may leave an external side effect with no durable
+result. Reconcile from the Session and the tool's domain idempotency key rather
+than retrying solely because the sink failed.
+
 ## Stopping
 
 `Mistri::AbortSignal` is an in-process, thread-safe, one-way latch:
