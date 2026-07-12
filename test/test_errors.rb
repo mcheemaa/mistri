@@ -4,7 +4,8 @@ require_relative "test_helper"
 
 class TestErrors < Minitest::Test
   def test_every_error_rescues_as_mistri_error
-    [Mistri::ConfigurationError, Mistri::ProviderError, Mistri::AuthenticationError,
+    [Mistri::ConfigurationError, Mistri::DispatchGrantError,
+     Mistri::ProviderError, Mistri::AuthenticationError,
      Mistri::RateLimitError, Mistri::OverloadedError, Mistri::ServerError,
      Mistri::ResponseTooLargeError, Mistri::ResponseTooComplexError,
      Mistri::AmbiguousDeliveryError,

@@ -17,8 +17,9 @@ Gemini providers preserve ordinary 0.5 sessions, including the repeated
 occurrence settled. There is no blanket session rewrite step.
 
 Hosts that used implicit tool schemas, mutated arguments, supplied custom
-providers, generated MCP OAuth models, stored sessions in MySQL, or configured
-cost budgets need to review the sections below.
+providers, dispatched background children, generated MCP OAuth models, stored
+sessions in MySQL, or configured cost budgets need to review the sections
+below.
 
 ### Checklist
 
@@ -38,8 +39,106 @@ cost budgets need to review the sections below.
       behavior.
 - [ ] Configure a deterministic standard service tier for any cost budget.
 - [ ] Remove intentional symlinks from model-controlled Directory workspaces.
+- [ ] Add a runtime factory to every background spawner and queue worker.
+- [ ] Review queued child specs and ensure their exact `tool_names` grant is
+      still intended before executing them under 0.6.
 - [ ] Exercise active persisted sessions, approvals, tool failures, compaction,
       and one real call per configured provider in staging.
+
+## Background children reconstruct their runtime
+
+A dispatcher no longer captures the spawn-time provider, Tool objects, Agent
+options, or their workspace closures. Every spawner with `dispatcher:` must now
+provide a host-owned `runtime_factory:`. Mistri invokes it inside the worker and
+requires a `Mistri::SubAgent::Runtime`:
+
+```ruby
+runtime_factory = lambda do |spec|
+  workspace = HostWorkspaces.for_child(spec.fetch("session_id"))
+  provider = HostModels.build(spec.fetch("model"))
+  tools = HostTools.build(spec.fetch("tool_names"), workspace: workspace)
+
+  Mistri::SubAgent::Runtime.new(
+    provider: provider,
+    system: HostAgents.system_for(spec),
+    tools: tools,
+    cleanup: -> { HostAgents.release(provider: provider, tools: tools) },
+    budget: HostAgents.child_budget,
+  )
+end
+
+spawn = Mistri::SubAgent.spawner(
+  provider: child_provider,
+  tools: declared_tools,
+  dispatcher: Mistri::Dispatchers::Thread.new,
+  runtime_factory: runtime_factory,
+)
+```
+
+The provider model and unique Tool names returned by the factory must match the
+versioned dispatch spec exactly. Mistri rejects missing, additional, duplicate,
+renamed, or reconstructed statically approval-gated tools before the provider
+runs. This turns `tool_names` into a durable capability grant rather than queue
+metadata. A versioned spec and its exact parent routing are also stored in the
+child Session; a changed queue copy raises without failing or reporting the
+legitimate child.
+
+`cleanup:` is optional and called exactly once after Mistri accepts a Runtime,
+including after validation or execution failure. Use it for per-child provider
+sockets, MCP subprocesses, and other host-owned resources. It never masks the
+primary error. `skills:` is rejected because it would add an
+undeclared `read_skill` tool. Spawner Agent options apply only to inline
+children; declare background Agent options on the Runtime.
+
+Sub-agent Agent options are now limited to `budget`, `max_concurrency`,
+`transform_context`, `compaction`, `retries`, `skills`, `before_tool`,
+`after_tool`, and application `context`; background Runtime still rejects
+`skills`. Lifecycle keys such as `session`, `task`, `signal`, and `emit` are
+owned by the child and cannot be overridden through generic keyword options.
+
+The model-facing `workspace` argument has been removed. It never cloned a Tool
+closure or proved isolation. Existing queued specs that contain `workspace`
+remain readable, but new specs omit it. Build child-scoped resources from
+trusted host state and stable identifiers such as `session_id`; a retry should
+reopen the same durable scope. Inline children still use the exact objects the
+host supplied and may share their backends.
+
+Queue jobs should pass the factory into the lifecycle entry point:
+
+```ruby
+Mistri::SubAgent.run_dispatched(
+  spec,
+  store: mistri_store,
+  runtime_factory: HostAgents.method(:runtime_for),
+)
+```
+
+Factory exceptions are retryable by default: the child remains non-terminal
+and the exception returns to the queue. Pass `retry_factory_errors: false` on a
+final attempt to persist and report the failure before the exception re-raises.
+The flag does not control the job system's retry or discard decision. The
+built-in Thread and Inline runners use terminal behavior because they have no
+durable retry owner.
+
+If the queue copy differs from the stored grant, `run_dispatched` raises
+`Mistri::DispatchGrantError` without touching the legitimate child. Treat the
+unchanged job as poison: discard it and alert rather than retrying it. This
+error is reserved for Mistri's stored-grant binding; do not raise it from a
+runtime factory.
+
+The compatible direct `provider:`, `system:`, and `tools:` form remains, but it
+now receives the same exact model and tool-grant validation. A job that used to
+pass its entire registry must instead reconstruct only the Tool objects named
+by `spec.fetch("tool_names")`.
+Legacy 0.5 specs keep their serialized grant, including any broad grant created
+by the old empty-Definition bug. Their old child entries also have no stored
+copy against which Mistri can verify capability or report-routing changes.
+Drain or review unversioned queued work before relying on the new boundary.
+
+Tool selection now distinguishes omission from an explicit empty list. Omitted
+`tools` means the general pool or a typed Definition's defaults. `tools: []`
+means no tools for either worker shape, and a typed Definition that declares no
+tools no longer inherits the general pool.
 
 ## Tool schemas are enforced locally
 

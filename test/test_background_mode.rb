@@ -12,6 +12,13 @@ class TestBackgroundMode < Minitest::Test
 
   def fake(*turns) = Mistri::Providers::Fake.new(turns: turns)
 
+  def runtime_factory(provider, tools: [], system: nil)
+    lambda do |spec|
+      Mistri::SubAgent::Runtime.new(provider: provider, system: system || spec["instructions"],
+                                    tools: tools)
+    end
+  end
+
   def spawn_call(arguments)
     fake({ tool_calls: [{ name: "spawn_agent", arguments: arguments }] },
          { text: "Parent moved on." })
@@ -36,24 +43,35 @@ class TestBackgroundMode < Minitest::Test
     child.status
   end
 
-  def test_workspace_sharing_refuses_background_in_band
-    spawn = Mistri::SubAgent.spawner(provider: fake, dispatcher: Mistri::Dispatchers::Inline.new)
-    parent = spawn_call({ "name" => "Husky", "task" => "t", "instructions" => "You help.",
-                          "mode" => "background", "workspace" => "parent" })
-    session = Mistri::Session.new(store: Mistri::Stores::Memory.new)
+  def assert_lease_released(child, deadline: 3)
+    key = Mistri::Child.lease_key(child.session_id)
+    ends = Process.clock_gettime(Process::CLOCK_MONOTONIC) + deadline
+    sleep 0.01 while Mistri.locks.held?(key) &&
+                     Process.clock_gettime(Process::CLOCK_MONOTONIC) < ends
 
-    Mistri::Agent.new(provider: parent, tools: [spawn], session:).run("go")
+    refute Mistri.locks.held?(key), "the runner releases after reporting"
+  end
 
-    refusal = session.messages.select(&:tool?).last
+  def test_a_dispatcher_requires_a_runtime_factory
+    error = assert_raises(Mistri::ConfigurationError) do
+      Mistri::SubAgent.spawner(provider: fake, dispatcher: Mistri::Dispatchers::Inline.new)
+    end
 
-    assert_match(/must run inline/, refusal.text)
-    assert_empty session.children
+    assert_match(/runtime_factory/, error.message)
+
+    error = assert_raises(Mistri::ConfigurationError) do
+      Mistri::SubAgent.spawner(provider: fake, dispatcher: Object.new,
+                               runtime_factory: ->(_spec) {})
+    end
+
+    assert_match(/dispatcher must be callable/, error.message)
   end
 
   def test_inline_dispatcher_finishes_during_the_spawn_and_says_so
     child_fake = fake({ text: "The answer is 7." })
     spawn = Mistri::SubAgent.spawner(provider: child_fake,
-                                     dispatcher: Mistri::Dispatchers::Inline.new)
+                                     dispatcher: Mistri::Dispatchers::Inline.new,
+                                     runtime_factory: runtime_factory(child_fake))
     parent = spawn_call({ "name" => "Corgi", "task" => "answer", "instructions" => "Answer.",
                           "mode" => "background" })
     session = Mistri::Session.new(store: Mistri::Stores::Memory.new)
@@ -86,7 +104,8 @@ class TestBackgroundMode < Minitest::Test
     child_fake = fake({ tool_calls: [{ name: "slow", arguments: {} }] },
                       { text: "Finished the slow work." })
     spawn = Mistri::SubAgent.spawner(provider: child_fake, tools: [slow],
-                                     dispatcher: Mistri::Dispatchers::Thread.new)
+                                     dispatcher: Mistri::Dispatchers::Thread.new,
+                                     runtime_factory: runtime_factory(child_fake, tools: [slow]))
     parent = spawn_call({ "name" => "Whippet", "task" => "work slowly",
                           "instructions" => "Use slow, then report.",
                           "mode" => "background" })
@@ -104,7 +123,7 @@ class TestBackgroundMode < Minitest::Test
 
     assert_equal :done, await_status(child, :done)
     assert_equal "Finished the slow work.", child.report
-    refute Mistri.locks.held?(Mistri::Child.lease_key(child.session_id))
+    assert_lease_released(child)
 
     # The parent's run was long over, so the report waits in its inbox.
     ends = Process.clock_gettime(Process::CLOCK_MONOTONIC) + 3
@@ -117,7 +136,8 @@ class TestBackgroundMode < Minitest::Test
   def test_a_dropped_spec_reads_queued_and_run_dispatched_picks_it_up
     dropper = drop_dispatcher
     child_fake = fake({ text: "Ran from the job." })
-    spawn = Mistri::SubAgent.spawner(provider: child_fake, dispatcher: dropper)
+    spawn = Mistri::SubAgent.spawner(provider: child_fake, dispatcher: dropper,
+                                     runtime_factory: runtime_factory(child_fake))
     parent = spawn_call({ "name" => "Basset", "task" => "do the thing",
                           "instructions" => "You do things.", "mode" => "background" })
     store = Mistri::Stores::Memory.new
@@ -150,7 +170,8 @@ class TestBackgroundMode < Minitest::Test
     child_fake = fake({ tool_calls: [{ name: "slow", arguments: {} }] },
                       { text: "never reached" })
     spawn = Mistri::SubAgent.spawner(provider: child_fake, tools: [slow],
-                                     dispatcher: Mistri::Dispatchers::Thread.new)
+                                     dispatcher: Mistri::Dispatchers::Thread.new,
+                                     runtime_factory: runtime_factory(child_fake, tools: [slow]))
     parent = spawn_call({ "name" => "Pointer", "task" => "work",
                           "instructions" => "Use slow.", "mode" => "background" })
     session = Mistri::Session.new(store:)
@@ -164,7 +185,9 @@ class TestBackgroundMode < Minitest::Test
 
   def test_the_console_treats_a_queued_worker_as_live
     dropper = drop_dispatcher
-    spawn = Mistri::SubAgent.spawner(provider: fake, dispatcher: dropper)
+    child_fake = fake
+    spawn = Mistri::SubAgent.spawner(provider: child_fake, dispatcher: dropper,
+                                     runtime_factory: runtime_factory(child_fake))
     parent = spawn_call({ "name" => "Collie", "task" => "t", "instructions" => "You help.",
                           "mode" => "background" })
     store = Mistri::Stores::Memory.new
@@ -192,7 +215,8 @@ class TestBackgroundMode < Minitest::Test
     Mistri.locks = Mistri::Locks::Memory.new
     dropper = drop_dispatcher
     child_fake = fake({ text: "should never run" })
-    spawn = Mistri::SubAgent.spawner(provider: child_fake, dispatcher: dropper)
+    spawn = Mistri::SubAgent.spawner(provider: child_fake, dispatcher: dropper,
+                                     runtime_factory: runtime_factory(child_fake))
     parent = spawn_call({ "name" => "Saluki", "task" => "t", "instructions" => "You help.",
                           "mode" => "background" })
     store = Mistri::Stores::Memory.new
@@ -203,7 +227,7 @@ class TestBackgroundMode < Minitest::Test
 
     cancelled = Mistri::Console.stop_agent.call({ "agent" => "Saluki" }, context)
 
-    assert_match(/Cancelled\. Saluki had not started/, cancelled)
+    assert_match(/Cancelled\. Saluki is marked stopped; ordinary queue delivery/, cancelled)
     assert_equal :stopped, child.status
 
     # The queue delivers late anyway; the runner honors the terminal.
@@ -227,7 +251,10 @@ class TestBackgroundMode < Minitest::Test
     end
     child_fake = fake({ tool_calls: [{ name: "risky", arguments: { "danger" => true } }] })
     dropper = drop_dispatcher
-    spawn = Mistri::SubAgent.spawner(provider: child_fake, tools: [risky], dispatcher: dropper)
+    spawn = Mistri::SubAgent.spawner(
+      provider: child_fake, tools: [risky], dispatcher: dropper,
+      runtime_factory: runtime_factory(child_fake, tools: [risky])
+    )
     parent = spawn_call({ "name" => "Akita", "task" => "do the risky thing",
                           "instructions" => "Use risky.", "mode" => "background" })
     store = Mistri::Stores::Memory.new
@@ -246,13 +273,16 @@ class TestBackgroundMode < Minitest::Test
                  "no approval request may stay open on a finished child"
   end
 
-  def test_mode_and_workspace_only_exist_with_a_dispatcher
+  def test_only_mode_is_added_to_the_schema_by_a_dispatcher
     bare = Mistri::SubAgent.spawner(provider: fake)
-    dispatched = Mistri::SubAgent.spawner(provider: fake,
-                                          dispatcher: Mistri::Dispatchers::Inline.new)
+    child_fake = fake
+    dispatched = Mistri::SubAgent.spawner(
+      provider: child_fake, dispatcher: Mistri::Dispatchers::Inline.new,
+      runtime_factory: runtime_factory(child_fake)
+    )
 
     refute bare.input_schema["properties"].key?("mode")
     assert dispatched.input_schema["properties"].key?("mode")
-    assert dispatched.input_schema["properties"].key?("workspace")
+    refute dispatched.input_schema["properties"].key?("workspace")
   end
 end

@@ -288,9 +288,10 @@ agent = Mistri.agent("claude-opus-4-8", tools: [researcher.tool])
 ```
 
 Mistri also provides a host-bounded spawn tool, named worker types, background
-dispatch, reports, steering, stopping, and a management console. See
-[Sub-agents](docs/sub-agents.md), including the concurrency and lease limits a
-production dispatcher must understand.
+dispatch with worker-side runtime reconstruction, exact capability grants,
+reports, steering, stopping, and a management console. See
+[Sub-agents](docs/sub-agents.md), including the runtime, concurrency, and lease
+limits a production dispatcher must understand.
 
 ## Model Context Protocol
 

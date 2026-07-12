@@ -2,16 +2,23 @@
 
 require_relative "test_helper"
 
-# Report delivery: a background child's terminal outcome reaches its parent
-# exactly once (a typed inbox entry that folds like a steer, plus an event
-# that closes the child's lane), and the lease fences dispatched runs so
-# queue retries heal crashes without ever double-running a child.
+# Report delivery: a background child's terminal outcome reaches its parent as
+# a typed inbox entry that folds like a steer, plus an event that closes the
+# child's lane. Sequential retries deduplicate; a configured lease suppresses
+# a concurrent live delivery while queue retries can heal a crashed child.
 class TestReportDelivery < Minitest::Test
   def teardown
     Mistri.locks = nil
   end
 
   def fake(*turns) = Mistri::Providers::Fake.new(turns: turns)
+
+  def runtime_factory(provider, tools: [], system: nil)
+    lambda do |spec|
+      Mistri::SubAgent::Runtime.new(provider: provider, system: system || spec["instructions"],
+                                    tools: tools)
+    end
+  end
 
   def spawn_call(arguments)
     fake({ tool_calls: [{ name: "spawn_agent", arguments: arguments }] },
@@ -38,7 +45,10 @@ class TestReportDelivery < Minitest::Test
   # deterministic and the spec is exactly what a queue would carry.
   def dispatch(child_fake, name: "Basset", tools: [])
     dropper = drop_dispatcher
-    spawn = Mistri::SubAgent.spawner(provider: child_fake, tools: tools, dispatcher: dropper)
+    spawn = Mistri::SubAgent.spawner(
+      provider: child_fake, tools: tools, dispatcher: dropper,
+      runtime_factory: runtime_factory(child_fake, tools: tools)
+    )
     parent = spawn_call({ "name" => name, "task" => "t", "instructions" => "You help.",
                           "mode" => "background" })
     store = Mistri::Stores::Memory.new
@@ -137,7 +147,8 @@ class TestReportDelivery < Minitest::Test
     end
     child_fake = fake({ tool_calls: [{ name: "slow", arguments: {} }] }, { text: "never" })
     spawn = Mistri::SubAgent.spawner(provider: child_fake, tools: [slow],
-                                     dispatcher: Mistri::Dispatchers::Thread.new)
+                                     dispatcher: Mistri::Dispatchers::Thread.new,
+                                     runtime_factory: runtime_factory(child_fake, tools: [slow]))
     parent = spawn_call({ "name" => "Pointer", "task" => "work",
                           "instructions" => "Use slow.", "mode" => "background" })
     session = Mistri::Session.new(store:)
@@ -154,7 +165,7 @@ class TestReportDelivery < Minitest::Test
     assert_nil report["report"]
   end
 
-  def test_delivery_is_idempotent_and_labels_unknown_statuses_honestly
+  def test_sequential_redelivery_is_deduplicated_and_labels_unknown_statuses_honestly
     session = Mistri::Session.new(store: Mistri::Stores::Memory.new)
 
     first = session.deliver_report(name: "Corgi", session_id: "abc", status: "done", text: "42")

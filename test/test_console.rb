@@ -13,6 +13,8 @@ class TestConsole < Minitest::Test
     Mistri::ToolContext.new(session: session, signal: nil, emit: nil, app: nil)
   end
 
+  def fake(*turns) = Mistri::Providers::Fake.new(turns: turns)
+
   def link(parent, store, name)
     child = Mistri::Session.new(store:)
     parent.append("subagent", "name" => name, "session_id" => child.id)
@@ -131,6 +133,34 @@ class TestConsole < Minitest::Test
     assert_match(/still running/, output)
   end
 
+  def test_read_agent_waits_across_an_interrupted_workers_retry
+    Mistri.locks = Mistri::Locks::Memory.new
+    store = Mistri::Stores::Memory.new
+    parent = Mistri::Session.new(store: store)
+    child = link(parent, store, "Husky")
+    child.append(Mistri::Child::DISPATCHED, {})
+    child.append(Mistri::Child::STARTED, {})
+    spec = { "name" => "Husky", "session_id" => child.id,
+             "parent_session_id" => parent.id, "task" => "recover",
+             "tool_names" => [], "model" => nil }
+
+    assert_equal :interrupted, parent.children.first.status
+
+    runner = Thread.new do
+      sleep 0.05
+      Mistri::SubAgent.run_dispatched(
+        spec, provider: fake({ text: "Recovered." }), system: "Recover.", tools: [], store: store
+      )
+    end
+    output = Mistri::Console.read_agent(timeout: 1, poll: 0.01)
+                            .call({ "agent" => "Husky", "wait" => true },
+                                  context_for(parent))
+    runner.join
+
+    assert_match(/Husky done/, output)
+    assert_match(/Recovered/, output)
+  end
+
   def test_steer_agent_queues_on_a_running_worker_and_refuses_a_finished_one
     _store, parent, done, running = setup_family
     context = context_for(parent)
@@ -164,6 +194,28 @@ class TestConsole < Minitest::Test
     already = Mistri::Console.stop_agent.call({ "agent" => done.id }, context)
 
     assert_match(/already done/, already)
+  end
+
+  def test_stop_agent_reports_a_worker_that_finishes_during_the_request
+    finishing_locks = Class.new(Mistri::Locks::Memory) do
+      attr_writer :on_stop
+
+      def set_flag(key, ttl: 300)
+        @on_stop.call
+        super
+      end
+    end.new
+    Mistri.locks = finishing_locks
+    _store, parent, _done, running = setup_family
+    Mistri.locks.acquire(Mistri::Child.lease_key(running.id), ttl: 60)
+    finishing_locks.on_stop = lambda do
+      running.append(Mistri::Child::TERMINAL, "status" => "done", "report" => "finished")
+    end
+
+    output = Mistri::Console.stop_agent.call({ "agent" => "Husky" }, context_for(parent))
+
+    assert_match(/finished as done before the stop took effect/, output)
+    assert_equal :done, parent.children.last.status
   end
 
   def test_stop_agent_without_an_adapter_answers_in_band

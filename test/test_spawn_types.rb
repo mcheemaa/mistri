@@ -47,6 +47,109 @@ class TestSpawnTypes < Minitest::Test
     assert_equal :done, session.children.first.status
   end
 
+  def test_an_empty_typed_definition_grants_no_pool_tools
+    unused = Mistri::Tool.define("danger", "Must remain unavailable.") { "ran" }
+    definition = Mistri::Definition.new(name: "observer", config: {}, body: "Observe only.")
+    child_fake = fake({ text: "Observed." })
+    spawn = Mistri::SubAgent.spawner(provider: child_fake, tools: [unused],
+                                     types: { "observer" => definition })
+    parent_fake = spawn_call({ "name" => "Corgi", "type" => "observer", "task" => "look" })
+
+    Mistri::Agent.new(provider: parent_fake, tools: [spawn]).run("go")
+
+    assert_empty child_fake.requests.first[:options][:tools]
+  end
+
+  def test_an_explicit_empty_list_overrides_typed_defaults
+    child_fake = fake({ text: "No tools needed." })
+    spawn = Mistri::SubAgent.spawner(provider: child_fake, tools: [archive],
+                                     types: { "researcher" => researcher_type })
+    parent_fake = spawn_call({ "name" => "Corgi", "type" => "researcher", "task" => "think",
+                               "tools" => [] })
+
+    Mistri::Agent.new(provider: parent_fake, tools: [spawn]).run("go")
+
+    assert_empty child_fake.requests.first[:options][:tools]
+  end
+
+  def test_an_explicit_empty_list_grants_a_general_worker_no_tools
+    child_fake = fake({ text: "No tools needed." })
+    spawn = Mistri::SubAgent.spawner(provider: child_fake, tools: [archive])
+    parent_fake = spawn_call({ "name" => "Corgi", "task" => "think",
+                               "instructions" => "Think only.", "tools" => [] })
+
+    Mistri::Agent.new(provider: parent_fake, tools: [spawn]).run("go")
+
+    assert_empty child_fake.requests.first[:options][:tools]
+  end
+
+  def test_spawner_owns_its_tool_pool_and_model_allowlist
+    declared = archive
+    pool = [declared]
+    model_name = +"host-model-v1"
+    models = [model_name]
+    child_fake = fake({ text: "done" })
+    spawn = Mistri::SubAgent.spawner(provider: child_fake, tools: pool, models: models)
+
+    pool.clear
+    models.clear
+    model_name.replace("tampered")
+    parent_fake = spawn_call({ "name" => "Corgi", "task" => "work",
+                               "instructions" => "Use the declared tools." })
+
+    Mistri::Agent.new(provider: parent_fake, tools: [spawn]).run("go")
+
+    sent = child_fake.requests.first[:options][:tools].map { |tool| tool.fetch(:name) }
+
+    assert_equal ["archive"], sent
+    assert_equal ["host-model-v1"],
+                 spawn.input_schema.dig("properties", "model", "enum")
+  end
+
+  def test_duplicate_model_selected_tools_are_refused_before_a_child_exists
+    child_fake = fake({ text: "never" })
+    spawn = Mistri::SubAgent.spawner(provider: child_fake, tools: [archive])
+    parent_fake = spawn_call({ "name" => "Corgi", "task" => "work",
+                               "instructions" => "Work.",
+                               "tools" => %w[archive archive] })
+    session = Mistri::Session.new(store: Mistri::Stores::Memory.new)
+
+    Mistri::Agent.new(provider: parent_fake, tools: [spawn], session: session).run("go")
+
+    result = session.messages.select(&:tool?).last
+
+    assert_predicate result, :tool_error?
+    assert_match(/duplicate/, result.text)
+    assert_empty session.children
+    assert_empty child_fake.requests
+  end
+
+  def test_duplicate_model_allowlist_entries_fail_at_construction
+    error = assert_raises(Mistri::ConfigurationError) do
+      Mistri::SubAgent.spawner(provider: fake, models: %w[gpt-5-nano gpt-5-nano])
+    end
+
+    assert_match(/duplicate model names/, error.message)
+  end
+
+  def test_invalid_capability_registries_fail_at_construction
+    recursive = Mistri::Tool.define("spawn_agent", "Must not recurse.") { "never" }
+    cases = [
+      [{ tools: Object.new }, /pool must contain only Mistri::Tool instances/],
+      [{ tools: [recursive] }, /spawn tool never goes in its own pool/],
+      [{ models: Object.new }, /model allowlist must contain non-empty strings/],
+      [{ models: [""] }, /model allowlist must contain non-empty strings/]
+    ]
+
+    cases.each do |options, message|
+      error = assert_raises(Mistri::ConfigurationError) do
+        Mistri::SubAgent.spawner(provider: fake, **options)
+      end
+
+      assert_match message, error.message
+    end
+  end
+
   def test_a_general_purpose_worker_without_instructions_answers_in_band
     spawn = Mistri::SubAgent.spawner(provider: fake)
     parent_fake = spawn_call({ "name" => "Husky", "task" => "do something" })

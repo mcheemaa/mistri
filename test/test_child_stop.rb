@@ -13,6 +13,30 @@ class TestChildStop < Minitest::Test
 
   def fake(*turns) = Mistri::Providers::Fake.new(turns: turns)
 
+  def blocking_link_store
+    Class.new do
+      attr_reader :entered, :continue
+
+      def initialize
+        @store = Mistri::Stores::Memory.new
+        @entered = Queue.new
+        @continue = Queue.new
+        @block = true
+      end
+
+      def append(id, entry)
+        @store.append(id, entry)
+        return unless @block && entry["type"] == "subagent"
+
+        @block = false
+        @entered << true
+        @continue.pop
+      end
+
+      def load(id) = @store.load(id)
+    end.new
+  end
+
   def test_derive_cascades_down_and_never_up
     parent = Mistri::AbortSignal.new
     child, _handle = parent.derive
@@ -82,8 +106,143 @@ class TestChildStop < Minitest::Test
 
     assert_match(/was stopped/, tool_message.text)
     assert_predicate tool_message, :tool_error?
+    assert_empty session.pending_inbox, "an inline stop must not invent a background report"
     refute Mistri.locks.flag?(Mistri::Child.stop_key(child.session_id)),
            "the stop flag clears when the child ends"
+  end
+
+  def test_stopping_an_inline_child_before_its_lease_prevents_execution
+    Mistri.locks = Mistri::Locks::Memory.new
+    store = blocking_link_store
+    child_provider = fake({ text: "must not run" })
+    worker = Mistri::SubAgent.new(name: "worker", description: "Works.",
+                                  provider: child_provider)
+    parent_provider = fake(
+      { tool_calls: [{ name: "worker", arguments: { "task" => "work" } }] },
+      { text: "Parent continued." }
+    )
+    session = Mistri::Session.new(store: store)
+    result = nil
+    runner = Thread.new do
+      result = Mistri::Agent.new(provider: parent_provider, tools: [worker.tool],
+                                 session: session).run("go")
+    end
+    store.entered.pop
+    child = session.children.first
+
+    assert_equal :interrupted, child.status
+    assert child.stop
+    store.continue << true
+    runner.join
+
+    assert_predicate result, :completed?
+    assert_empty child_provider.requests
+    assert_equal :stopped, child.status
+    terminals = Mistri::Session.new(store: store, id: child.session_id).entries
+                               .select { |entry| entry["type"] == Mistri::Child::TERMINAL }
+
+    assert_equal 1, terminals.length
+    assert_empty session.pending_inbox
+  end
+
+  def test_inline_lease_setup_failure_still_writes_a_failed_terminal
+    broken = Class.new do
+      def held?(_key) = false
+      def acquire(*) = raise("lock backend down")
+      def clear_flag(_key) = nil
+    end.new
+    Mistri.locks = broken
+    store = Mistri::Stores::Memory.new
+    child_provider = fake({ text: "must not run" })
+    worker = Mistri::SubAgent.new(name: "worker", description: "Works.",
+                                  provider: child_provider)
+    parent_provider = fake(
+      { tool_calls: [{ name: "worker", arguments: { "task" => "work" } }] },
+      { text: "Parent recovered." }
+    )
+    session = Mistri::Session.new(store: store)
+
+    result = Mistri::Agent.new(provider: parent_provider, tools: [worker.tool],
+                               session: session).run("go")
+
+    assert_predicate result, :completed?
+    assert_empty child_provider.requests
+    child = session.children.first
+
+    assert_equal :failed, child.status
+    assert_match(/lock backend down/, child.error)
+    terminals = Mistri::Session.new(store: store, id: child.session_id).entries
+                               .select { |entry| entry["type"] == Mistri::Child::TERMINAL }
+
+    assert_equal 1, terminals.length
+  end
+
+  def test_inline_lease_cleanup_failure_still_writes_a_failed_terminal
+    broken = Class.new(Mistri::Locks::Memory) do
+      def release(key)
+        raise "lock release failed" if key.start_with?("child:")
+
+        super
+      end
+    end.new
+    Mistri.locks = broken
+    store = Mistri::Stores::Memory.new
+    child_provider = fake({ text: "Child answered." })
+    worker = Mistri::SubAgent.new(name: "worker", description: "Works.",
+                                  provider: child_provider)
+    parent_provider = fake(
+      { tool_calls: [{ name: "worker", arguments: { "task" => "work" } }] },
+      { text: "Parent recovered." }
+    )
+    session = Mistri::Session.new(store: store)
+
+    result = Mistri::Agent.new(provider: parent_provider, tools: [worker.tool],
+                               session: session).run("go")
+
+    assert_predicate result, :completed?
+    assert_equal 1, child_provider.requests.length
+    child = session.children.first
+
+    assert_equal :failed, child.status
+    assert_match(/lock release failed/, child.error)
+    terminals = Mistri::Session.new(store: store, id: child.session_id).entries
+                               .select { |entry| entry["type"] == Mistri::Child::TERMINAL }
+
+    assert_equal 1, terminals.length
+  end
+
+  def test_inline_stop_flag_cleanup_failure_still_writes_a_failed_terminal
+    broken = Class.new(Mistri::Locks::Memory) do
+      def clear_flag(key)
+        raise "stop flag cleanup failed" if key.start_with?("child-stop:")
+
+        super
+      end
+    end.new
+    Mistri.locks = broken
+    store = Mistri::Stores::Memory.new
+    child_provider = fake({ text: "Child answered." })
+    worker = Mistri::SubAgent.new(name: "worker", description: "Works.",
+                                  provider: child_provider)
+    parent_provider = fake(
+      { tool_calls: [{ name: "worker", arguments: { "task" => "work" } }] },
+      { text: "Parent recovered." }
+    )
+    session = Mistri::Session.new(store: store)
+
+    result = Mistri::Agent.new(provider: parent_provider, tools: [worker.tool],
+                               session: session).run("go")
+
+    assert_predicate result, :completed?
+    assert_equal 1, child_provider.requests.length
+    child = session.children.first
+
+    assert_equal :failed, child.status
+    assert_match(/stop flag cleanup failed/, child.error)
+    terminals = Mistri::Session.new(store: store, id: child.session_id).entries
+                               .select { |entry| entry["type"] == Mistri::Child::TERMINAL }
+
+    assert_equal 1, terminals.length
   end
 
   def test_stopping_the_parent_stops_a_running_child_through_the_cascade

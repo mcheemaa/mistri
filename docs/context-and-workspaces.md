@@ -271,9 +271,14 @@ Record supplies database operations, but the host still owns isolation and
 conflict policy.
 
 Sub-agent tools are ordinary Ruby objects and may close over a workspace. A
-background worker's `workspace: "own"` declaration does not clone those
-objects. Reconstruct isolated tool and workspace instances in a production
-dispatcher before allowing parent and child work to overlap. See
+dispatcher therefore requires a host-owned runtime factory; the model has no
+workspace selector. The factory receives the immutable dispatch spec and
+constructs the provider, tools, and workspace inside the worker. Mistri
+enforces the spec's exact tool-name grant, while the host remains responsible
+for whether the reconstructed backend is fresh, shared, transactional, or
+actually isolated. Derive durable workspace scope from trusted identifiers such
+as the child Session ID, reopen that same scope on queue retry, and release
+per-child resources through Runtime's `cleanup:` hook. See
 [Sub-agents](sub-agents.md#execution-modes).
 
 ## Related guides

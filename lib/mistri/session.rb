@@ -109,11 +109,12 @@ module Mistri
     # folds into the transcript at the next turn boundary as a labeled block
     # the model can react to ("[Magpie finished] <report>"), while the typed
     # entry keeps name, status, and the raw text for hosts to render as a
-    # report card rather than a fake user message. One report per child,
-    # ever: a duplicate delivery (a redelivered queue job, a lease race) is
-    # dropped, and the return says which happened. Reports normally arrive
-    # via SubAgent.run_dispatched; call this directly only from a custom
-    # dispatch path.
+    # report card rather than a fake user message. Sequential redelivery of
+    # one child's report is dropped, and the return says which happened.
+    # Concurrent callers need their own serialization; with a lock adapter,
+    # the background runner and inactive cancellation use the child's lease
+    # for that. Reports normally arrive via SubAgent.run_dispatched; call this
+    # directly only from a custom dispatch path.
     def deliver_report(name:, session_id:, status:, text: nil) # rubocop:disable Naming/PredicateMethod
       already = entries.any? do |entry|
         entry["type"] == "subagent_report" && entry["session_id"] == session_id
@@ -150,7 +151,8 @@ module Mistri
       entries.filter_map do |entry|
         next unless entry["type"] == "subagent"
 
-        Child.new(name: entry["name"], session_id: entry["session_id"], store: @store)
+        Child.new(name: entry["name"], session_id: entry["session_id"], store: @store,
+                  parent_session_id: @id)
       end
     end
 
