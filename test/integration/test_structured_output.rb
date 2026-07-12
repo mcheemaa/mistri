@@ -11,14 +11,14 @@ class TestStructuredOutputIntegration < Minitest::Test
              required: %w[project launch_year] }.freeze
 
   Integration.scenario(self, :task_extracts_into_the_schema) do |model|
-    project = Integration.codename
+    project = Integration.marker
     agent = Mistri::Agent.new(provider: Mistri.provider(model))
 
     result = agent.task("The project #{project} launches in 2031. Extract the details.",
                         schema: SCHEMA)
 
     assert_empty Mistri::Schema.violations(result.output, SCHEMA)
-    assert Integration.saw?(result.output["project"], project)
+    assert_equal project, result.output["project"]
     assert_equal 2031, result.output["launch_year"]
   end
 
@@ -32,22 +32,26 @@ class TestStructuredOutputIntegration < Minitest::Test
                              "summary" => { type: "string" } },
                required: %w[temperature_c summary] }
     agent = Mistri::Agent.new(provider: Mistri.provider(model), tools: [thermo])
+    calls = []
 
-    result = agent.task("Use the thermometer and report the reading.", schema: schema)
+    result = agent.task("Use the thermometer and report the reading.", schema: schema) do |event|
+      calls << event.tool_call.name if event.type == :tool_result
+    end
 
     assert_empty Mistri::Schema.violations(result.output, schema)
+    assert_includes calls, "read_thermometer", "the task never called its data source"
     assert_equal degrees, result.output["temperature_c"],
                  "the answer must carry the tool's exact reading"
   end
 
   Integration.scenario(self, :scalar_and_tuple_tasks_survive_provider_schema_differences) do |model|
-    scalar = Integration.codename
+    scalar = Integration.marker
     scalar_result = Mistri::Agent.new(provider: Mistri.provider(model)).task(
       "Return the exact JSON string #{scalar.inspect}.",
       schema: { type: "string", enum: [scalar] }
     )
 
-    tuple_value = Integration.codename
+    tuple_value = Integration.marker
     tuple_schema = {
       type: "array",
       prefixItems: [{ type: "string", enum: [tuple_value] },

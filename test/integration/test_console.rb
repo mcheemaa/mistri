@@ -27,7 +27,7 @@ class TestConsoleIntegration < Minitest::Test
     )
 
     assert_predicate result, :completed?
-    assert Integration.saw?(result.text, number.to_s),
+    assert Integration.number?(result.text, number),
            "the number never surfaced: #{result.text}"
     assert_match(/done|complete|finish/, result.text.to_s.downcase,
                  "the status never surfaced: #{result.text}")
@@ -36,6 +36,11 @@ class TestConsoleIntegration < Minitest::Test
 
     assert_equal "Beagle", child.name
     assert_equal :done, child.status
+    child_session = Mistri::Session.new(store:, id: child.session_id)
+
+    assert(child_session.messages.any? do |message|
+      message.tool? && message.tool_name == "oracle"
+    end, "the worker never called its oracle")
 
     tool_names = parent.session.messages.select(&:assistant?)
                        .flat_map(&:tool_calls).map(&:name)

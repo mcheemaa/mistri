@@ -5,6 +5,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [0.6.0] - 2026-07-12
+
 - Synchronous event subscribers now propagate the exact exception object even
   when its class also names an internal failure: provider `Mistri::Error`
   values, transport I/O and timeout errors, SSE `JSON::ParserError`, hook
@@ -66,10 +68,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   one exact committed-byte comparison, and one conditional commit to the
   ordinary edit path; Memory also returns an owned read copy. Conflicts add at
   most two complete reapplications. Active Record capability adds cached schema
-  inspection when the workspace is first bound, outside the edit path. No
-  provider streaming path changes. Dedicated
-  MySQL 8.4/InnoDB and PostgreSQL CI jobs prove real locking, readback, and
-  unique-create behavior while the gem retains zero runtime dependencies.
+  inspection on the first capability check, outside the edit path. No
+  provider streaming path changes. Dedicated MySQL 8.4/InnoDB and PostgreSQL CI
+  jobs prove real locking, readback, and unique-create behavior while the gem
+  retains zero runtime dependencies.
 - Built-in document reads, searches, and edits now return an explicitly failed
   `ToolResult` when the document is missing or a requested replacement cannot
   be applied. The same actionable text still reaches the model, but lifecycle
@@ -870,4 +872,12 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 - Reserved the gem name.
 
+[Unreleased]: https://github.com/mcheemaa/mistri/compare/v0.6.0...HEAD
+[0.6.0]: https://github.com/mcheemaa/mistri/compare/v0.5.0...v0.6.0
+[0.5.0]: https://github.com/mcheemaa/mistri/compare/v0.4.1...v0.5.0
+[0.4.1]: https://github.com/mcheemaa/mistri/compare/v0.4.0...v0.4.1
+[0.4.0]: https://github.com/mcheemaa/mistri/compare/v0.3.0...v0.4.0
+[0.3.0]: https://github.com/mcheemaa/mistri/compare/v0.2.1...v0.3.0
+[0.2.1]: https://github.com/mcheemaa/mistri/compare/v0.2.0...v0.2.1
+[0.2.0]: https://github.com/mcheemaa/mistri/compare/v0.1.0...v0.2.0
 [0.1.0]: https://github.com/mcheemaa/mistri/releases/tag/v0.1.0

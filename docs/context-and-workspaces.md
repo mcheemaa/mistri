@@ -196,6 +196,11 @@ committed and must read the document again. Custom four-method workspaces keep
 their existing behavior unless they explicitly return true from
 `atomic_writes?` and implement both methods.
 
+The conditional protocol is used by `edit_file`. `write_file` remains an
+intentional blind whole-document replacement, and deletion has no conditional
+form. When concurrent writers must preserve unrelated changes, use an anchored
+edit or provide a host tool with a stronger domain contract.
+
 Bind one to the built-in read, write, edit, find, and list tools:
 
 ```ruby
@@ -299,10 +304,10 @@ unique scope/path index. The adapter copies and freezes the scope Hash plus
 nested Hash, Array, Range, and String values at construction; atomic mode's
 narrower scalar contract keeps its tenant identity stable.
 
-Storage and schema capability are inspected once when the workspace is first
-bound to a tool and then cached off the edit path. Keep that model on the same
-database role and shard, and do not change its table or indexes during the
-workspace's lifetime.
+Storage and schema capability are inspected on the first capability check and
+cached thereafter, off the edit path. Bind the workspace before concurrent use,
+keep its model on the same database role and shard, and do not change its table
+or indexes during the workspace's lifetime.
 
 Unsupported storage deliberately keeps the adapter's legacy read/write behavior.
 If lost-update protection is mandatory for your host, assert the capability at

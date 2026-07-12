@@ -7,7 +7,7 @@ require_relative "../support/integration"
 # skills load on demand, and memory persists what it is told.
 class TestContextManagementIntegration < Minitest::Test
   Integration.scenario(self, :one_run_survives_two_compactions) do |model|
-    secret = Integration.codename
+    secret = Integration.marker
     token = "continue-#{SecureRandom.hex(12)}"
     padding = ("checkpoint context " * 80).strip
     opened = 0
@@ -56,26 +56,31 @@ class TestContextManagementIntegration < Minitest::Test
     assert_equal(2, events.count { |event| event.type == :compaction })
     refute_includes compactions.first["summary"], secret
     assert_includes compactions.last["summary"], secret
-    assert Integration.saw?(result.text, secret),
+    assert Integration.carried?(result.text, secret),
            "the final answer lost the secret: #{result.text.inspect}"
 
     durable = session.entries.find do |entry|
       entry["type"] == "message" && entry.dig("message", "tool_name") == "open_checkpoint"
     end
 
-    assert_includes Mistri::Message.from_h(durable["message"]).text, secret
+    durable_message = Mistri::Message.from_h(durable["message"])
+
+    assert_includes durable_message.text, secret
 
     replay_before_answer = session.messages[0...-1]
-    carriers = replay_before_answer.select do |message|
-      JSON.generate(message.to_h).include?(secret)
-    end
+    summary = replay_before_answer.first
 
-    assert_equal [replay_before_answer.first], carriers,
-                 "the compacted replay should carry the secret only in its visible summary"
+    assert summary.text.start_with?(Mistri::Compaction::SUMMARY_PREFACE)
+    assert_includes summary.text, secret
+    refute_includes replay_before_answer.drop(1), durable_message,
+                    "the original secret-bearing tool result should be outside compacted replay"
+    refute(replay_before_answer.any? do |message|
+      message.tool? && message.tool_name == "open_checkpoint"
+    end, "the compacted replay still contains the original checkpoint result")
   end
 
   Integration.scenario(self, :skills_load_on_demand_and_bind) do |model|
-    suffix = Integration.codename
+    suffix = Integration.marker
     skills = [Mistri::Skill.new(
       name: "brand-voice",
       description: "Rules for writing any customer-facing copy or taglines.",
@@ -90,12 +95,13 @@ class TestContextManagementIntegration < Minitest::Test
       reads << e.tool_call.name if e.type == :tool_result
     end
 
+    assert_predicate result, :completed?
     assert_includes reads, "read_skill", "the model never pulled the skill body"
-    assert Integration.saw?(result.text, suffix), "the skill's rule never applied"
+    assert Integration.carried?(result.text, suffix), "the skill's rule never applied"
   end
 
   Integration.scenario(self, :memory_persists_what_it_is_told) do |model|
-    mascot = Integration.codename
+    mascot = Integration.marker
     saved = +""
     memory = Mistri::Memory.new(read: -> { saved }, write: ->(text) { saved.replace(text) })
     agent = Mistri::Agent.new(provider: Mistri.provider(model),
@@ -105,6 +111,6 @@ class TestContextManagementIntegration < Minitest::Test
     result = agent.run("Record in memory that the project mascot is named #{mascot}.")
 
     assert_predicate result, :completed?
-    assert Integration.saw?(saved, mascot), "memory never got the fact: #{saved.inspect}"
+    assert Integration.carried?(saved, mascot), "memory never got the fact: #{saved.inspect}"
   end
 end
