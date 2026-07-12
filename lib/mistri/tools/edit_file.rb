@@ -30,7 +30,7 @@ module Mistri
           "Replaced #{result.count} occurrence(s) in #{args["path"]}"
         end
       rescue EditError => e
-        "edit_file failed: #{e.message}"
+        ToolResult.new(content: "edit_file failed: #{e.message}", error: true)
       end
     end
   end

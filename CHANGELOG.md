@@ -5,6 +5,12 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+- Built-in document reads, searches, and edits now return an explicitly failed
+  `ToolResult` when the document is missing or a requested replacement cannot
+  be applied. The same actionable text still reaches the model, but lifecycle
+  events, persisted tool messages, and provider-supported error signaling no
+  longer misclassify an expected document-tool failure as success. Tool names,
+  schemas, and successful results are unchanged.
 - Background dispatch now crosses a versioned, deeply owned JSON capability
   boundary instead of closing over the spawn-time provider, Tool objects, Agent
   options, and workspace state. Every `dispatcher:` requires a host
