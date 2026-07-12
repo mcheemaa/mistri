@@ -196,6 +196,28 @@ class TestConsole < Minitest::Test
     assert_match(/already done/, already)
   end
 
+  def test_stop_agent_reports_a_worker_that_finishes_during_the_request
+    finishing_locks = Class.new(Mistri::Locks::Memory) do
+      attr_writer :on_stop
+
+      def set_flag(key, ttl: 300)
+        @on_stop.call
+        super
+      end
+    end.new
+    Mistri.locks = finishing_locks
+    _store, parent, _done, running = setup_family
+    Mistri.locks.acquire(Mistri::Child.lease_key(running.id), ttl: 60)
+    finishing_locks.on_stop = lambda do
+      running.append(Mistri::Child::TERMINAL, "status" => "done", "report" => "finished")
+    end
+
+    output = Mistri::Console.stop_agent.call({ "agent" => "Husky" }, context_for(parent))
+
+    assert_match(/finished as done before the stop took effect/, output)
+    assert_equal :done, parent.children.last.status
+  end
+
   def test_stop_agent_without_an_adapter_answers_in_band
     _store, parent, _done, _running = setup_family
     output = Mistri::Console.stop_agent.call({ "agent" => "Husky" }, context_for(parent))

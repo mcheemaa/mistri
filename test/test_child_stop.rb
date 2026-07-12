@@ -211,6 +211,40 @@ class TestChildStop < Minitest::Test
     assert_equal 1, terminals.length
   end
 
+  def test_inline_stop_flag_cleanup_failure_still_writes_a_failed_terminal
+    broken = Class.new(Mistri::Locks::Memory) do
+      def clear_flag(key)
+        raise "stop flag cleanup failed" if key.start_with?("child-stop:")
+
+        super
+      end
+    end.new
+    Mistri.locks = broken
+    store = Mistri::Stores::Memory.new
+    child_provider = fake({ text: "Child answered." })
+    worker = Mistri::SubAgent.new(name: "worker", description: "Works.",
+                                  provider: child_provider)
+    parent_provider = fake(
+      { tool_calls: [{ name: "worker", arguments: { "task" => "work" } }] },
+      { text: "Parent recovered." }
+    )
+    session = Mistri::Session.new(store: store)
+
+    result = Mistri::Agent.new(provider: parent_provider, tools: [worker.tool],
+                               session: session).run("go")
+
+    assert_predicate result, :completed?
+    assert_equal 1, child_provider.requests.length
+    child = session.children.first
+
+    assert_equal :failed, child.status
+    assert_match(/stop flag cleanup failed/, child.error)
+    terminals = Mistri::Session.new(store: store, id: child.session_id).entries
+                               .select { |entry| entry["type"] == Mistri::Child::TERMINAL }
+
+    assert_equal 1, terminals.length
+  end
+
   def test_stopping_the_parent_stops_a_running_child_through_the_cascade
     store = Mistri::Stores::Memory.new
     parent_signal = Mistri::AbortSignal.new

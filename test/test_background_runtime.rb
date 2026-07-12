@@ -234,6 +234,27 @@ class TestBackgroundRuntime < Minitest::Test # rubocop:disable Metrics/ClassLeng
     assert_match(/non-empty model identity/, tool_result.text)
   end
 
+  def test_background_spec_rejects_a_non_json_parent_identity_before_dispatch
+    dispatcher = drop_dispatcher
+    spawn = Mistri::SubAgent.spawner(
+      provider: fake, dispatcher: dispatcher,
+      runtime_factory: ->(_spec) { raise "the queue owns execution" }
+    )
+    session = Mistri::Session.new(store: Mistri::Stores::Memory.new, id: Object.new)
+    parent = spawn_call({ "name" => "Corgi", "task" => "work",
+                          "instructions" => "Work.", "mode" => "background" })
+
+    result = Mistri::Agent.new(provider: parent, tools: [spawn], session: session).run("go")
+
+    assert_predicate result, :completed?
+    assert_nil dispatcher.spec
+    assert_empty session.children
+    tool_result = session.messages.find(&:tool?)
+
+    assert_predicate tool_result, :tool_error?
+    assert_match(/background child spec is not bounded JSON/, tool_result.text)
+  end
+
   def test_an_extra_runtime_tool_fails_before_provider_or_handler_execution
     spec, store, session = queue(selected: [])
     called = false

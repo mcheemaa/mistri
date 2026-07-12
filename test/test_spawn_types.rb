@@ -132,6 +132,24 @@ class TestSpawnTypes < Minitest::Test
     assert_match(/duplicate model names/, error.message)
   end
 
+  def test_invalid_capability_registries_fail_at_construction
+    recursive = Mistri::Tool.define("spawn_agent", "Must not recurse.") { "never" }
+    cases = [
+      [{ tools: Object.new }, /pool must contain only Mistri::Tool instances/],
+      [{ tools: [recursive] }, /spawn tool never goes in its own pool/],
+      [{ models: Object.new }, /model allowlist must contain non-empty strings/],
+      [{ models: [""] }, /model allowlist must contain non-empty strings/]
+    ]
+
+    cases.each do |options, message|
+      error = assert_raises(Mistri::ConfigurationError) do
+        Mistri::SubAgent.spawner(provider: fake, **options)
+      end
+
+      assert_match message, error.message
+    end
+  end
+
   def test_a_general_purpose_worker_without_instructions_answers_in_band
     spawn = Mistri::SubAgent.spawner(provider: fake)
     parent_fake = spawn_call({ "name" => "Husky", "task" => "do something" })
