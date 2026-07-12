@@ -5,6 +5,20 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+- Approval decisions now behave as a write-once register over the Session
+  store's durable order. The first valid decision is authoritative; repeating
+  that value is idempotent, while a conflicting caller receives
+  `Mistri::ConfigurationError`. Concurrent stale writers may both reach append,
+  but every later well-formed decision for that approval request is an inert
+  losing occurrence, including one that lands after the approved handler has
+  already returned. It cannot revoke the winner, alter settlement, or
+  permanently poison `open_approvals`, `resume`, replay, or compaction. The first
+  note remains authoritative.
+  Malformed decisions, decisions without a matching request, duplicate
+  requests, and ambiguous legacy reused-call approvals still fail closed or
+  interrupt conservatively. A newly appended decision adds one linear
+  control-state re-read to tell a racing loser that it lost; already-visible
+  idempotent retries do not append. No provider streaming path changes.
 - Anchored `edit_file` changes now compose safely with concurrent writers when
   their Workspace advertises atomic conditional writes. The new optional
   contract is `atomic_writes?`, `snapshot(path)`, and
@@ -116,9 +130,11 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   approval stores the reviewed prepared call plus an explicit provenance
   marker. Resume verifies pairing metadata and revalidates the exact approved
   arguments without rerunning the normalizer. Requests must follow the exact
-  assistant call, decisions must follow one request and carry an exact boolean,
-  and duplicate or late control records fail closed. Legacy requests remain
-  valid only when they exactly mirror the source call.
+  assistant call, and decisions must follow one request and carry an exact
+  boolean. Duplicate requests and malformed or mismatched controls fail closed.
+  The first valid durable decision wins; later well-formed decisions for that
+  approval request are inert. Legacy requests remain valid only when they
+  exactly mirror the source call.
   Persisted tool results require one prior call with the exact name, settle in
   assistant-call order within each direct or approval phase, and cannot cross
   an unresolved approval; compaction may neither hide an open approval nor

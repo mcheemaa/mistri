@@ -48,11 +48,12 @@ append(session_id, entry_hash) # append one JSON-shaped entry
 load(session_id)               # return entries in append order
 ```
 
-The store must preserve each append as one entry and provide a total order per
-session. Values returned by `load` must not let caller mutation rewrite durable
-history: return fresh decoded copies or deeply immutable snapshots. Mistri does
-not rely on Ruby object identity. `Session#append` normalizes entries through
-JSON, so store implementations see string keys and JSON values.
+The store must preserve each append as one entry, provide a stable total order
+per session, and make a successful append visible to subsequent loads. Values
+returned by `load` must not let caller mutation rewrite durable history: return
+fresh decoded copies or deeply immutable snapshots. Mistri does not rely on
+Ruby object identity. `Session#append` normalizes entries through JSON, so store
+implementations see string keys and JSON values.
 
 Built-in stores are:
 
@@ -169,7 +170,18 @@ schema, and runs `before_tool` again. It does not renormalize or reevaluate the
 approval predicate.
 
 `Session#open_approvals` derives every still-open call and its decision from the
-log. Duplicate, late, malformed, or mismatched control entries fail closed.
+log. A decision is single-assignment: the first valid decision in durable store
+order wins, repeating that winning value is idempotent, and a conflicting caller
+receives `Mistri::ConfigurationError`. Concurrent losing attempts can remain in
+the raw append-only log, but they are inert and cannot revoke the winner or
+corrupt the Session. The first note wins. Duplicate requests and malformed,
+orphaned, or mismatched controls still fail closed.
+
+Mistri does not implement quorum or denial precedence. Resolve multi-reviewer
+policy in the host before recording its one final Session decision. A host that
+must prevent losing attempts from reaching the raw log also needs to serialize
+its decision endpoint; the two-method store contract reconciles concurrent
+appends rather than conditionally preventing them.
 
 Denial is returned to the model as an expected result so it can choose another
 path. It is not marked as a tool execution error.

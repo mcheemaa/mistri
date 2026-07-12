@@ -191,30 +191,58 @@ class TestSessionApprovalAudit < Minitest::Test # rubocop:disable Metrics/ClassL
     end
   end
 
-  def test_an_approval_request_can_have_only_one_decision
-    session = approval_session
-    session.append("approval_decision", "call_id" => "write-1", "approved" => true)
-    session.append("approval_decision", "call_id" => "write-1", "approved" => false)
+  def test_the_first_valid_approval_decision_wins_in_raw_history
+    [true, false].each do |winner|
+      session = approval_session
+      session.append("approval_decision", "call_id" => "write-1", "approved" => winner,
+                                          "note" => "first")
+      session.append("approval_decision", "call_id" => "write-1", "approved" => !winner,
+                                          "note" => "loser")
 
-    assert_rejected_history(session, /duplicate approval decision/)
+      decision = session.open_approvals.fetch(0).fetch(:decision)
+
+      assert_equal winner, decision["approved"]
+      assert_equal "first", decision["note"]
+    end
   end
 
-  def test_a_settled_tool_call_cannot_be_reopened_or_decided_again
+  def test_a_late_losing_decision_cannot_corrupt_a_settled_approval
     request_then_answer = approval_session
     request_then_answer.append("approval_decision", "call_id" => "write-1",
                                                     "approved" => true)
     append_tool_result(request_then_answer)
     request_then_answer.append("approval_decision", "call_id" => "write-1",
-                                                    "approved" => true)
+                                                    "approved" => false)
 
-    assert_rejected_history(request_then_answer, /already answered tool call/)
+    assert_empty request_then_answer.open_approvals
+    assert_equal "written", request_then_answer.messages.select(&:tool?).fetch(0).text
+  end
 
+  def test_a_losing_decision_before_a_real_result_cannot_hide_that_result
+    session = approval_session
+    session.append("approval_decision", "call_id" => "write-1", "approved" => true)
+    session.append("approval_decision", "call_id" => "write-1", "approved" => false)
+    append_tool_result(session)
+
+    assert_empty session.open_approvals
+    assert_equal "written", session.messages.select(&:tool?).fetch(0).text
+  end
+
+  def test_a_settled_tool_call_cannot_be_reopened
     answer_then_request = Mistri::Session.new(store: Mistri::Stores::Memory.new)
     call = append_assistant_call(answer_then_request, "write-1")
     append_tool_result(answer_then_request)
     answer_then_request.append("approval_request", "call" => call.to_h)
 
     assert_rejected_history(answer_then_request, /already answered tool call/)
+  end
+
+  def test_a_malformed_losing_decision_still_fails_closed
+    session = approval_session
+    session.append("approval_decision", "call_id" => "write-1", "approved" => true)
+    session.append("approval_decision", "call_id" => "write-1", "approved" => "true")
+
+    assert_rejected_history(session, /approved value is not true or false/)
   end
 
   def test_tool_results_require_a_unique_prior_call_with_the_same_name
@@ -406,16 +434,24 @@ class TestSessionApprovalAudit < Minitest::Test # rubocop:disable Metrics/ClassL
     assert_rejected_history(session, /splits a tool call from its result/)
   end
 
-  def test_the_public_decision_api_rejects_a_second_decision_without_writing_it
+  def test_the_public_decision_api_is_idempotent_only_for_the_winning_value
     session = approval_session
-    session.approve("write-1")
+    session.approve("write-1", note: "first")
     before = session.entries.length
+
+    assert_nil session.approve("write-1", note: "retry")
+    assert_equal before, session.entries.length
 
     error = assert_raises(Mistri::ConfigurationError) { session.deny("write-1") }
 
     assert_match(/already been decided/, error.message)
     assert_equal before, session.entries.length
     assert session.open_approvals.first[:decision]["approved"]
+    assert_equal "first", session.open_approvals.first[:decision]["note"]
+
+    missing = assert_raises(Mistri::ConfigurationError) { session.approve("other") }
+
+    assert_match(/no open approval/, missing.message)
   end
 
   def test_open_approval_decisions_do_not_alias_the_store
