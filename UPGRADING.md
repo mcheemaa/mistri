@@ -629,11 +629,12 @@ At minimum:
 $ bundle exec rake test
 $ bundle exec rubocop
 $ MISTRI_LIVE=1 bundle exec rake test
-$ bundle exec rake integration
+$ MISTRI_INTEGRATION_STRICT=1 bundle exec rake integration
 ```
 
-Missing provider keys skip live coverage. Read the output and verify the models
-that actually ran.
+Ordinary integration runs skip missing provider keys and an unreachable public
+MCP fixture. Strict mode fails when a matrix key is absent or that fixture is
+unavailable, so use it for release verification.
 
 For exact behavior and latency notes, read the
 [0.6.0 changelog entry](CHANGELOG.md#060---2026-07-12).

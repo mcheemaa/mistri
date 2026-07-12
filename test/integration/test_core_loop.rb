@@ -6,13 +6,18 @@ require_relative "../support/integration"
 # the answer, and the ui side-channel must reach the host and never the model.
 class TestCoreLoopIntegration < Minitest::Test
   Integration.scenario(self, :tools_carry_generated_facts) do |model|
-    founder = Integration.codename
-    city = Integration.codename
-    founder_tool = Mistri::Tool.define("founder_name", "The company founder's name.") { founder }
-    hq_tool = Mistri::Tool.define("hq_city", "The company's HQ city name.") { city }
+    founder = Integration.marker
+    city = Integration.marker
+    founder_tool = Mistri::Tool.define(
+      "founder_name", "Returns the exact FOUNDER_NAME value."
+    ) { "FOUNDER_NAME=#{founder}" }
+    hq_tool = Mistri::Tool.define(
+      "hq_city", "Returns the exact HQ_CITY value."
+    ) { "HQ_CITY=#{city}" }
     agent = Mistri::Agent.new(provider: Mistri.provider(model),
                               tools: [founder_tool, hq_tool],
-                              system: "Answer strictly from the tools.")
+                              system: "Call both tools. Answer only from their labeled values, " \
+                                      "copying each value exactly without changing its spelling.")
     events = []
 
     result = agent.run("Who founded the company and what city is HQ in? One sentence.") do |event|
@@ -25,8 +30,8 @@ class TestCoreLoopIntegration < Minitest::Test
     assert_empty events.first.partial.content
     assert_stream_boundaries(events)
     assert_predicate events.last, :terminal?
-    assert Integration.saw?(result.text, founder), "founder fact never flowed: #{result.text}"
-    assert Integration.saw?(result.text, city), "city fact never flowed: #{result.text}"
+    assert Integration.carried?(result.text, founder), "founder fact never flowed: #{result.text}"
+    assert Integration.carried?(result.text, city), "city fact never flowed: #{result.text}"
   end
 
   def assert_stream_boundaries(events)
@@ -44,8 +49,10 @@ class TestCoreLoopIntegration < Minitest::Test
     refute open, "the final provider stream never terminated"
   end
 
-  Integration.scenario(self, :ui_channel_reaches_host_not_model) do |model|
-    revision = Integration.codename
+  # Serializer tests prove ui never reaches provider input; this live path
+  # proves host delivery and keeps the final response as a leakage canary.
+  Integration.scenario(self, :ui_channel_reaches_host) do |model|
+    revision = Integration.marker
     save = Mistri::Tool.define("save_page", "Saves the current page draft.") do
       Mistri::ToolResult.new(content: "Saved.", ui: { "revision" => revision })
     end
@@ -64,7 +71,7 @@ class TestCoreLoopIntegration < Minitest::Test
   end
 
   Integration.scenario(self, :tool_failure_round_trips_as_data) do |model|
-    code = Integration.codename
+    code = Integration.marker
     diagnose = Mistri::Tool.define("diagnose_service", "Runs one service diagnostic.") do
       Mistri::ToolResult.new(
         content: "The diagnostic failed permanently with code #{code}. Do not retry it.",
@@ -81,13 +88,15 @@ class TestCoreLoopIntegration < Minitest::Test
       failures << event.tool_error if event.type == :tool_result
     end
 
+    assert_predicate result, :completed?
     refute_empty failures, "the live tool was never called"
     assert_predicate failures, :all?, "the live lifecycle lost its error fact"
-    assert Integration.saw?(result.text, code), "the failed result never replayed: #{result.text}"
+    assert Integration.carried?(result.text, code),
+           "the failed result never replayed: #{result.text}"
   end
 
   Integration.scenario(self, :invalid_tool_arguments_are_corrected_before_execution) do |model|
-    correction = Integration.codename
+    correction = Integration.marker
     validated = []
     handled = []
     submit = Mistri::Tool.define(
@@ -116,6 +125,7 @@ class TestCoreLoopIntegration < Minitest::Test
       calls << event.tool_call if event.type == :toolcall_end
     end
 
+    assert_predicate result, :completed?
     assert_operator validated.length, :>=, 2, "the model never exercised the rejected path"
     refute_equal correction, validated.first, "the first call skipped validation correction"
     refute_empty handled, "the corrected call never reached the handler"
@@ -123,7 +133,7 @@ class TestCoreLoopIntegration < Minitest::Test
     assert errors.first, "the rejection lost its error type"
     refute errors.last, "the accepted call stayed mislabeled as an error"
     assert_equal handled.length, errors.count(false), "a valid handler outcome was mislabeled"
-    assert Integration.saw?(result.text, correction), "the corrected result never landed"
+    assert Integration.carried?(result.text, correction), "the corrected result never landed"
     if model.start_with?("gemini-3")
       ids = calls.map(&:provider_call_id)
 
