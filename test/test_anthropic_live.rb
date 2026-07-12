@@ -1,5 +1,7 @@
 # frozen_string_literal: true
 
+require "json"
+
 require_relative "test_helper"
 
 # Real API calls, opt-in: MISTRI_LIVE=1 bundle exec rake test
@@ -72,6 +74,56 @@ class TestAnthropicLive < Minitest::Test
     assert_kind_of Hash, config
     assert_equal "bar", config.dig("series", 0, "type")
     assert_equal [1, 2], config.dig("series", 0, "data")
+  ensure
+    provider&.close
+  end
+
+  def test_foreign_thinking_replays_without_leaking_its_signature
+    session = Mistri::Session.new(store: Mistri::Stores::Memory.new)
+    item = { "id" => "rs_0123", "type" => "reasoning", "summary" => [],
+             "encrypted_content" => "not-an-anthropic-signature" }
+    session.append_message(Mistri::Message.user("What time is it?"))
+    session.append_message(Mistri::Message.assistant(
+                             content: [Mistri::Content::Thinking.new(
+                               thinking: "Checking the clock.", signature: JSON.generate(item)
+                             ), Mistri::Content::Text.new(text: "It is noon.")],
+                             model: "gpt-5.6-terra", provider: :openai,
+                             stop_reason: Mistri::StopReason::STOP
+                           ))
+    provider = Mistri::Providers::Anthropic.new(
+      api_key: ENV.fetch("ANTHROPIC_API_KEY"), model: "claude-haiku-4-5-20251001"
+    )
+
+    result = Mistri::Agent.new(provider:, session:).run("Reply with exactly: bye")
+
+    refute_predicate result, :errored?, result.error_message
+    assert_equal :completed, result.status
+    assert_match(/bye/i, result.text)
+  ensure
+    provider&.close
+  end
+
+  def test_native_signed_thinking_replays_across_turns
+    provider = Mistri::Providers::Anthropic.new(
+      api_key: ENV.fetch("ANTHROPIC_API_KEY"), model: "claude-haiku-4-5-20251001",
+      max_tokens: 2048,
+      thinking: { type: "enabled", budget_tokens: 1024, display: "summarized" }
+    )
+    session = Mistri::Session.new(store: Mistri::Stores::Memory.new)
+    agent = Mistri::Agent.new(provider:, session:)
+
+    first = agent.run("Think briefly, then reply with exactly: native one")
+    native = session.messages.reverse.find(&:assistant?)
+
+    refute_predicate first, :errored?, first.error_message
+    assert(native.content.any? do |block|
+      block.is_a?(Mistri::Content::Thinking) && !block.signature.to_s.empty?
+    end, "the first Anthropic turn did not produce signed thinking")
+
+    second = agent.run("Think briefly, then reply with exactly: native two")
+
+    refute_predicate second, :errored?, second.error_message
+    assert_match(/native two/i, second.text)
   ensure
     provider&.close
   end
