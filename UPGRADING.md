@@ -17,9 +17,9 @@ Gemini providers preserve ordinary 0.5 sessions, including the repeated
 occurrence settled. There is no blanket session rewrite step.
 
 Hosts that used implicit tool schemas, mutated arguments, supplied custom
-providers or Session stores, dispatched background children, generated MCP
-OAuth models, stored sessions in MySQL, or configured cost budgets need to
-review the sections below.
+providers or Session stores, dispatched background children, used document
+workspaces, generated MCP OAuth models, stored sessions in MySQL, or configured
+cost budgets need to review the sections below.
 
 ### Checklist
 
@@ -29,6 +29,8 @@ review the sections below.
       genuinely part of the contract.
 - [ ] Make event subscribers tolerate new event types and read `tool_error`
       structurally.
+- [ ] Audit synchronous event subscribers: their exact exceptions now escape
+      `run` or `resume` and may follow durable facts or external side effects.
 - [ ] Ensure at most one `run` or `resume` is active per Session across all
       processes.
 - [ ] Treat each approval as single-assignment; resolve quorum or multi-reviewer
@@ -46,6 +48,12 @@ review the sections below.
 - [ ] Add a runtime factory to every background spawner and queue worker.
 - [ ] Review queued child specs and ensure their exact `tool_names` grant is
       still intended before executing them under 0.6.
+- [ ] Keep qualifying Active Record workspaces outside host transactions and
+      assert `atomic_writes?` at boot when lost-update protection is required.
+- [ ] Replace mutation of values returned by `Workspace::Memory#read` with an
+      explicit `write`.
+- [ ] Use anchored `edit_file`, not blind `write_file`, when concurrent changes
+      must be preserved.
 - [ ] Exercise active persisted sessions, approvals, tool failures, compaction,
       and one real call per configured provider in staging.
 
@@ -280,6 +288,14 @@ Custom sinks must be thread-safe. Code that manually constructs a
 `:tool_result` `Mistri::Event` must now supply a boolean `tool_error` matching
 the Message.
 
+An exception from a synchronous subscriber now propagates unchanged from
+`run` or `resume`. Mistri does not retry it or reinterpret it as a provider,
+transport, hook, tool, parse, or compaction failure. Delivery is not a
+transaction: some events follow durable Session appends, and handler progress
+can follow an external side effect. Catch subscriber failures at the host
+boundary, reconcile the Session and the tool's domain idempotency state, and
+retry only under host policy. See [Reliability](docs/reliability.md#events-and-sinks).
+
 Update exhaustive event switches to ignore unknown future members:
 
 ```ruby
@@ -297,6 +313,10 @@ end
 
 Do not decide failure by matching prefixes such as `"Error:"`. Human denial is
 an expected control result and is not marked as execution failure.
+
+Missing documents in `read_file`, `find_in_file`, and `edit_file`, plus an
+`edit_file` replacement that cannot be applied, now carry `tool_error: true`.
+Their actionable model-facing text is unchanged.
 
 The error fact never authorizes mechanical replay. A handler can commit a side
 effect before it raises.
@@ -405,6 +425,41 @@ handler-commit/result-append gap.
 `Session#entries` and serialized usage are extensible records. Raw host readers
 must ignore unknown entry types and keys. This release adds lifecycle, approval
 provenance, unpriced-attempt, and `cost.known` data.
+
+## Workspace editing and conditional writes
+
+`edit_file` now uses conditional writes when a workspace explicitly advertises
+`atomic_writes?`. Existing custom workspaces that implement only `read`,
+`write`, `delete`, and `list` keep their 0.5 behavior. A custom workspace must
+claim atomic support only when its `snapshot` and `compare_and_write` methods
+satisfy the complete contract in
+[Context and workspaces](docs/context-and-workspaces.md#workspaces-and-document-tools).
+
+Only anchored `edit_file` uses this protocol. `write_file` remains an
+intentional blind whole-document replacement, and deletion has no conditional
+form. Use an anchored edit or a host tool with a stronger domain contract when
+concurrent writers must preserve unrelated changes.
+
+A qualifying `Mistri::Workspace::ActiveRecord` now takes the conditional path
+on PostgreSQL, or on an InnoDB table through MySQL2 or Trilogy. It verifies the
+primary key, non-null path, content, and scope columns, and an exact unique
+scope/path index before advertising the capability. Atomic snapshots and edits
+reject when the connection already has an open host transaction, because the
+adapter cannot safely join that transaction's isolation and lock lifetime. Run
+the Agent outside the host transaction. Unsupported storage retains the legacy
+path; assert `workspace.atomic_writes?` at boot rather than accepting that
+fallback when lost-update protection is required.
+
+`Mistri::Workspace::Memory#read` now returns an owned copy. Call `write` to
+persist a changed value; mutating a previously returned String no longer changes
+workspace state. Its conditional writes protect only threads sharing that
+Memory instance, not separate processes.
+
+`Mistri::Workspace::Single` opts in only when given `synchronize:`. That
+callback must cover the complete current read, revision check, write, and
+committed read for every competing writer. It must also refuse an already-open
+Active Record transaction when it uses an Active Record lock. Without the
+callback, Single keeps its legacy four-method behavior.
 
 ## MCP changes
 
@@ -565,7 +620,9 @@ At minimum:
 6. Run a write tool with an idempotency key and simulate failure before result
    persistence in the host test harness.
 7. Reconnect and refresh one MCP OAuth connection.
-8. Run the provider-specific live tests and integration matrix with every
+8. For a workspace that requires concurrent edit preservation, assert
+   `atomic_writes?` and race two anchored edits against its real backend.
+9. Run the provider-specific live tests and integration matrix with every
    expected key present.
 
 ```console
@@ -578,5 +635,5 @@ $ bundle exec rake integration
 Missing provider keys skip live coverage. Read the output and verify the models
 that actually ran.
 
-For exact behavior and latency notes, read the [Unreleased](CHANGELOG.md#unreleased)
-changelog entry.
+For exact behavior and latency notes, read the
+[0.6.0 changelog entry](CHANGELOG.md#060---2026-07-12).
