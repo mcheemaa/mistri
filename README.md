@@ -329,9 +329,11 @@ authority, response limits, and large-result resource links.
 - **Workspaces** give the built-in read, write, edit, find, and list tools a
   directory, memory value, Active Record table, or single host-owned value.
 
-The edit engine refuses ambiguous matches. A Directory workspace rejects
-lexical escape and traversal through existing symlinks in a stable,
-host-controlled tree; it is not an operating-system sandbox. See
+The edit engine refuses ambiguous matches and, when a workspace supports
+conditional writes, rebases anchored edits without losing unrelated concurrent
+changes. A Directory workspace rejects lexical escape and traversal through
+existing symlinks in a stable, host-controlled tree; it is not an
+operating-system sandbox. See
 [Context and workspaces](docs/context-and-workspaces.md) and the runnable
 [`page_editor.rb`](examples/page_editor.rb) example.
 

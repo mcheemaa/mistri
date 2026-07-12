@@ -120,6 +120,20 @@ module Mistri
   # A text edit that did not match uniquely, or overlapped another edit.
   class EditError < Error; end
 
+  # A conditional document write lost to a different committed version. The
+  # revisions stay off the message so a stale full replacement cannot borrow
+  # a fresh token without reading the matching content.
+  class WorkspaceConflictError < Error
+    attr_reader :path, :expected_revision, :actual_revision
+
+    def initialize(path, expected_revision: nil, actual_revision: nil)
+      @path = path.to_s.dup.freeze
+      @expected_revision = expected_revision.nil? ? nil : expected_revision.to_s.dup.freeze
+      @actual_revision = actual_revision.nil? ? nil : actual_revision.to_s.dup.freeze
+      super("document #{@path.inspect} changed; read it again before retrying")
+    end
+  end
+
   # Compaction could not produce a usable summary. Usage preserves any billed
   # provider attempt even though no checkpoint was written.
   class CompactionError < Error

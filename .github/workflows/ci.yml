@@ -13,7 +13,7 @@ jobs:
       matrix:
         ruby: ["3.2", "3.3", "3.4", "head"]
     env:
-      BUNDLE_WITHOUT: lint
+      BUNDLE_WITHOUT: lint:mysql_test:postgres_test
       # One entry measures coverage and enforces the floor.
       COVERAGE: ${{ matrix.ruby == '3.4' && '1' || '0' }}
     steps:
@@ -31,6 +31,8 @@ jobs:
 
   lint:
     runs-on: ubuntu-latest
+    env:
+      BUNDLE_WITHOUT: mysql_test:postgres_test:rails_test
     steps:
       - uses: actions/checkout@v7
       - uses: ruby/setup-ruby@v1
@@ -38,3 +40,60 @@ jobs:
           ruby-version: "3.4"
           bundler-cache: true
       - run: bundle exec rubocop
+
+  mysql:
+    runs-on: ubuntu-latest
+    services:
+      mysql:
+        image: mysql:8.4
+        env:
+          MYSQL_ROOT_PASSWORD: root
+          MYSQL_DATABASE: mistri_test
+        ports:
+          - 3306:3306
+        options: >-
+          --health-cmd="mysqladmin ping --silent -h localhost -proot"
+          --health-interval=5s
+          --health-timeout=5s
+          --health-retries=20
+    env:
+      BUNDLE_WITH: mysql_test
+      BUNDLE_WITHOUT: lint:postgres_test
+      MISTRI_MYSQL_URL: mysql2://root:root@127.0.0.1:3306/mistri_test?pool=10
+    steps:
+      - uses: actions/checkout@v7
+      - run: sudo apt-get update && sudo apt-get install -y default-libmysqlclient-dev
+      - uses: ruby/setup-ruby@v1
+        with:
+          ruby-version: "3.4"
+          bundler-cache: true
+      - run: bundle exec ruby -Itest test/database/test_workspace_mysql.rb
+
+  postgresql:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:14
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: mistri_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd="pg_isready -U postgres -d mistri_test"
+          --health-interval=5s
+          --health-timeout=5s
+          --health-retries=20
+    env:
+      BUNDLE_WITH: postgres_test
+      BUNDLE_WITHOUT: lint:mysql_test
+      MISTRI_POSTGRES_URL: postgresql://postgres:postgres@127.0.0.1:5432/mistri_test?pool=10
+    steps:
+      - uses: actions/checkout@v7
+      - run: sudo apt-get update && sudo apt-get install -y libpq-dev
+      - uses: ruby/setup-ruby@v1
+        with:
+          ruby-version: "3.4"
+          bundler-cache: true
+      - run: bundle exec ruby -Itest test/database/test_workspace_postgresql.rb
