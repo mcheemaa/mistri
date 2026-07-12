@@ -2,10 +2,9 @@
 
 module Mistri
   # How a background child actually executes. The spawn tool hands every
-  # dispatcher two things: the serializable spec (name, session_id,
-  # parent_session_id, type, instructions, tool_names, model, workspace,
-  # task) and a runner closure that executes the child in this process with
-  # everything already reconstructed.
+  # dispatcher two things: a versioned serializable spec (name, session_id,
+  # parent_session_id, type, instructions, tool_names, model, task) and a
+  # runner closure that invokes the host runtime factory inside this process.
   #
   # In-process dispatchers just call the runner. A queue dispatcher ignores
   # the runner, enqueues the spec, and its job reconstructs the pieces from
@@ -13,12 +12,12 @@ module Mistri
   #
   #   dispatcher: ->(spec, _runner) { ChildRunJob.perform_async(spec) }
   #
-  # The runner closes over the spawn-time event sink, so in-process
-  # children keep streaming to whoever watched the spawn; that sink must
-  # outlive the parent's turn (a broadcast lambda does, a request-scoped
-  # object may not) and hears from the worker's thread, concurrently with
-  # the parent's own events. The gem's sinks tolerate that; a custom one
-  # must too.
+  # The runner invokes the host factory inside the worker and keeps the
+  # spawn-time event sink. In-process children stream to whoever watched the
+  # spawn; that sink must outlive the parent's turn (a broadcast lambda does,
+  # a request-scoped object may not) and hears from the worker's thread,
+  # concurrently with the parent's own events. The gem's sinks tolerate that;
+  # a custom one must too.
   module Dispatchers
     # Runs the child synchronously inside the spawn call and still answers
     # in receipt form: background degrades gracefully where no concurrency
@@ -36,9 +35,9 @@ module Mistri
         ::Thread.new do
           runner.call
         rescue StandardError => e
-          # The runner writes the child's failed terminal before re-raising;
-          # a thread must not die loudly into the process, but it must not
-          # die silently either, or there is no trace to debug from.
+          # Execution failures have a durable terminal before re-raising;
+          # cleanup may raise after a successful terminal. Neither should
+          # make a thread die loudly or disappear without a diagnostic.
           warn "mistri: background runner for #{spec["name"].inspect} crashed: " \
                "#{e.class}: #{e.message}"
         end

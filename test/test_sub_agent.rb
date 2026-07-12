@@ -117,6 +117,46 @@ class TestSubAgent < Minitest::Test
     end
   end
 
+  def test_child_agent_options_cannot_replace_lifecycle_keywords
+    fixed = %i[session task signal emit child started label lease]
+    spawned = %i[session system schema task signal emit child started label lease]
+    cases = fixed.map do |name|
+      [name, lambda do
+        Mistri::SubAgent.new(name: "a", description: "d", provider: fake,
+                             **{ name => Object.new })
+      end]
+    end
+    cases.concat(spawned.map do |name|
+      [name, -> { Mistri::SubAgent.spawner(provider: fake, **{ name => Object.new }) }]
+    end)
+
+    cases.each do |name, build|
+      error = assert_raises(Mistri::ConfigurationError, &build)
+      assert_match(/unsupported sub-agent options:.*#{name}/, error.message)
+    end
+  end
+
+  def test_child_agent_context_reaches_tools_without_replacing_the_parent_context
+    observed = nil
+    inspect_context = Mistri::Tool.define(
+      "inspect_context", "Reads app context."
+    ) do |_args, context|
+      observed = context.app.fetch(:actor)
+      "read it"
+    end
+    child = fake({ tool_calls: [{ name: "inspect_context", arguments: {} }] },
+                 { text: "done" })
+    worker = Mistri::SubAgent.new(name: "worker", description: "Works.", provider: child,
+                                  tools: [inspect_context], context: { actor: "host" })
+    parent = fake({ tool_calls: [{ name: "worker", arguments: { "task" => "inspect" } }] },
+                  { text: "complete" })
+
+    result = Mistri::Agent.new(provider: parent, tools: [worker.tool]).run("go")
+
+    assert_predicate result, :completed?
+    assert_equal "host", observed
+  end
+
   def test_a_runtime_suspended_child_is_denied_and_reported
     risky = Mistri::Tool.define("pay", "Pays.",
                                 needs_approval: ->(args) { args["amount"].to_i > 10 },

@@ -23,9 +23,10 @@ module Mistri
   #
   #   spawn = Mistri::SubAgent.spawner(provider:, tools: [fetch_page, search])
   #
-  # Children never receive a spawn tool: delegation is one level deep by
-  # construction. Parallel fan-out costs nothing: several spawn calls in
-  # one turn run concurrently on the executor pool.
+  # The open spawner never grants itself, preventing accidental recursion.
+  # Hosts may deliberately nest fixed specialists. Several spawn calls in
+  # one turn are scheduled concurrently; provider instances decide whether
+  # their network requests overlap.
   #
   # Child events forward into the parent's stream tagged with origin
   # ("researcher#ab12cd34"; nesting of named specialists joins with ">").
@@ -35,6 +36,8 @@ module Mistri
   # runtime is denied and reported in band. Gate the delegation itself
   # instead (needs_approval: on the definition or spawner).
   class SubAgent
+    require_relative "sub_agent/runtime"
+
     SPAWNER_DESCRIPTION =
       "Delegate a self-contained task to a focused child agent with a clean " \
       "context. The child starts blank: give it complete instructions and " \
@@ -50,6 +53,8 @@ module Mistri
     def initialize(name:, description:, provider:, system: nil, tools: [], schema: nil,
                    **agent_options)
       SubAgent.forbid_gated!(tools)
+      @gate = agent_options.delete(:needs_approval) || false
+      ChildAgentOptions.validate!(agent_options)
       @name = name.to_s
       @description = description
       @provider = provider
@@ -57,7 +62,6 @@ module Mistri
       @tools = tools
       @schema = schema
       @agent_options = agent_options
-      @gate = agent_options.delete(:needs_approval) || false
     end
 
     # The delegate tool: each call runs a fresh child and answers with its
@@ -83,8 +87,8 @@ module Mistri
     def run_child(task, context, name: nil)
       SubAgent.run_child(label: SubAgent.sanitize_label(name, fallback: @name),
                          provider: @provider, system: @system,
-                         tools: @tools, task: task, context: context, schema: @schema,
-                         **@agent_options)
+                         tools: @tools, task: task, parent_context: context, schema: @schema,
+                         agent_options: @agent_options)
     end
 
     class << self
@@ -110,79 +114,141 @@ module Mistri
         label.empty? ? fallback : label
       end
 
-      def run_child(label:, provider:, system:, tools:, task:, context:, schema: nil,
-                    **agent_options)
-        store = context.session ? context.session.store : Stores::Memory.new
+      def run_child(label:, provider:, system:, tools:, task:, parent_context:, schema: nil,
+                    agent_options: {})
+        ChildAgentOptions.validate!(agent_options)
+        store = parent_context.session ? parent_context.session.store : Stores::Memory.new
         child = Session.new(store: store)
-        context.session&.append("subagent", "name" => label, "session_id" => child.id)
+        parent_context.session&.append("subagent", "name" => label, "session_id" => child.id)
         # An inline child runs on a signal derived from the parent's: the
         # parent's abort cascades down through the handle, while stopping
         # the child alone leaves the parent running.
-        signal, cascade = context.signal ? context.signal.derive : [AbortSignal.new, nil]
+        signal, cascade = if parent_context.signal
+                            parent_context.signal.derive
+                          else
+                            [AbortSignal.new, nil]
+                          end
         result = begin
           execute_child(child: child, label: label, provider: provider, system: system,
                         tools: tools, task: task, schema: schema, signal: signal,
-                        emit: context.emit, **agent_options)
+                        emit: parent_context.emit, agent_options: agent_options)
+        rescue StandardError => e
+          unless child.entries.any? { |entry| entry["type"] == Child::TERMINAL }
+            child.append(Child::TERMINAL,
+                         "status" => "failed", "error" => "#{e.class}: #{e.message}")
+          end
+          raise
         ensure
-          context.signal&.remove_callback(cascade) if cascade
+          parent_context.signal&.remove_callback(cascade) if cascade
         end
         outcome = answer(result, label, child)
         child.append(Child::TERMINAL, terminal(result))
         outcome
       end
 
-      # The host job's way back in: reconstruct provider, system, and tools
-      # from the spec through host registries, then hand them here. Reopens
-      # the child session the spawn created, runs it exactly like an inline
-      # child (started entry, lease, stop watching, terminals), streams
-      # origin-tagged events to the emit the job supplies, and reports the
-      # outcome back to the parent (see report_back). A background child
-      # runs on its own signal: the parent's turn is long over, so only
-      # stop_agent and the stop flag end it early.
+      # The host job's way back in: a runtime factory turns the durable spec
+      # into live dependencies inside the worker. The compatible direct
+      # provider/system/tools form remains for hosts that already reconstruct
+      # those values in their job. Either form is checked against the spec
+      # before execution. The child then runs exactly like an inline child,
+      # streams origin-tagged events, and reports back to its parent.
       #
-      # The child's lease is the exactly-once fence, so it is taken before
-      # anything else: refused means another process is running this child
-      # right now (a queue redelivered a live job), so leave its owner alone.
-      # Holding it, a terminal decides: present means the child was
-      # cancelled while queued or the queue retried a finished job, so
-      # there is nothing to run; absent means run, and that includes the
-      # child a crashed process left mid-run, which is exactly what queue
-      # retries are for. Either kind of no-op returns nil.
-      def run_dispatched(spec, provider:, system:, tools:, store:, emit: nil, schema: nil,
-                         **agent_options)
+      # The child lease is duplicate suppression, not an exactly-once claim:
+      # a refused delivery leaves the current holder alone. A terminal means
+      # a queued cancellation or finished retry and returns nil. The runner
+      # retains an acquired lease through terminal persistence and reporting,
+      # suppressing ordinary redelivery while that lease remains live.
+      # rubocop:disable Metrics/AbcSize, Metrics/CyclomaticComplexity, Metrics/MethodLength, Metrics/PerceivedComplexity -- ordered dispatch transitions are the safety contract
+      def run_dispatched(spec, store:, emit: nil, runtime_factory: nil,
+                         provider: UNSET_RUNTIME_FIELD, system: UNSET_RUNTIME_FIELD,
+                         tools: UNSET_RUNTIME_FIELD, schema: UNSET_RUNTIME_FIELD,
+                         retry_factory_errors: true, **agent_options)
+        runtime = nil
+        resolved = nil
+        authorized = false
+        terminalize = false
+        factory_failed = false
+        retryable_exit = false
+        primary_error = nil
+        delivery_owned = false
+        spec = RuntimeContract.own_spec(spec)
+        RuntimeContract.validate_identity!(spec)
         child = Session.new(store: store, id: spec.fetch("session_id"))
+        spec = RuntimeContract.bind_spec(child.entries, spec)
+        authorized = true
+        direct = { provider: provider, system: system, tools: tools, schema: schema,
+                   agent_options: agent_options.empty? ? UNSET_RUNTIME_FIELD : agent_options }
+        RuntimeContract.validate_resolution!(factory: runtime_factory, direct: direct)
         signal = AbortSignal.new
+        terminalize = true
+        delivery_owned = true
         lease = Locks.hold(Child.lease_key(child.id),
                            stop_key: Child.stop_key(child.id), signal: signal)
-        return nil if Mistri.locks && lease.nil?
-
-        if Child.new(name: spec.fetch("name"), session_id: child.id, store: store).finished?
-          lease&.release
+        if Mistri.locks && lease.nil?
+          delivery_owned = false
           return nil
         end
 
-        result = execute_child(child: child, label: spec.fetch("name"), provider: provider,
-                               system: system, tools: tools, task: spec.fetch("task"),
-                               schema: schema, signal: signal, emit: emit, lease: lease,
-                               **agent_options)
+        if Child.new(name: spec.fetch("name"), session_id: child.id, store: store).finished?
+          return nil
+        end
+
+        child.append(Child::STARTED, {})
+        RuntimeContract.validate_spec!(spec)
+        signal.abort!("stopped by user") if Mistri.locks&.flag?(Child.stop_key(child.id))
+        unless signal.aborted?
+          runtime = RuntimeContract.resolve(spec, factory: runtime_factory, direct: direct) do
+            factory_failed = true
+          end
+          resolved = RuntimeContract.validate_runtime!(runtime, spec)
+          signal.abort!("stopped by user") if Mistri.locks&.flag?(Child.stop_key(child.id))
+        end
+        result = if signal.aborted?
+                   Result.new(message: nil, status: :aborted)
+                 else
+                   execute_child(child: child, label: spec.fetch("name"),
+                                 provider: resolved.provider, system: resolved.system,
+                                 tools: resolved.tools, task: spec.fetch("task"),
+                                 schema: resolved.schema, signal: signal, emit: emit,
+                                 lease: lease, started: true,
+                                 agent_options: resolved.agent_options)
+                 end
         deny_pending(result, child)
         child.append(Child::TERMINAL, terminal(result))
         result
       rescue StandardError => e
+        primary_error = e
         # Completion is a contract even when the runner dies in the
         # preamble: without this, a raise before the started entry (a lock
         # backend down, say) would leave the child reading :queued forever,
         # with nothing to report and nothing for a retry to heal.
-        if child && !Child.new(name: spec.fetch("name"), session_id: child.id,
-                               store: store).finished?
-          child.append(Child::TERMINAL,
-                       "status" => "failed", "error" => "#{e.class}: #{e.message}")
+        stopped = factory_failed && child_stop_requested?(child, signal)
+        retryable = factory_failed && retry_factory_errors && !stopped
+        retryable_exit = retryable
+        if child && terminalize && !retryable &&
+           !Child.new(name: spec.fetch("name"), session_id: child.id, store: store).finished?
+          terminal = if stopped
+                       { "status" => "stopped" }
+                     else
+                       { "status" => "failed", "error" => "#{e.class}: #{e.message}" }
+                     end
+          child.append(Child::TERMINAL, terminal)
         end
-        lease&.release
         raise
       ensure
-        report_back(spec, store, emit) if child
+        cleanup_error = RuntimeContract.cleanup(runtime)
+        begin
+          report_back(spec, store, emit) if child && authorized && delivery_owned
+        ensure
+          begin
+            Mistri.locks&.clear_flag(Child.stop_key(child.id)) if child && lease && !retryable_exit
+          ensure
+            lease&.release
+          end
+        end
+        raise cleanup_error if cleanup_error && primary_error.nil?
       end
+      # rubocop:enable Metrics/AbcSize, Metrics/CyclomaticComplexity, Metrics/MethodLength, Metrics/PerceivedComplexity
 
       # A child cannot wait for a human, whichever door it entered by: any
       # calls parked for approval are denied AND settled with the denial as
@@ -225,51 +291,18 @@ module Mistri
 
       private
 
-      # The one hardened execution path every child goes through, whichever
-      # door it entered by. From the started entry on, every exit writes a
-      # terminal, setup failures included, or the child would read as
-      # running forever. The lease says "alive right now" to other
-      # processes and its thread watches the child's stop flag; a
-      # dispatched run hands in the lease it already holds (its run-or-not
-      # decision happened under the fence), an inline child acquires its
-      # own here. Either way, this path releases it.
-      def execute_child(child:, label:, provider:, system:, tools:, task:, schema:,
-                        signal:, emit:, lease: nil, **agent_options)
-        child.append(Child::STARTED, {})
-        lease ||= Locks.hold(Child.lease_key(child.id),
-                             stop_key: Child.stop_key(child.id), signal: signal)
-        begin
-          agent = Agent.new(provider: provider, session: child, system: system,
-                            tools: tools, **agent_options)
-          origin = "#{label}##{child.id[0, 8]}"
-          tagged = ->(event) { forward(event, origin, emit) }
-          if schema
-            agent.task(task, schema: schema, signal: signal, &tagged)
-          else
-            agent.run(task, signal: signal, &tagged)
-          end
-        rescue StandardError => e
-          child.append(Child::TERMINAL, "status" => "failed", "error" => "#{e.class}: #{e.message}")
-          raise
-        ensure
-          lease&.release
-          Mistri.locks&.clear_flag(Child.stop_key(child.id))
-        end
+      def child_stop_requested?(child, signal)
+        return false unless child
+
+        signal&.aborted? || Mistri.locks&.flag?(Child.stop_key(child.id))
       end
 
-      def forward(event, origin, emit)
-        return unless emit
-
-        tagged = event.origin ? "#{origin}>#{event.origin}" : origin
-        emit.call(event.with(origin: tagged))
-      end
-
-      # Every terminal outcome reports back, exactly once. The report joins
-      # the parent's inbox (a typed entry that folds at its next turn
-      # boundary, exactly like a steer) and a :subagent_report event
+      # A lease-backed runner reports before releasing the child lease. The
+      # report joins the parent's inbox (a typed entry that folds at its next
+      # turn boundary, exactly like a steer) and a :subagent_report event
       # closes the child's lane in whatever UI watched the spawn. A child
       # that never ran has nothing to say, and the parent session drops a
-      # duplicate delivery, so a redelivered job cannot repeat one.
+      # sequential duplicate delivery. Without locks, the host must serialize.
       def report_back(spec, store, emit)
         facade = Child.new(name: spec.fetch("name"), session_id: spec.fetch("session_id"),
                            store: store)
@@ -322,3 +355,5 @@ module Mistri
     end
   end
 end
+
+require_relative "sub_agent/execution"

@@ -98,15 +98,24 @@ module Mistri
         next Console.unknown(context.session, args["agent"]) unless child
 
         status = child.status
-        if !Child::LIVE.include?(status)
+        if status == :stopped
+          child.stop
+          "#{child.name} is already stopped."
+        elsif !Child::LIVE.include?(status) && status != :interrupted
           "#{child.name} is already #{status}."
         elsif !child.stop
           "Stopping needs a lock adapter (Mistri.locks) and none is configured."
-        elsif status == :queued
-          "Cancelled. #{child.name} had not started and never will."
         else
-          "Stop requested. #{child.name} halts within a second or two; " \
-            "its partial work stays readable through read_agent."
+          stopped = child.status
+          if stopped == :stopped
+            "Cancelled. #{child.name} is marked stopped; ordinary queue delivery " \
+              "will not run it again."
+          elsif %i[done failed].include?(stopped)
+            "#{child.name} finished as #{stopped} before the stop took effect."
+          else
+            "Stop requested. #{child.name}'s runner receives the request promptly " \
+              "and stops at a cooperative boundary; partial work stays readable."
+          end
         end
       end
     end
@@ -133,7 +142,8 @@ module Mistri
     # promptly, never held hostage to the timeout.
     def await(child, timeout, poll, signal = nil)
       deadline = Process.clock_gettime(Process::CLOCK_MONOTONIC) + timeout
-      while Child::LIVE.include?(status = child.status)
+      until child.finished?
+        status = child.status
         return "The wait was stopped; #{child.name} is still #{status}." if signal&.aborted?
 
         if Process.clock_gettime(Process::CLOCK_MONOTONIC) >= deadline

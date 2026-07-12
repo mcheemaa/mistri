@@ -3,29 +3,33 @@
 module Mistri
   # Host policy for spawning workers, as one object: the tool pool children
   # may draw from, the curated types, the model allowlist, the headcount
-  # cap, and the dispatcher that makes background mode real. #tool builds
-  # the spawn_agent tool the top-level agent holds; SubAgent.spawner and
+  # cap, and the dispatcher that makes background mode real. A host runtime
+  # factory reconstructs live dependencies after the dispatch boundary;
+  # model text never chooses or proves resource isolation. #tool builds the
+  # spawn_agent tool the top-level agent holds; SubAgent.spawner and
   # SubAgent.pack are the front doors.
   #
   # Every policy violation answers the model in band (unknown type, missing
-  # instructions, over capacity, workspace sharing in background mode);
-  # only host configuration mistakes raise, and they raise at construction.
+  # instructions, over capacity); only host configuration mistakes raise,
+  # and they raise at construction.
   class Spawner
     def initialize(provider:, tools: [], types: {}, models: [], max_children: 4,
-                   dispatcher: nil, needs_approval: false, **agent_options)
-      SubAgent.forbid_gated!(tools)
-      if tools.any? { |tool| tool.name == "spawn_agent" }
-        raise ConfigurationError, "the spawn tool never goes in its own pool"
-      end
+                   dispatcher: nil, runtime_factory: nil, needs_approval: false,
+                   **agent_options)
+      tools = Array.new(tools) if tools.is_a?(Array)
+      models = Array.new(models) if models.is_a?(Array)
+      ChildAgentOptions.validate!(agent_options)
+      validate_configuration!(tools, models, dispatcher, runtime_factory)
 
       @provider = provider
-      @pool = tools
+      @pool = tools.freeze
       # Symbol keys are natural Ruby; the wire speaks strings. One
       # normalization here and lookup, schema, and menu all agree.
-      @types = types.transform_keys(&:to_s)
-      @models = models
+      @types = types.transform_keys(&:to_s).freeze
+      @models = models.map { |model| String.new(model).freeze }.freeze
       @max_children = max_children
       @dispatcher = dispatcher
+      @runtime_factory = runtime_factory
       @needs_approval = needs_approval
       @agent_options = agent_options
       validate_types!
@@ -46,26 +50,62 @@ module Mistri
       worker = resolve_worker(args)
       return worker if worker.is_a?(String)
 
-      if args["mode"] == "background" && @dispatcher
-        if args["workspace"] == "parent"
-          return "A worker sharing your workspace must run inline: a blocked parent " \
-                 "cannot write concurrently, a working one can. Drop workspace or " \
-                 "drop background."
-        end
+      return dispatch(args, worker, context) if args["mode"] == "background" && @dispatcher
 
-        return dispatch(args, worker, context)
-      end
-
-      SubAgent.run_child(label: label_for(args), provider: worker[:provider],
+      SubAgent.run_child(label: label_for(args), provider: provider_for(worker),
                          system: worker[:system], tools: worker[:tools],
-                         task: args.fetch("task"), context: context, **@agent_options)
+                         task: args.fetch("task"), parent_context: context,
+                         agent_options: @agent_options)
     end
 
     private
 
+    def validate_configuration!(tools, models, dispatcher, runtime_factory)
+      validate_tool_pool!(tools)
+      validate_models!(models)
+      validate_dispatcher!(dispatcher, runtime_factory)
+    end
+
+    def validate_tool_pool!(tools)
+      unless tools.is_a?(Array) && tools.all?(Tool)
+        raise ConfigurationError, "the spawn tool pool must contain only Mistri::Tool instances"
+      end
+
+      SubAgent.forbid_gated!(tools)
+      if tools.any? { |tool| tool.name == "spawn_agent" }
+        raise ConfigurationError, "the spawn tool never goes in its own pool"
+      end
+      return if tools.map(&:name).uniq.length == tools.length
+
+      raise ConfigurationError, "the spawn tool pool has duplicate tool names"
+    end
+
+    def validate_models!(models)
+      unless models.is_a?(Array) &&
+             models.all? { |model| model.is_a?(String) && !model.empty? }
+        raise ConfigurationError, "the spawn model allowlist must contain non-empty strings"
+      end
+      return if models.uniq.length == models.length
+
+      raise ConfigurationError, "the spawn model allowlist has duplicate model names"
+    end
+
+    def validate_dispatcher!(dispatcher, runtime_factory)
+      if dispatcher && !dispatcher.respond_to?(:call)
+        raise ConfigurationError, "dispatcher must be callable"
+      end
+      if dispatcher && !runtime_factory.respond_to?(:call)
+        raise ConfigurationError,
+              "a dispatcher requires runtime_factory: to reconstruct background children"
+      end
+      return unless runtime_factory && !dispatcher
+
+      raise ConfigurationError, "runtime_factory: requires a dispatcher"
+    end
+
     # Create the child session and its lifecycle entries, hand the
-    # dispatcher the serializable spec plus an in-process runner closing
-    # over the reconstructed pieces, and answer with a truthful receipt:
+    # dispatcher the serializable spec plus an in-process runner that calls
+    # the host factory inside the worker, and answer with a truthful receipt:
     # what the child's status says after dispatch, not what the mode
     # promised. The runner closes over the spawn-time emit, so in-process
     # dispatchers keep streaming to whoever watched the spawn.
@@ -73,28 +113,37 @@ module Mistri
       store = context.session ? context.session.store : Stores::Memory.new
       child = Session.new(store: store)
       label = label_for(args)
-      context.session&.append("subagent", "name" => label, "session_id" => child.id)
-      child.append(Child::DISPATCHED, {})
       spec = spec_for(args, worker, child, label, context)
+      context.session&.append("subagent", "name" => label, "session_id" => child.id)
+      child.append(Child::DISPATCHED, "spec" => spec)
       emit = context.emit
-      options = @agent_options
+      runtime_factory = @runtime_factory
       runner = lambda do
-        SubAgent.run_dispatched(spec, provider: worker[:provider], system: worker[:system],
-                                      tools: worker[:tools], store: store, emit: emit,
-                                      **options)
+        SubAgent.run_dispatched(spec, runtime_factory: runtime_factory,
+                                      store: store, emit: emit,
+                                      retry_factory_errors: false)
       end
       @dispatcher.call(spec, runner)
       receipt(label, child, store)
     end
 
     def spec_for(args, worker, child, label, context)
-      { "name" => label, "session_id" => child.id,
-        "parent_session_id" => context.session&.id,
-        "type" => args["type"] || "general-purpose",
-        "instructions" => args["instructions"], "task" => args.fetch("task"),
-        "tool_names" => worker[:tools].map(&:name),
-        "model" => (worker[:provider].model if worker[:provider].respond_to?(:model)),
-        "workspace" => args["workspace"] || "own" }
+      model = worker[:model]
+      unless model.is_a?(String) && !model.empty?
+        raise ConfigurationError,
+              "a background child provider must expose a non-empty model identity"
+      end
+      spec = { "spec_version" => SubAgent::DISPATCH_SPEC_VERSION,
+               "name" => label, "session_id" => child.id,
+               "parent_session_id" => context.session&.id,
+               "type" => args["type"] || "general-purpose",
+               "instructions" => args["instructions"], "task" => args.fetch("task"),
+               "tool_names" => worker[:tools].map(&:name),
+               "model" => model }
+      owned, error = ToolArguments.canonicalize(spec)
+      return owned unless error
+
+      raise ConfigurationError, "background child spec is not bounded JSON"
     end
 
     def receipt(label, child, store)
@@ -127,9 +176,9 @@ module Mistri
 
       system = [definition.render, args["instructions"]]
                .reject { |part| part.to_s.strip.empty? }.join("\n\n")
-      chosen = args["tools"].nil? || args["tools"].empty? ? definition.tool_names : args["tools"]
+      chosen = args["tools"].nil? ? definition.tool_names : args["tools"]
       { system: system, tools: pick(chosen),
-        provider: typed_provider(args["model"], definition.model) }
+        **provider_choice(args["model"], definition.model) }
     end
 
     def general_worker(args)
@@ -139,29 +188,29 @@ module Mistri
                "or pick a type."
       end
 
-      { system: system, tools: pick(args["tools"]),
-        provider: child_provider(args["model"]) }
+      { system: system, tools: pick(args["tools"]), **provider_choice(args["model"]) }
     end
 
-    # An explicit model choice goes through the allowlist; otherwise a
-    # typed worker runs on its definition's model, and without one it
-    # inherits the parent's provider. Host-curated definitions are
-    # trusted the way the pool is.
-    def typed_provider(requested, definition_model)
-      return child_provider(requested) unless requested.to_s.empty?
-      return @provider if definition_model.to_s.empty?
+    # A background grant needs only a stable model identity; constructing
+    # its live provider belongs to the worker factory. Inline execution turns
+    # the same choice into a provider immediately before the child starts.
+    def provider_choice(requested, definition_model = nil)
+      if requested.nil? || requested.to_s.empty?
+        return { model: definition_model } unless definition_model.to_s.empty?
 
-      Mistri.provider(definition_model)
-    end
-
-    def child_provider(requested)
-      return @provider if requested.nil? || requested.to_s.empty?
+        model = @provider.model if @provider.respond_to?(:model)
+        return { provider: @provider, model: model }
+      end
       unless @models.include?(requested)
         raise ArgumentError,
               "model #{requested.inspect} is not allowed; available: #{@models.join(", ")}"
       end
 
-      Mistri.provider(requested)
+      { model: requested }
+    end
+
+    def provider_for(worker)
+      worker[:provider] || Mistri.provider(worker.fetch(:model))
     end
 
     def over_capacity(session)
@@ -199,7 +248,10 @@ module Mistri
     end
 
     def pick(names)
-      return @pool if names.nil? || names.empty?
+      return @pool if names.nil?
+      if names.uniq.length != names.length
+        raise ArgumentError, "tool selections cannot contain duplicate names"
+      end
 
       by_name = @pool.to_h { |tool| [tool.name, tool] }
       names.map do |name|
@@ -229,17 +281,15 @@ module Mistri
           string :instructions, "The child's system prompt", required: true
         end
         if pool_names.any?
-          array :tools, "Subset of tools to grant (default: all, or the type's own list)",
-                items: { type: "string", enum: pool_names }
+          array :tools, "Exact tools to grant (omit for all, or the type's own list; " \
+                        "an empty list grants none)",
+                items: { type: "string", enum: pool_names }, uniqueItems: true
         end
         string :model, "Model for the child#{fallback}", enum: models if models.any?
         if dispatcher
           string :mode, "inline blocks until the report; background returns a receipt " \
                         "now and you keep working (default: inline)",
                  enum: %w[inline background]
-          string :workspace, "own gives the worker its own file space; parent shares " \
-                             "yours and requires inline mode (default: own)",
-                 enum: %w[own parent]
         end
       end
     end

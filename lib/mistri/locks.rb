@@ -6,15 +6,15 @@ module Mistri
   # Cross-process coordination for hosts that run loops in more than one
   # process: leases that say "this is alive right now" and flags that carry
   # one-bit requests (stop) between processes. Everything expires on its
-  # own, so a crashed holder never wedges anything; a live holder renews on
-  # a heartbeat, so only dead ones expire.
+  # own, so a crashed holder never wedges anything; a healthy holder renews
+  # on a heartbeat, while a stalled process can still outlive its lease.
   #
   # Configure once at boot:
   #
   #   Mistri.locks = Mistri::Locks::Memory.new          # single process
   #   Mistri.locks = Mistri::Locks::RailsCache.new      # requires opt-in file
   #
-  # An adapter implements six methods: acquire(key, ttl:) -> bool,
+  # An adapter implements seven methods: acquire(key, ttl:) -> bool,
   # renew(key, ttl:), release(key), held?(key), set_flag(key, ttl:),
   # flag?(key), clear_flag(key). With no adapter configured, everything
   # lease-aware degrades gracefully: children read :running instead of

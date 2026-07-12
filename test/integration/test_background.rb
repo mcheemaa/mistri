@@ -21,8 +21,19 @@ class TestBackgroundIntegration < Minitest::Test
       sleep 8
       number.to_s
     end
+    runtime_factory = lambda do |spec|
+      runtime_oracle = Mistri::Tool.define("oracle", "Answers the secret number, slowly.") do
+        sleep 8
+        number.to_s
+      end
+      provider = Mistri.provider(spec.fetch("model"))
+      Mistri::SubAgent::Runtime.new(provider: provider,
+                                    system: spec.fetch("instructions"),
+                                    tools: [runtime_oracle], cleanup: -> { provider.close })
+    end
     tools = Mistri::SubAgent.pack(provider: Mistri.provider(model), tools: [oracle],
-                                  dispatcher: Mistri::Dispatchers::Thread.new)
+                                  dispatcher: Mistri::Dispatchers::Thread.new,
+                                  runtime_factory: runtime_factory)
     parent = Mistri::Agent.new(
       provider: Mistri.provider(model), tools: tools,
       session: Mistri::Session.new(store:),
@@ -68,8 +79,19 @@ class TestBackgroundIntegration < Minitest::Test
       sleep 1
       number.to_s
     end
+    runtime_factory = lambda do |spec|
+      runtime_oracle = Mistri::Tool.define("oracle", "Answers the secret number, slowly.") do
+        sleep 1
+        number.to_s
+      end
+      provider = Mistri.provider(spec.fetch("model"))
+      Mistri::SubAgent::Runtime.new(provider: provider,
+                                    system: spec.fetch("instructions"),
+                                    tools: [runtime_oracle], cleanup: -> { provider.close })
+    end
     tools = Mistri::SubAgent.pack(provider: Mistri.provider(model), tools: [oracle],
-                                  dispatcher: Mistri::Dispatchers::Thread.new)
+                                  dispatcher: Mistri::Dispatchers::Thread.new,
+                                  runtime_factory: runtime_factory)
     parent = Mistri::Agent.new(
       provider: Mistri.provider(model), tools: tools,
       session: Mistri::Session.new(store:),

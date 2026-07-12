@@ -11,6 +11,10 @@ module Mistri
   # Missing or contradictory setup: an unknown model, an absent API key.
   class ConfigurationError < Error; end
 
+  # A queue payload is not the grant persisted for its child. The unchanged
+  # delivery is poison: discard and alert instead of retrying it.
+  class DispatchGrantError < ConfigurationError; end
+
   # A provider request failed. Carries the HTTP status and response body when
   # the transport got that far.
   class ProviderError < Error

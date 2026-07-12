@@ -150,7 +150,9 @@ Loop-level events are:
 - `:compacting` before summary work and `:compaction` with the committed
   summary in `content`;
 - `:retry` before provider backoff;
-- `:subagent_report` when a background child reaches a terminal state.
+- `:subagent_report` when a running background child reaches a terminal state;
+  an inactive `Child#stop` persists the report without this callback because it
+  has no event sink.
 
 Event types form an extensible union. Handle the types the application uses and
 ignore the rest:

@@ -5,6 +5,45 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+- Background dispatch now crosses a versioned, deeply owned JSON capability
+  boundary instead of closing over the spawn-time provider, Tool objects, Agent
+  options, and workspace state. Every `dispatcher:` requires a host
+  `runtime_factory:` that constructs a `SubAgent::Runtime` inside the worker;
+  the runtime provider model and unique Tool names must match the durable grant
+  exactly before any provider call or tool side effect. Missing, additional,
+  renamed, duplicated, non-Tool, reconstructed statically approval-gated, and
+  synthetic Skill capabilities fail closed before execution. New immutable
+  specs carry `spec_version`, require a model identity, reject unknown fields,
+  and omit the model-controlled `workspace` field. The identical canonical
+  spec is stored in the child Session before dispatch; `run_dispatched` compares
+  the complete queue copy and uses the stored grant for execution and report
+  routing, so a changed capability, task, model, name, or parent ID leaves the
+  child untouched. Legacy unversioned specs containing `workspace` remain
+  executable. Finished redeliveries are rejected before factory construction;
+  a configured child lease also rejects concurrent live redeliveries. The
+  compatible direct form receives the same grant checks.
+  Runtime factory exceptions remain retryable for queues by default; built-in
+  in-process runners and an explicit `retry_factory_errors: false` persist a
+  terminal failure before re-raising. An optional Runtime `cleanup:` hook runs
+  exactly once without masking a primary error. Generic child Agent options
+  are allowlisted and travel as one isolated Hash, so they cannot replace the
+  durable Session, task, signal, event sink, or other lifecycle state; Runtime
+  cannot add Skill capabilities. The dispatched
+  lease now spans runtime construction, execution, cleanup, terminal
+  persistence, and parent report delivery; it suppresses ordinary stop and
+  redelivery races while the tokenless lease remains live. Queued and
+  interrupted cancellations now deliver their durable stopped report while holding that
+  lease even when the queue never starts or retries the job; repeating stop
+  reconciles a transient parent-report failure. A queue copy that does not
+  match the persisted grant raises the public, non-retryable
+  `Mistri::DispatchGrantError`, which is reserved for grant binding.
+  Model selection records only its identity at spawn time; its provider is
+  constructed in the worker. `tools: []` now grants no tools, while omission
+  keeps the general pool or typed defaults, so an empty typed Definition can no
+  longer inherit the entire pool. Duplicate pool, model, or model-selected tool
+  names fail before a child starts, and Spawner owns copies of its policy
+  arrays. Dispatch adds one bounded spec ownership/comparison and one linear
+  capability-name check per child, outside all provider streaming paths.
 - Model-originated tool calls now cross a local execution boundary rather than
   relying on provider guidance alone. Completed calls deeply own immutable JSON,
   canonicalize symbol keys without coercing values, retain malformed encoded
@@ -290,7 +329,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   steers, and reports remain concurrency-safe, but hosts must allow only one
   `run` or `resume` at a time for a session. Even with one runner, a crash,
   result-store failure, or subscriber exception after invocation but before
-  result persistence can leave an approved call open for at-least-once
+  result persistence can leave an approved call open for possible duplicate
   re-execution. Simultaneous runners widen the same risk. Hosts must use
   idempotency/reconciliation across that commit gap; durable atomic claiming is
   the next synchronization feature, not simulated by a local mutex.
@@ -389,7 +428,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   requires inline mode, enforced in band.
 
 - Report delivery: a background child's terminal outcome reports back to
-  its parent, exactly once. The report queues in the parent's inbox as a
+  its parent. The report queues in the parent's inbox as a
   typed subagent_report entry and folds at the next turn boundary the way
   a steer does (the model sees `[Magpie finished] <report>`; failures
   carry the error, stops say so), and a report landing as a run finishes
@@ -397,9 +436,9 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   event (agent, session_id, status, content) closes the child's lane in
   whatever UI watched the spawn. Session#pending_inbox is the
   steers-and-reports view (hosts that wake idle sessions on steers should
-  watch it instead); Session#deliver_report is the idempotent primitive
-  underneath.
-- Dispatched runs are fenced by the child's lease, taken before the
+  watch it instead); Session#deliver_report drops sequential duplicate
+  delivery by child Session ID. Concurrent callers need serialization.
+- With a lock adapter, dispatched runs use the child's lease before the
   run-or-not decision: a queue that redelivers a live job leaves the
   owner alone, a retry of a finished or cancelled child is a clean no-op,
   and a retry of a child a crashed process left mid-run runs it again

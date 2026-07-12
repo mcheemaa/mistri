@@ -59,8 +59,9 @@ agent = Mistri.agent("claude-opus-4-8", tools: [spawn])
 
 The generated `spawn_agent` tool asks for a complete task and system
 instructions. The model may select only tools in the pool and only model IDs in
-`models:`. Without an explicit model, the child inherits the supplied provider
-object.
+`models:`. Without an explicit model, an inline child inherits the supplied
+provider object. A background child records that provider's model identity and
+the Runtime factory reconstructs its provider inside the worker.
 
 Do not place `spawn_agent` inside its own tool pool. Mistri rejects that host
 configuration.
@@ -103,21 +104,72 @@ for the report, and its abort signal cascades to the child.
 Add a dispatcher to expose `mode: "background"`:
 
 ```ruby
+runtime_factory = lambda do |spec|
+  workspace = HostWorkspaces.for_child(spec.fetch("session_id"))
+  provider = HostModels.build(spec.fetch("model"))
+  tools = HostTools.build(spec.fetch("tool_names"), workspace: workspace)
+
+  Mistri::SubAgent::Runtime.new(
+    provider: provider,
+    system: HostAgents.system_for(spec),
+    tools: tools,
+    cleanup: -> { HostAgents.release(provider: provider, tools: tools) },
+  )
+end
+
 tools = Mistri::SubAgent.pack(
   provider: child_provider,
   tools: [fetch_page, search_catalog],
   dispatcher: Mistri::Dispatchers::Thread.new,
+  runtime_factory: runtime_factory,
 )
 ```
 
 `pack` returns the spawn tool plus `list_agents`, `read_agent`, `steer_agent`,
-and `stop_agent`.
+and `stop_agent`. A dispatcher always requires `runtime_factory:`. The static
+provider, tool pool, types, and model allowlist declare what the model may
+request. The factory constructs what one background child may actually use.
+
+`Mistri::SubAgent::Runtime` holds the provider, system prompt, exact tools, an
+optional `cleanup:` callable, and safe Agent options for one execution:
+`budget`, `max_concurrency`, `transform_context`, `compaction`, `retries`,
+`before_tool`, `after_tool`, and application `context`. `skills:` is refused in
+a background Runtime because Agent would add a `read_skill` tool outside the
+durable grant. Lifecycle keywords such as `session`, `task`, `signal`, and
+`emit` are never Agent options; the child boundary owns them. The same option
+validation applies to fixed specialists and Spawner. Spawner-level Agent
+options still apply only to inline children; put a background child's options
+on its Runtime.
+
+Mistri calls the factory inside the worker after ruling out a finished
+redelivery. While a configured child lease remains live, it also rules out an
+ordinary concurrent delivery first. It then requires the runtime provider's
+model and the unique runtime tool names to match the versioned dispatch spec
+exactly.
+Missing, additional, renamed, duplicated, or statically approval-gated runtime
+tools fail the child before a provider call or tool side effect. Runtime tools
+are reordered to the durable grant so provider prompt order is deterministic.
+Mistri calls `cleanup` exactly once for a Runtime the factory returned,
+including after validation or execution failure. A cleanup failure does not
+replace an active primary error; by itself it raises after the terminal result
+and report are durable. Use it to release per-child providers, MCP clients, or
+other connections. Mistri does not guess which objects the host owns.
+
+The model has no workspace selector. Derive resource scope from trusted host
+state and stable identifiers such as the child Session ID, not from its name,
+task, or instructions. Reconstructing a Ruby object is not itself isolation:
+the host must decide whether two runtimes use separate directories, database
+rows, credentials, MCP clients, or other backends. Use the same deterministic
+child scope on a queue retry rather than creating a random empty workspace.
 
 ### Thread dispatcher
 
 `Mistri::Dispatchers::Thread` starts a Ruby thread and returns a receipt to the
-parent immediately. It is useful for development and short work in a process
-whose lifetime the host controls. It is not a durable job queue.
+parent immediately. The runtime factory executes on that thread. The host must
+still construct fresh or deliberately shared dependencies; a Proc can close
+over any object, and Mistri does not pretend to inspect its closure. The Thread
+dispatcher is useful for development and short work in a process whose
+lifetime the host controls. It is not a durable job queue.
 
 ### Queue dispatcher
 
@@ -129,37 +181,76 @@ dispatcher = lambda do |spec, _in_process_runner|
 end
 ```
 
-The job reconstructs current tools, provider, Definition, and policy from host
-registries, then enters the shared child lifecycle:
+The spec is a deeply owned, immutable, bounded JSON Hash containing a spec
+version, child and parent Session IDs, worker type, model-written instructions,
+task, exact tool names, and model ID. The identical canonical spec is stored in
+the child Session before dispatch. `run_dispatched` compares the complete queue
+copy with that durable grant before checking a finished result, constructing a
+Runtime, or routing a report. A changed grant, task, model, name, or parent ID
+raises `Mistri::DispatchGrantError` and leaves the legitimate child untouched.
+The unchanged queue item cannot heal: configure the job system to discard it
+and alert an operator. The class is reserved for Mistri's stored-grant binding;
+a runtime factory must not use it as an application signal. Versioned specs
+reject unknown fields.
+
+Unversioned 0.5 queue specs remain executable because their child entries did
+not store a comparable grant. That compatibility cannot retroactively prove
+their queue copy or report routing. Drain or inspect those jobs before relying
+on the versioned boundary.
+
+The spec contains no providers, tools, workspaces, credentials, or callbacks.
+If queue execution needs a tenant or account ID, put that trusted identifier
+beside the spec in the host's job envelope and reauthorize it in the worker; do
+not add fields to the spec or put live application objects inside it.
+
+The job invokes the same host registry locally, then enters the shared child
+lifecycle:
 
 ```ruby
 Mistri::SubAgent.run_dispatched(
   spec,
-  provider: HostAgents.provider_for(spec),
-  system: HostAgents.system_for(spec),
-  tools: HostAgents.tools_for(spec),
   store: mistri_store,
   emit: event_sink,
+  runtime_factory: HostAgents.method(:runtime_for),
 )
 ```
 
-Treat that code as an architectural shape, not a copy-paste registry API. The
-host owns serialization and reconstruction because application tools commonly
-close over credentials, tenants, database objects, or framework state that
-must not ride in a queue payload.
+The factory itself is host code and is never serialized. Existing jobs may
+continue to pass directly reconstructed `provider:`, `system:`, and `tools:` to
+`run_dispatched`; Mistri applies the same exact model and capability checks.
+Prefer the factory form because it runs after the stored terminal check and,
+with a configured lock adapter, successful child-lease acquisition. It avoids
+constructing credentials, connections, or workspaces for a finished delivery
+and for an ordinary concurrent delivery while that lease remains live.
 
-`workspace: "parent"` is rejected for background mode, but this field is a
-model-supplied scheduling declaration, not capability isolation. Choosing or
-omitting `workspace: "own"` does not clone Tool objects or the workspace objects
-they close over. A production dispatcher must reconstruct background tools with
-isolated, host-owned workspace instances; otherwise parent and child can mutate
-the same resource concurrently.
+An exception raised while the queue's factory is constructing dependencies is
+retryable by default: `run_dispatched` releases the lease, leaves no terminal,
+and re-raises so the queue can retry. Runtime contract mismatches are terminal.
+On a queue's final attempt, pass `retry_factory_errors: false` to record and
+report the construction failure before the exception re-raises. The flag does
+not decide whether the job system retries or discards the exception. The
+in-process runner already uses terminal behavior because Thread and Inline have
+no durable retry owner.
+
+The factory boundary applies to dispatched children. Inline spawns and fixed
+specialists continue to use the provider and Tool objects supplied by the host;
+parallel inline calls may therefore share whatever those objects close over.
+That is deliberate host policy, not an isolation guarantee.
 
 ## Reports and control
 
 A background spawn returns a truthful receipt based on the child's stored
 status. When the child reaches a terminal state, it writes its result to its own
 session and delivers one typed report into the parent inbox.
+
+An inactive queued or interrupted cancellation owns that durable inbox delivery
+while it holds the child lease, so the parent receives the stopped report even
+if the queue never starts or retries the job. The callback-only
+`:subagent_report` event is not emitted for that host-initiated path because
+`Child#stop` has no event sink; the durable parent inbox is authoritative.
+If that cross-session inbox append raises, the stopped terminal remains
+durable. Repeating `Child#stop` or `stop_agent` retries the report under the
+child lease and sequentially deduplicates an earlier successful delivery.
 
 The parent folds that report at its next turn boundary as a labeled message.
 The `:subagent_report` event closes the worker's live UI lane. Duplicate report
@@ -177,8 +268,17 @@ child.report                   # terminal report when done
 child.error                    # terminal error when failed
 child.transcript(tail: 20)     # presentation-oriented recent entries
 child.say("Check pricing too") # queues a steer
-child.stop                     # cooperative; requires a lock adapter
+child.stop                     # durable if inactive, cooperative if running
 ```
+
+`read_agent` with `wait: true` waits for a terminal, including across an
+interrupted worker's later queue retry or cancellation. Abort and timeout still
+end the wait in band.
+
+Stopping requires a lock adapter. A queued or interrupted child that has no
+current lease owner is terminalized and reported immediately under a lease. If
+a runner already owns the lease, the cross-process flag requests its
+cooperative abort instead.
 
 Child events forwarded into the parent stream carry an `origin` such as
 `Corgi#ab12cd34`. `session.transcript(include_children: true)` uses the same
@@ -193,12 +293,14 @@ exposing it.
 Several spawn calls in one parent turn are tool calls and can begin
 concurrently. Actual model requests depend on provider instances:
 
-- Calls sharing one built-in provider object serialize through that provider's
-  transport.
-- Give independent children distinct provider instances when their model calls
-  must overlap.
-- A typed Definition with its own model builds a provider for that worker; an
-  inherited provider remains shared.
+- Inline calls sharing one built-in provider object serialize through that
+  provider's transport.
+- A background Runtime factory decides whether children receive independent or
+  deliberately shared providers. Distinct instances are required when their
+  model calls must overlap.
+- An inline typed Definition with its own model builds a provider for that
+  worker. A background typed worker records the model identity and relies on
+  the Runtime factory to construct it.
 
 This distinction avoids promising network fan-out when only tool scheduling is
 parallel.
@@ -267,7 +369,9 @@ generations.
 Queue jobs must therefore keep child work idempotent or reconcilable. A held
 lease suppresses an ordinary redelivery while the first worker is healthy; an
 expired lease allows a retry of a child that appears interrupted. A finished
-child's terminal entry makes later delivery a no-op.
+child's terminal entry makes a later matching delivery a no-op. Calling
+`Child#stop` while the child is interrupted competes for the lease and, when it
+wins, replaces that possible retry with a durable stopped terminal.
 
 Without an adapter:
 

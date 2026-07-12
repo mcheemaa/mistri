@@ -6,7 +6,7 @@ module Mistri
   # reads the same from any process, while the child runs and forever after.
   #
   #   session.children            # => [#<Mistri::Child Magpie done>, ...]
-  #   child.status                # => :running, :done, :stopped, :failed
+  #   child.status                # queued, running, interrupted, or terminal
   #   child.report                # the terminal entry's report, once finished
   #   child.transcript(tail: 20)  # recent entries, image bytes stripped
   #   child.say("Also check their pricing page")
@@ -20,8 +20,8 @@ module Mistri
     TERMINAL = "subagent_result"
     DISPATCHED = "subagent_dispatched"
     STARTED = "subagent_started"
-    # The states a worker can still be caught in: steerable, stoppable,
-    # worth waiting on.
+    # Work currently scheduled or queued, used for capacity and steering.
+    # Interrupted work is nonterminal but not actively live.
     LIVE = %i[running queued].freeze
 
     attr_reader :name, :session_id
@@ -30,10 +30,11 @@ module Mistri
 
     def self.stop_key(session_id) = "child-stop:#{session_id}"
 
-    def initialize(name:, session_id:, store:)
+    def initialize(name:, session_id:, store:, parent_session_id: nil)
       @name = name
       @session_id = session_id
       @store = store
+      @parent_session_id = parent_session_id
     end
 
     def status
@@ -49,10 +50,9 @@ module Mistri
       :running
     end
 
-    # A terminal entry exists: the child ended as done, stopped, or failed
-    # and will never run again. The question a queue retry asks; its
-    # inverse (started but no terminal) is what makes a crashed child
-    # re-runnable.
+    # A terminal entry exists: the child ended as done, stopped, or failed,
+    # so a later matching delivery must not run it again. The inverse
+    # (started but no terminal) is what makes a crashed child re-runnable.
     def finished?
       !terminal_entry.nil?
     end
@@ -82,17 +82,17 @@ module Mistri
       session.steer(text)
     end
 
-    # Ask a live child to stop, from any process. A running child's runner
-    # sees the flag within a tick and trips its own signal; a queued child
-    # is cancelled outright with a stopped terminal, which the runner
-    # honors by never starting it. Stop is cross-process by nature, so it
-    # needs a lock adapter; without one this returns false. An action that
-    # reports acceptance, not a predicate.
+    # Ask a child to stop, from any process. An inactive dispatched child is
+    # cancelled durably under its lease; an inline or already-running child
+    # receives the stop flag. Repeating stop on a stopped dispatched child
+    # reconciles a missing parent report. Stop is
+    # cross-process by nature, so it needs a lock adapter; without one this
+    # returns false. An action that reports acceptance, not a predicate.
     def stop # rubocop:disable Naming/PredicateMethod
       return false unless Mistri.locks
 
-      session.append(TERMINAL, "status" => "stopped") if status == :queued
-      Mistri.locks.set_flag(self.class.stop_key(@session_id))
+      outcome = cancel_inactive
+      Mistri.locks.set_flag(self.class.stop_key(@session_id)) if outcome == :contended
       true
     end
 
@@ -118,6 +118,62 @@ module Mistri
     end
 
     private
+
+    # Cancellation and a runner compete for the same lease. Acquiring it
+    # proves no unexpired lease is present, so ordinary inactive dispatched
+    # work can end here; a stale holder may still resume under the documented
+    # tokenless lease trade-off. Status cannot be rechecked because our own
+    # lease would read running.
+    def cancel_inactive
+      key = self.class.lease_key(@session_id)
+      lease = Locks.hold(key)
+      return :contended unless lease
+
+      begin
+        log = session.entries
+        terminal = log.reverse_each.find { |entry| entry["type"] == TERMINAL }
+        dispatched = log.any? { |entry| entry["type"] == DISPATCHED }
+        if terminal
+          deliver_cancellation if terminal["status"] == "stopped"
+          :finished
+        elsif dispatched
+          session.append(TERMINAL, "status" => "stopped")
+          deliver_cancellation
+          :cancelled
+        else
+          Mistri.locks.set_flag(self.class.stop_key(@session_id))
+          :signaled
+        end
+      ensure
+        lease.release
+      end
+    end
+
+    # A cancelled queue item may never be delivered, so the lease owner
+    # must route its durable outcome. Current versions trust only the stored
+    # grant; legacy children fall back to the parent link because their
+    # dispatched entry did not retain a spec.
+    def deliver_cancellation
+      dispatched = session.entries.find { |entry| entry["type"] == DISPATCHED }
+      return unless dispatched
+
+      spec = dispatched["spec"]
+      parent_id, label = cancellation_route(spec)
+      return unless parent_id.is_a?(String) && !parent_id.empty?
+      return unless label.is_a?(String) && !label.empty?
+
+      Session.new(store: @store, id: parent_id)
+             .deliver_report(name: label, session_id: @session_id, status: "stopped")
+    end
+
+    def cancellation_route(spec)
+      return [@parent_session_id, @name] if spec.nil?
+      return [nil, nil] unless spec.is_a?(Hash)
+      return [nil, nil] unless spec["spec_version"] == SubAgent::DISPATCH_SPEC_VERSION
+      return [nil, nil] unless spec["session_id"] == @session_id
+
+      [spec["parent_session_id"], spec["name"]]
+    end
 
     def session
       @session ||= Session.new(store: @store, id: @session_id)
