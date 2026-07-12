@@ -53,8 +53,9 @@ class TestFileTools < Minitest::Test
                                        "old_string" => "<h1>Welcom</h1>",
                                        "new_string" => "x" })
 
-    assert_match(/\Aedit_file failed:/, reply)
-    assert_match(/Closest region/, reply)
+    assert_predicate reply, :error?
+    assert_match(/\Aedit_file failed:/, reply.content)
+    assert_match(/Closest region/, reply.content)
   end
 
   def test_find_in_file_returns_numbered_matches_with_context
@@ -74,9 +75,48 @@ class TestFileTools < Minitest::Test
     assert_equal "hello", @workspace.read("notes/a.txt")
   end
 
-  def test_a_missing_document_reads_as_guidance_not_an_error
+  def test_a_missing_document_is_an_actionable_error
     reply = @tools["read_file"].call({ "path" => "nope.html" })
 
-    assert_match(/No document at "nope.html"/, reply)
+    assert_predicate reply, :error?
+    assert_match(/No document at "nope.html"/, reply.content)
+  end
+
+  def test_a_search_for_a_missing_document_is_an_actionable_error
+    reply = @tools["find_in_file"].call({ "path" => "nope.html", "query" => "title" })
+
+    assert_predicate reply, :error?
+    assert_match(/No document at "nope.html"/, reply.content)
+  end
+
+  def test_an_edit_to_a_missing_document_is_an_actionable_error
+    reply = @tools["edit_file"].call({ "path" => "nope.html",
+                                       "old_string" => "old", "new_string" => "new" })
+
+    assert_predicate reply, :error?
+    assert_match(/No document at "nope.html"/, reply.content)
+  end
+
+  def test_built_in_edit_failures_stay_typed_through_the_agent
+    provider = Mistri::Providers::Fake.new(turns: [
+                                             { tool_calls: [{ name: "edit_file",
+                                                              arguments: {
+                                                                path: "hero.html",
+                                                                old_string: "missing",
+                                                                new_string: "new"
+                                                              } }] },
+                                             { text: "recovered" }
+                                           ])
+    events = []
+    agent = Mistri::Agent.new(provider:, tools: @tools.values)
+
+    agent.run("edit it") { |event| events << event }
+
+    event = events.find { |item| item.type == :tool_result }
+    persisted = agent.session.messages.find(&:tool?)
+
+    assert event.tool_error
+    assert_predicate persisted, :tool_error?
+    assert_match(/edit_file failed:/, persisted.text)
   end
 end

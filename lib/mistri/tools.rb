@@ -23,7 +23,12 @@ module Mistri
 
     def with_document(workspace, args)
       content = workspace.read(args["path"])
-      return "No document at #{args["path"].inspect}. Use list_files to see paths." if content.nil?
+      if content.nil?
+        return ToolResult.new(
+          content: "No document at #{args["path"].inspect}. Use list_files to see paths.",
+          error: true
+        )
+      end
 
       yield content
     end
