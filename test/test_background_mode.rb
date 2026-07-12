@@ -43,6 +43,15 @@ class TestBackgroundMode < Minitest::Test
     child.status
   end
 
+  def assert_lease_released(child, deadline: 3)
+    key = Mistri::Child.lease_key(child.session_id)
+    ends = Process.clock_gettime(Process::CLOCK_MONOTONIC) + deadline
+    sleep 0.01 while Mistri.locks.held?(key) &&
+                     Process.clock_gettime(Process::CLOCK_MONOTONIC) < ends
+
+    refute Mistri.locks.held?(key), "the runner releases after reporting"
+  end
+
   def test_a_dispatcher_requires_a_runtime_factory
     error = assert_raises(Mistri::ConfigurationError) do
       Mistri::SubAgent.spawner(provider: fake, dispatcher: Mistri::Dispatchers::Inline.new)
@@ -114,7 +123,7 @@ class TestBackgroundMode < Minitest::Test
 
     assert_equal :done, await_status(child, :done)
     assert_equal "Finished the slow work.", child.report
-    refute Mistri.locks.held?(Mistri::Child.lease_key(child.session_id))
+    assert_lease_released(child)
 
     # The parent's run was long over, so the report waits in its inbox.
     ends = Process.clock_gettime(Process::CLOCK_MONOTONIC) + 3
