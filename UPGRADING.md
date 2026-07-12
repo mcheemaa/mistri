@@ -17,9 +17,9 @@ Gemini providers preserve ordinary 0.5 sessions, including the repeated
 occurrence settled. There is no blanket session rewrite step.
 
 Hosts that used implicit tool schemas, mutated arguments, supplied custom
-providers, dispatched background children, generated MCP OAuth models, stored
-sessions in MySQL, or configured cost budgets need to review the sections
-below.
+providers or Session stores, dispatched background children, generated MCP
+OAuth models, stored sessions in MySQL, or configured cost budgets need to
+review the sections below.
 
 ### Checklist
 
@@ -31,6 +31,10 @@ below.
       structurally.
 - [ ] Ensure at most one `run` or `resume` is active per Session across all
       processes.
+- [ ] Treat each approval as single-assignment; resolve quorum or multi-reviewer
+      policy in the host before calling `approve` or `deny`.
+- [ ] Verify every successful custom Session-store append is visible to later
+      loads in the same stable per-session order.
 - [ ] Audit custom provider tool-call IDs, names, arguments, and metadata.
 - [ ] Widen Active Record session payloads to LONGTEXT on MySQL or Trilogy.
 - [ ] Update generated MCP OAuth models to persist issuer and share egress
@@ -344,6 +348,27 @@ If an old custom log contains malformed IDs that cannot be paired safely, keep
 the old application version available long enough to complete or retire that
 session according to host policy. Do not invent replacement IDs in replay; they
 would corrupt tool-result correlation.
+
+## Approval decisions are single-assignment
+
+The first valid approval decision in the Session store's durable order is
+final. Repeating the same `approve` or `deny` call is idempotent and does not add
+another entry once the winner is visible. The first note also wins. A later
+conflicting call raises `Mistri::ConfigurationError`; it cannot revoke the
+winner.
+
+Two callers can still read the parked request before either appends. Both
+attempts may therefore appear in the raw append-only log. Mistri re-reads the
+ordered history after append so the winner returns normally and a conflicting
+loser raises. Losing entries are validated but inert, including a stale loser
+that arrives after the tool result. They no longer make the Session require a
+repair step.
+
+This is single-assignment, not quorum. If two people must agree, or a denial
+must outrank an approval, implement that policy transactionally in the host and
+call Session only after the host has one final decision. A custom Session store
+must make a successful append visible to subsequent loads while preserving its
+stable total order.
 
 ## Session stores
 

@@ -269,7 +269,7 @@ module Mistri
       interrupt_ambiguous_reused_approvals!(states)
       approvals = open_approval_states(states)
       validate_compaction!(audit, approvals, latest_compaction)
-      { tool_call_ids: reserved, approvals: }
+      { tool_call_ids: reserved, approvals:, call_states: calls }
     end
 
     # Control entries can authorize side effects, so every message in the
@@ -425,26 +425,19 @@ module Mistri
       problem = required_string_problem(id, "approval decision call IDs")
       raise ConfigurationError, "session contains #{problem}" if problem
 
+      unless entry["approved"].equal?(true) || entry["approved"].equal?(false)
+        raise ConfigurationError, "session contains an approval decision whose approved " \
+                                  "value is not true or false"
+      end
+
       state = calls[id]
       unless state && state[:approval]
         raise ConfigurationError, "session contains an approval decision without a prior " \
                                   "matching approval request"
       end
-      if state[:status] == :answered
-        raise ConfigurationError, "session contains an approval decision for an already " \
-                                  "answered tool call"
-      end
-      if state[:status] == :decided
-        raise ConfigurationError, "session contains a duplicate approval decision"
-      end
-      unless state[:status] == :approval_requested
-        raise ConfigurationError, "session contains an approval decision without a prior " \
-                                  "matching approval request"
-      end
-      unless entry["approved"].equal?(true) || entry["approved"].equal?(false)
-        raise ConfigurationError, "session contains an approval decision whose approved " \
-                                  "value is not true or false"
-      end
+      # Store order is the write-once register. A stale loser can append after
+      # execution, so it must not revoke the winner or corrupt the real result.
+      return if state[:approval][:decision]
 
       state[:approval][:decision] = entry
       state[:status] = :decided
@@ -709,15 +702,39 @@ module Mistri
 
     def decide(call_id, approved:, note:)
       open = open_approvals.find { |approval| approval[:call].id == call_id }
-      raise ConfigurationError, "no open approval for #{call_id.inspect}" unless open
+      unless open
+        winner = recorded_approval_decision(call_id)
+        return nil if winner && winner["approved"] == approved
+        if winner
+          raise ConfigurationError, "approval for #{call_id.inspect} has already been decided"
+        end
+
+        raise ConfigurationError, "no open approval for #{call_id.inspect}"
+      end
 
       if open[:decision]
+        return nil if open[:decision]["approved"] == approved
+
         raise ConfigurationError, "approval for #{call_id.inspect} has already been decided"
       end
 
       entry = { "call_id" => call_id, "approved" => approved }
       entry["note"] = note if note
       append("approval_decision", entry)
+
+      # The two-method Store contract cannot combine the precheck and append.
+      # Re-read its total order so a racing conflicting caller learns it lost.
+      winner = recorded_approval_decision(call_id)
+      return nil if winner && winner["approved"] == approved
+
+      raise ConfigurationError, "approval for #{call_id.inspect} has already been decided"
+    end
+
+    def recorded_approval_decision(call_id)
+      state = audit_history(entries).fetch(:call_states)[call_id]
+      return nil if state&.fetch(:ambiguous_approval, false)
+
+      state&.dig(:approval, :decision)
     end
 
     def own_json(value)
