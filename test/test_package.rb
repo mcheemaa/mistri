@@ -12,7 +12,8 @@ require_relative "test_helper"
 # The package smoke test exercises the artifact a user installs, outside Bundler and the checkout.
 class TestPackage < Minitest::Test
   ROOT = File.expand_path("..", __dir__)
-  SHIPPED_DOCUMENTS = %w[CHANGELOG.md LICENSE NOTICE README.md].freeze
+  SHIPPED_ROOT_FILES = %w[CHANGELOG.md CONTRIBUTING.md LICENSE NOTICE README.md SECURITY.md
+                          UPGRADING.md mistri.gemspec].freeze
 
   def test_strict_package_installs_and_loads_in_isolation
     Dir.mktmpdir("mistri-package") do |temporary|
@@ -43,6 +44,8 @@ class TestPackage < Minitest::Test
     assert_empty spec.executables
     assert_equal "https://rubygems.org", spec.metadata["allowed_push_host"]
     assert_equal "true", spec.metadata["rubygems_mfa_required"]
+    assert_equal "https://github.com/mcheemaa/mistri/blob/v#{Mistri::VERSION}/docs/README.md",
+                 spec.metadata["documentation_uri"]
     assert_equal expected_files, spec.files.sort
   end
 
@@ -50,7 +53,14 @@ class TestPackage < Minitest::Test
     libraries = Dir.glob(File.join(ROOT, "lib", "**", "*"))
                    .select { |path| File.file?(path) }
                    .map { |path| Pathname(path).relative_path_from(Pathname(ROOT)).to_s }
-    (libraries + SHIPPED_DOCUMENTS).sort
+    documentation = Dir.glob(File.join(ROOT, "docs", "**", "*.md"))
+                       .map { |path| Pathname(path).relative_path_from(Pathname(ROOT)).to_s }
+    public_assets = %w[assets examples].flat_map do |directory|
+      Dir.glob(File.join(ROOT, directory, "**", "*"))
+         .select { |path| File.file?(path) }
+         .map { |path| Pathname(path).relative_path_from(Pathname(ROOT)).to_s }
+    end
+    (libraries + documentation + public_assets + SHIPPED_ROOT_FILES).sort
   end
 
   def isolated_environment(temporary)

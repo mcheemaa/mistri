@@ -1,8 +1,8 @@
 # frozen_string_literal: true
 
 # The landing-page shape: one value (a database column in production, a
-# string here) edited in place through the document tools, with the updated
-# page broadcast on the ui channel the model never sees.
+# string here) edited in place through the document tools. A host can wrap the
+# result in ToolResult when it also needs a separate UI payload.
 # Needs ANTHROPIC_API_KEY.
 #
 #   ruby examples/page_editor.rb
