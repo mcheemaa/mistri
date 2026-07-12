@@ -17,18 +17,6 @@ module Mistri
     end
     private_constant :InvocationTimeout
 
-    # Carries subscriber failures past the handler outcome boundary.
-    class SubscriberError < StandardError
-      attr_reader :original
-
-      def initialize(original)
-        @original = original
-        super(original.message)
-        set_backtrace(original.backtrace)
-      end
-    end
-    private_constant :SubscriberError
-
     INTERRUPTED = "[interrupted: this tool call never ran]"
     OUTCOME_UNKNOWN = "[interrupted: this tool call's outcome is unavailable; the tool may have " \
                       "executed, so verify its effects before retrying]"
@@ -65,9 +53,10 @@ module Mistri
                            emit: nil, app: nil, prepared_arguments: false)
       return [] if calls.empty?
 
+      delivery = EventDelivery.wrap(emit, passthrough: [InvocationTimeout])
       context_class = prepared_arguments ? PreparedContext : ToolContext
       context = context_class.new(session: session, signal: signal,
-                                  emit: thread_safe(emit, signal), app: app)
+                                  emit: thread_safe(delivery, signal), app: app)
       results = Array.new(calls.length)
       queue = Queue.new
       errors = Queue.new
@@ -76,7 +65,7 @@ module Mistri
       Array.new(workers) { worker(queue, results, tools_by_name, context, errors) }.each(&:join)
       unless errors.empty?
         error = errors.pop
-        raise(error.is_a?(SubscriberError) ? error.original : error)
+        raise EventDelivery.unwrap(error, delivery)
       end
 
       calls.each_with_index.map do |call, index|
@@ -123,7 +112,7 @@ module Mistri
       started = Process.clock_gettime(Process::CLOCK_MONOTONIC)
       value = with_rails_executor { invoke(tool, call, context) }
       [value, elapsed(started)]
-    rescue SubscriberError
+    rescue EventDelivery::Failure
       raise
     rescue InvocationTimeout
       content = "Error running tool #{call.name.inspect}: timed out after #{tool.timeout}s. " \
@@ -158,22 +147,25 @@ module Mistri
 
     # Concurrent tools share the caller's sink; sinks are not required to be
     # thread-safe, so forwarded events serialize here.
-    def thread_safe(emit, signal)
-      return nil unless emit
+    def thread_safe(delivery, signal)
+      return nil unless delivery
 
       mutex = Mutex.new
-      failed = false
+      # Already-committed workers may report after a sibling fails delivery;
+      # give all of them the first failure without calling the broken sink.
+      failure = nil
       lambda do |event|
         mutex.synchronize do
-          next false if event.type == :tool_started && (failed || signal&.aborted?)
+          next false if event.type == :tool_started && (failure || signal&.aborted?)
+          raise failure if failure
 
           result = begin
-            emit.call(event)
+            delivery.call(event)
           rescue InvocationTimeout
             raise
-          rescue StandardError => e
-            failed = true
-            raise SubscriberError, e
+          rescue EventDelivery::Failure => e
+            failure = e
+            raise
           end
           event.type == :tool_started ? true : result
         end

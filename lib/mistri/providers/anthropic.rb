@@ -50,17 +50,20 @@ module Mistri
       end
 
       def stream(messages:, system: nil, tools: [], signal: nil, **overrides, &emit)
+        delivery = EventDelivery.wrap(emit)
         model = overrides.fetch(:model, @model)
         assembler = Anthropic::Assembler.new(model: model, catalog_pricing: @catalog_pricing)
-        assembler.start(&emit)
+        assembler.start(&delivery)
         body = build_body(model, messages, system, tools, overrides)
         outcome = @transport.stream_post("/v1/messages", body: body, headers: headers,
                                                          signal: signal) do |record|
           assembler.feed(
-            record, &emit
+            record, &delivery
           )
         end
-        outcome == :aborted ? assembler.abort(&emit) : assembler.finish(&emit)
+        outcome == :aborted ? assembler.abort(&delivery) : assembler.finish(&delivery)
+      rescue EventDelivery::Failure => e
+        raise EventDelivery.unwrap(e, delivery)
       rescue Error => e
         assembler.fail_stream(e, &emit)
       end

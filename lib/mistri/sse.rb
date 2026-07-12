@@ -82,10 +82,12 @@ module Mistri
                                           limit: ToolArguments::MAX_NUMBER_BYTES)
       end
 
-      decoded = JSON.parse(line)
+      decoded = begin
+        JSON.parse(line)
+      rescue JSON::ParserError
+        nil
+      end
       yield decoded if decoded.is_a?(Hash)
-    rescue JSON::ParserError
-      nil
     end
   end
 end

@@ -24,7 +24,9 @@ module Mistri
           end
         rescue StandardError => e
           primary_error = e
-          child.append(Child::TERMINAL, "status" => "failed", "error" => "#{e.class}: #{e.message}")
+          reported = EventDelivery.original(e)
+          child.append(Child::TERMINAL, "status" => "failed",
+                                        "error" => "#{reported.class}: #{reported.message}")
           raise
         ensure
           cleanup_error = release_inline_lease(child, lease) if owns_lease

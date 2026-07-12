@@ -5,6 +5,26 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+- Synchronous event subscribers now propagate the exact exception object even
+  when its class also names an internal failure: provider `Mistri::Error`
+  values, transport I/O and timeout errors, SSE `JSON::ParserError`, hook
+  failures, and automatic-compaction `CompactionError` can no longer be
+  swallowed, retried, folded into an errored assistant turn, or persisted as a
+  policy or tool failure. An owner-scoped private marker preserves provenance
+  through nested inline agents and unwraps only at the boundary that first
+  observed the subscriber. A mid-stream subscriber failure closes the
+  interrupted provider connection before propagating. SSE parse tolerance now
+  covers `JSON.parse` only, never its callback. Genuine provider, hook, tool,
+  and compaction failures keep their existing contracts; configured tool
+  timeouts still include progress delivery. Asynchronous background delivery
+  remains unable to raise into a caller that has already returned. A callback
+  that aborts child execution records the original failure class in its failed
+  terminal and dispatcher diagnostic; a post-terminal report callback failure
+  leaves the already-durable terminal and parent inbox intact and appears in
+  the diagnostic. Active subscribers add one short-lived boundary per provider
+  turn, tool batch, hook phase, or automatic compaction and one method/rescue
+  frame per delivered event, with no parsing, buffering, I/O, or string work on
+  the successful path.
 - Approval decisions now behave as a write-once register over the Session
   store's durable order. The first valid decision is authoritative; repeating
   that value is idempotent, while a conflicting caller receives

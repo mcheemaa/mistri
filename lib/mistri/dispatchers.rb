@@ -35,11 +35,12 @@ module Mistri
         ::Thread.new do
           runner.call
         rescue StandardError => e
+          reported = EventDelivery.original(e)
           # Execution failures have a durable terminal before re-raising;
           # cleanup may raise after a successful terminal. Neither should
           # make a thread die loudly or disappear without a diagnostic.
           warn "mistri: background runner for #{spec["name"].inspect} crashed: " \
-               "#{e.class}: #{e.message}"
+               "#{reported.class}: #{reported.message}"
         end
         nil
       end

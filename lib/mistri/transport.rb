@@ -183,7 +183,7 @@ module Mistri
         # than let the next request read stale frames.
         teardown if aborted
         aborted ? :aborted : nil
-      rescue ResponseTooLargeError, ResponseTooComplexError, ProviderError
+      rescue EventDelivery::Failure, ResponseTooLargeError, ResponseTooComplexError, ProviderError
         teardown
         raise
       rescue IOError, SocketError, SystemCallError, Timeout::Error => e
