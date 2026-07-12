@@ -5,6 +5,37 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+- Anchored `edit_file` changes now compose safely with concurrent writers when
+  their Workspace advertises atomic conditional writes. The new optional
+  contract is `atomic_writes?`, `snapshot(path)`, and
+  `compare_and_write(path, content, expected_revision:)`, with immutable
+  `Mistri::Workspace::Snapshot` values and a public
+  `Mistri::WorkspaceConflictError`. Memory implements the contract under its
+  mutex; the optional Active Record adapter advertises it only for PostgreSQL
+  or an InnoDB table on MySQL2 or Trilogy, using exact-byte SHA-256 revisions,
+  unique-index create-only CAS, and short transactions without requiring
+  `lock_version`. It rejects atomic operations inside a host transaction rather
+  than joining a stale or overlong boundary, validates model identity against
+  the database catalog, restricts atomic scope to owned scalar equality values,
+  and reads the committed row before returning its revision. Single opts in
+  through a host `synchronize:` callback that must enforce the same complete
+  boundary and outer-transaction rule. Directory, MyISAM, and existing custom
+  four-method workspaces retain their documented legacy behavior. `edit_file`
+  applies its existing exact/fuzzy anchor outside any lock and retries only a
+  lost conditional write, up to three total attempts. An unrelated concurrent
+  change is preserved, while a target that no longer matches remains an
+  actionable typed edit failure. Callback, validation, I/O, deadlock, and other
+  host errors are never retried. Tool names and schemas are unchanged. A
+  committed storage transformation produces an explicit
+  read-before-continuing failure instead of a false exact-replacement claim.
+  Atomic editing adds owned snapshot copies, three exact-byte linear hashes,
+  one exact committed-byte comparison, and one conditional commit to the
+  ordinary edit path; Memory also returns an owned read copy. Conflicts add at
+  most two complete reapplications. Active Record capability adds cached schema
+  inspection when the workspace is first bound, outside the edit path. No
+  provider streaming path changes. Dedicated
+  MySQL 8.4/InnoDB and PostgreSQL CI jobs prove real locking, readback, and
+  unique-create behavior while the gem retains zero runtime dependencies.
 - Built-in document reads, searches, and edits now return an explicitly failed
   `ToolResult` when the document is missing or a requested replacement cannot
   be applied. The same actionable text still reaches the model, but lifecycle

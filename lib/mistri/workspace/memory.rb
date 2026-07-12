@@ -1,14 +1,10 @@
 # frozen_string_literal: true
 
+require_relative "../workspace"
+
 module Mistri
-  # The document store agents work in. A workspace maps paths to text and can
-  # live anywhere: memory for tests and ephemeral runs, a directory when disk
-  # exists, the host's database when it does not. The file tools bind to this
-  # port, so fuzzy-editing a MySQL row works exactly like editing a file.
-  #
-  # A backend implements read(path) -> String or nil, write(path, content),
-  # delete(path), and list(prefix = nil) -> [paths].
   module Workspace
+    # A mutex-protected ephemeral document map with atomic conditional writes.
     class Memory
       def initialize
         @documents = {}
@@ -16,12 +12,37 @@ module Mistri
       end
 
       def read(path)
-        @mutex.synchronize { @documents[path.to_s] }
+        @mutex.synchronize { @documents[path.to_s]&.dup }
       end
 
       def write(path, content)
-        @mutex.synchronize { @documents[path.to_s] = content.to_s.dup.freeze }
+        @mutex.synchronize { @documents[path.to_s] = own(content) }
         nil
+      end
+
+      def atomic_writes? = true
+
+      def snapshot(path)
+        @mutex.synchronize do
+          content = @documents[path.to_s]
+          content && Snapshot.for(content)
+        end
+      end
+
+      def compare_and_write(path, content, expected_revision:)
+        @mutex.synchronize do
+          key = path.to_s
+          current = @documents[key]
+          actual = current && Snapshot.for(current).revision
+          unless actual == expected_revision
+            raise WorkspaceConflictError.new(
+              key, expected_revision:, actual_revision: actual
+            )
+          end
+
+          @documents[key] = own(content)
+          Snapshot.for(@documents[key])
+        end
       end
 
       def delete(path)
@@ -35,6 +56,10 @@ module Mistri
           prefix ? keys.select { |key| key.start_with?(prefix.to_s) } : keys
         end
       end
+
+      private
+
+      def own(content) = String.new(content.to_s).freeze
     end
   end
 end
