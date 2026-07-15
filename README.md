@@ -123,6 +123,9 @@ provider that created them; the shared transcript stays provider-neutral.
 
 A tool has a name, description, JSON Schema object, and handler. Independent
 calls in one model turn execute concurrently up to `max_concurrency`.
+`Mistri.web_search` rides the same array to enable the provider's hosted web
+search on all three providers; see
+[Tool contracts](docs/tool-contracts.md#provider-executed-web-search).
 
 ```ruby
 book_hotel = Mistri::Tool.define(

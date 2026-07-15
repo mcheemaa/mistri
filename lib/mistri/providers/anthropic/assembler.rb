@@ -113,12 +113,13 @@ module Mistri
         def message = @message ||= finish
 
         Builder = Struct.new(:kind, :index, :text, :json, :signature, :id, :name, :redacted,
-                             :argument_bytes, :argument_error, :argument_preview, :preview_bytes)
+                             :argument_bytes, :argument_error, :argument_preview, :preview_bytes,
+                             :payload)
         DELTA_KINDS = {
-          "text_delta" => :text,
-          "thinking_delta" => :thinking,
-          "signature_delta" => :thinking,
-          "input_json_delta" => :toolcall
+          "text_delta" => %i[text].freeze,
+          "thinking_delta" => %i[thinking].freeze,
+          "signature_delta" => %i[thinking].freeze,
+          "input_json_delta" => %i[toolcall server_tool_call].freeze
         }.freeze
 
         PREVIEW_EAGER_BYTES = 4 * 1024
@@ -162,14 +163,26 @@ module Mistri
           end
 
           kind = { "text" => :text, "thinking" => :thinking, "redacted_thinking" => :thinking,
-                   "tool_use" => :toolcall }[block["type"]]
+                   "tool_use" => :toolcall, "server_tool_use" => :server_tool_call,
+                   "web_search_tool_result" => :server_tool_result }[block["type"]]
           return unless kind
 
           @current = Builder.new(kind, @blocks.size, +"", +"", nil,
                                  block["id"], block["name"], block["type"] == "redacted_thinking",
                                  0, nil, ToolArguments::EMPTY_OBJECT, 0)
-          @current.signature = block["data"] if @current.redacted
+          seed_current(block, kind)
           emit_event(:"#{kind}_start", content_index: @current.index, &)
+        end
+
+        # A web_search_tool_result block arrives whole with its start event:
+        # there are no deltas, and it pairs by the server tool call's id.
+        def seed_current(block, kind)
+          @current.signature = block["data"] if @current.redacted
+          return unless kind == :server_tool_result
+
+          @current.id = block["tool_use_id"]
+          @current.name = "web_search"
+          @current.payload = block["content"]
         end
 
         def delta_block(record, &)
@@ -184,7 +197,7 @@ module Mistri
           delta = record["delta"] || {}
           expected = DELTA_KINDS[delta["type"]]
           return unless expected
-          unless @current.kind == expected
+          unless expected.include?(@current.kind)
             return protocol_error("stream sent a delta outside its matching content block", &)
           end
 
@@ -228,6 +241,8 @@ module Mistri
 
         def input_delta(fragment, &)
           append_arguments(@current, fragment.to_s)
+          return unless @current.kind == :toolcall
+
           emit_event(:toolcall_delta, content_index: @current.index, delta: fragment, &)
         end
 
@@ -309,8 +324,8 @@ module Mistri
           kind = built.is_a?(ToolCall) ? :toolcall : built.type
           fields = { content_index: @blocks.size - 1 }
           fields[:tool_call] = built if built.is_a?(ToolCall)
-          fields[:content] = builder_text(built) unless built.is_a?(ToolCall)
-          emit_event(:"#{kind}_end", **fields, &)
+          fields[:content] = builder_text(built)
+          emit_event(:"#{kind}_end", **fields.compact, &)
           built
         end
 
@@ -336,7 +351,22 @@ module Mistri
             ToolCall.new(id: builder.id, name: builder.name,
                          arguments:, signature: nil, arguments_error: error,
                          canonicalize: final)
+          when :server_tool_call, :server_tool_result
+            server_block(builder, complete: final && !interrupted)
           end
+        end
+
+        # The provider already executed a server tool; malformed or truncated
+        # input degrades to an empty object rather than failing the turn.
+        def server_block(builder, complete:)
+          if builder.kind == :server_tool_result
+            return Content::ServerToolResult.new(tool_call_id: builder.id, name: builder.name,
+                                                 payload: builder.payload)
+          end
+
+          arguments, = complete && !builder.argument_error ? parsed_arguments(builder.json) : [{}]
+          arguments = {} unless arguments.is_a?(Hash)
+          Content::ServerToolCall.new(id: builder.id, name: builder.name, arguments:)
         end
 
         def parsed_arguments(json)
@@ -346,7 +376,9 @@ module Mistri
         end
 
         def builder_text(block)
-          block.respond_to?(:text) ? block.text : block.thinking
+          return block.text if block.respond_to?(:text)
+
+          block.respond_to?(:thinking) ? block.thinking : nil
         end
 
         def emit_event(type, **fields, &emit)

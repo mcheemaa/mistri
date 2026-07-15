@@ -2,7 +2,7 @@
 
 require_relative "test_helper"
 
-class TestAnthropicAssembler < Minitest::Test
+class TestAnthropicAssembler < Minitest::Test # rubocop:disable Metrics/ClassLength -- one wire fold
   def test_folds_a_thinking_text_turn_with_usage_and_signature
     events = []
     message = drive(events, [
@@ -411,6 +411,69 @@ class TestAnthropicAssembler < Minitest::Test
     assert_match(/upstream connect timeout/, message.error_message)
   end
 
+  def test_folds_a_hosted_web_search_turn_into_server_tool_blocks
+    events = []
+    message = drive(events, [
+                      { "type" => "content_block_start", "index" => 0,
+                        "content_block" => { "type" => "server_tool_use", "id" => "srvtoolu_1",
+                                             "name" => "web_search" } },
+                      { "type" => "content_block_delta", "index" => 0,
+                        "delta" => { "type" => "input_json_delta",
+                                     "partial_json" => '{"query": "ruby 3.4"}' } },
+                      { "type" => "content_block_stop", "index" => 0 },
+                      { "type" => "content_block_start", "index" => 1,
+                        "content_block" => {
+                          "type" => "web_search_tool_result", "tool_use_id" => "srvtoolu_1",
+                          "content" => [{ "type" => "web_search_result",
+                                          "url" => "https://ruby-lang.org" }]
+                        } },
+                      { "type" => "content_block_stop", "index" => 1 },
+                      { "type" => "content_block_start", "index" => 2,
+                        "content_block" => { "type" => "text" } },
+                      { "type" => "content_block_delta", "index" => 2,
+                        "delta" => { "type" => "text_delta", "text" => "Released" } },
+                      { "type" => "content_block_stop", "index" => 2 },
+                      { "type" => "message_delta", "delta" => { "stop_reason" => "end_turn" },
+                        "usage" => { "output_tokens" => 9 } },
+                      { "type" => "message_stop" }
+                    ])
+
+    call, result, text = message.content
+
+    assert_equal Mistri::Content::ServerToolCall.new(id: "srvtoolu_1", name: "web_search",
+                                                     arguments: { "query" => "ruby 3.4" }), call
+    assert_equal "srvtoolu_1", result.tool_call_id
+    assert_equal [{ "type" => "web_search_result", "url" => "https://ruby-lang.org" }],
+                 result.payload
+    assert_equal "Released", text.text
+    assert_empty message.tool_calls
+    server_events = events.map(&:type).select { |type| type.start_with?("server_tool") }
+
+    assert_equal %i[server_tool_call_start server_tool_call_end
+                    server_tool_result_start server_tool_result_end], server_events
+  end
+
+  def test_a_web_search_error_result_still_folds_into_the_block
+    events = []
+    message = drive(events, [
+                      { "type" => "content_block_start", "index" => 0,
+                        "content_block" => {
+                          "type" => "web_search_tool_result", "tool_use_id" => "srvtoolu_9",
+                          "content" => { "type" => "web_search_tool_result_error",
+                                         "error_code" => "max_uses_exceeded" }
+                        } },
+                      { "type" => "content_block_stop", "index" => 0 },
+                      { "type" => "message_delta", "delta" => { "stop_reason" => "end_turn" },
+                        "usage" => { "output_tokens" => 1 } },
+                      { "type" => "message_stop" }
+                    ])
+
+    result = message.content.first
+
+    assert_equal "max_uses_exceeded", result.payload["error_code"]
+    assert_equal :stop, message.stop_reason
+  end
+
   private
 
   def tool_argument_limit
@@ -445,4 +508,4 @@ class TestAnthropicAssembler < Minitest::Test
     records.each { |record| assembler.feed(record, &emit) }
     assembler.finish(&emit)
   end
-end
+end # rubocop:enable Metrics/ClassLength

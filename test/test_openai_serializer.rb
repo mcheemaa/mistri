@@ -98,4 +98,40 @@ class TestOpenAISerializer < Minitest::Test
     assert_equal "input_text", item[:content].first[:type]
     assert_match(%r{\Adata:image/png;base64,}, item[:content].last[:image_url])
   end
+
+  def test_web_search_serializes_as_the_hosted_search_tool
+    wire = SERIALIZER.tools([{ name: "read", description: "d", input_schema: {} },
+                             Mistri.web_search])
+
+    assert_equal({ type: "web_search" }, wire.last)
+    assert_equal "function", wire.first[:type]
+  end
+
+  def test_a_web_search_call_replays_verbatim_from_its_signature
+    raw = { "type" => "web_search_call", "id" => "ws_1", "status" => "completed",
+            "action" => { "type" => "search", "query" => "ruby" } }
+    call = Mistri::Content::ServerToolCall.new(id: "ws_1", name: "web_search",
+                                               arguments: raw["action"],
+                                               signature: JSON.generate(raw))
+    items = SERIALIZER.assistant_items(
+      Mistri::Message.assistant(content: [call, Mistri::Content::Text.new(text: "found")],
+                                provider: :openai)
+    )
+
+    assert_equal raw, items.first
+    assert_equal "message", items.last[:type]
+  end
+
+  def test_a_web_search_call_without_its_item_drops_from_replay
+    unsigned = Mistri::Content::ServerToolCall.new(id: "ws_1", name: "web_search", arguments: {})
+    foreign = Mistri::Content::ServerToolCall.new(id: "srvtoolu_1", name: "web_search",
+                                                  arguments: {}, signature: "not json")
+
+    assert_empty SERIALIZER.assistant_items(
+      Mistri::Message.assistant(content: [unsigned], provider: :openai)
+    )
+    assert_empty SERIALIZER.assistant_items(
+      Mistri::Message.assistant(content: [foreign], provider: :anthropic)
+    )
+  end
 end

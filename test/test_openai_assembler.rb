@@ -488,6 +488,43 @@ class TestOpenAIAssembler < Minitest::Test # rubocop:disable Metrics/ClassLength
     assert_equal %i[toolcall_start toolcall_delta toolcall_end error], events.map(&:type)
   end
 
+  def test_folds_a_web_search_call_into_a_server_tool_block
+    events = []
+    item = { "type" => "web_search_call", "id" => "ws_1", "status" => "completed",
+             "action" => { "type" => "search", "query" => "ruby 3.4" } }
+    message = drive(events, [
+                      { "type" => "response.output_item.added", "output_index" => 0,
+                        "item" => { "type" => "web_search_call", "id" => "ws_1" } },
+                      { "type" => "response.output_item.done", "output_index" => 0,
+                        "item" => item },
+                      { "type" => "response.output_item.added", "output_index" => 1,
+                        "item" => { "type" => "message", "id" => "msg_1" } },
+                      { "type" => "response.output_text.delta", "output_index" => 1,
+                        "item_id" => "msg_1", "delta" => "Released" },
+                      { "type" => "response.output_item.done", "output_index" => 1,
+                        "item" => { "type" => "message", "id" => "msg_1",
+                                    "content" => [{ "type" => "output_text",
+                                                    "text" => "Released" }] } },
+                      { "type" => "response.completed",
+                        "response" => { "status" => "completed",
+                                        "usage" => { "input_tokens" => 5,
+                                                     "output_tokens" => 7 } } }
+                    ])
+
+    call, text = message.content
+
+    assert_equal "ws_1", call.id
+    assert_equal "web_search", call.name
+    assert_equal({ "type" => "search", "query" => "ruby 3.4" }, call.arguments)
+    assert_equal item, JSON.parse(call.signature)
+    assert_equal "Released", text.text
+    assert_empty message.tool_calls
+    assert_equal :stop, message.stop_reason
+    server_events = events.map(&:type).select { |type| type.start_with?("server_tool") }
+
+    assert_equal %i[server_tool_call_start server_tool_call_end], server_events
+  end
+
   private
 
   def tool_argument_limit

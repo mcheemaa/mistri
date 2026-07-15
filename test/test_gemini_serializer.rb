@@ -190,4 +190,24 @@ class TestGeminiSerializer < Minitest::Test
            "the tool turn carries only functionResponse parts")
     assert_equal [{ text: "make it blue" }], contents.last[:parts]
   end
+
+  def test_web_search_serializes_as_google_search_grounding
+    mixed = SERIALIZER.tools([{ name: "read", description: "d", input_schema: {} },
+                              Mistri.web_search])
+
+    assert_equal %i[functionDeclarations googleSearch], mixed.map(&:keys).flatten
+    assert_equal [{ googleSearch: {} }], SERIALIZER.tools([Mistri.web_search])
+  end
+
+  def test_server_tool_blocks_never_replay_to_gemini
+    call = Mistri::Content::ServerToolCall.new(id: "ws_1", name: "web_search", arguments: {})
+    result = Mistri::Content::ServerToolResult.new(tool_call_id: "g", name: "google_search",
+                                                   payload: { "webSearchQueries" => ["ruby"] })
+    parts = SERIALIZER.assistant_parts(
+      Mistri::Message.assistant(content: [call, result, Mistri::Content::Text.new(text: "hi")],
+                                provider: :gemini)
+    )
+
+    assert_equal [{ text: "hi" }], parts
+  end
 end

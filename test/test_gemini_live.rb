@@ -143,4 +143,24 @@ class TestGeminiLive < Minitest::Test
   ensure
     provider&.close
   end
+
+  def test_a_hosted_web_search_turn_folds_grounding_and_answers
+    provider = Mistri::Providers::Gemini.new(api_key: ENV.fetch("GEMINI_API_KEY"))
+    events = []
+
+    message = provider.stream(
+      messages: [Mistri::Message.user(
+        "Search the web for the current stable Ruby version and answer in one sentence."
+      )],
+      tools: [Mistri.web_search]
+    ) { |event| events << event }
+
+    assert_equal :stop, message.stop_reason
+    assert message.content.any?(Mistri::Content::ServerToolResult),
+           "expected a grounding block from the hosted search"
+    assert events.any? { |e| e.type == :server_tool_result_start },
+           "expected a server tool event"
+  ensure
+    provider&.close
+  end
 end

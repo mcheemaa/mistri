@@ -47,11 +47,15 @@ module Mistri
       @session = session || Session.new(store: Stores::Memory.new)
       skills = skills.is_a?(String) ? Skills.load(skills) : Array(skills)
       @system = Skills.amend(system, skills)
+      # Provider-executed tools have no handler to run: they skip the tool
+      # contracts and ride to the provider alongside the compiled specs.
+      hosted, tools = Array(tools).partition { |tool| tool.is_a?(WebSearch) }
       @tools = skills.empty? ? tools : tools + [Skills.reader(skills)]
       @tools_by_name = @tools.to_h { |tool| [tool.name, tool] }
       raise ConfigurationError, "duplicate tool names" if @tools_by_name.length != @tools.length
 
       @tool_specs, @external_tool_validators = compile_tool_contracts
+      @tool_specs = (@tool_specs + hosted.uniq).freeze
 
       @budget = budget || Budget.new
       @budget.validate_provider!(@provider)

@@ -73,6 +73,9 @@ module Mistri
           Array(candidate.dig("content", "parts")).each_with_index do |part, index|
             fold_part(part, part_boundary: index.positive?, &)
           end
+          # Grounding accumulates across records; the last snapshot is the
+          # complete one and folds into a block when the stream finishes.
+          @grounding = candidate["groundingMetadata"] if candidate["groundingMetadata"]
           @finish_reason = candidate["finishReason"] if candidate["finishReason"]
           @terminal = true if @finish_reason || @block_reason
           close_current(&) if @terminal
@@ -97,6 +100,7 @@ module Mistri
           end
 
           close_current(&emit)
+          fold_grounding(&emit)
           invalidate_cost unless @usage_authoritative
           @message = assemble(stop_reason: stop_reason)
           emit&.call(Event.new(type: :done, reason: @message.stop_reason, message: @message))
@@ -218,6 +222,20 @@ module Mistri
           else
             Content::Thinking.new(thinking: @current.text, signature: @current.signature)
           end
+        end
+
+        # Search grounding has no part of its own: it rides the candidate as
+        # metadata, so it lands as one block once the content is complete.
+        def fold_grounding(&)
+          return unless @grounding
+
+          block = Content::ServerToolResult.new(tool_call_id: "google_search",
+                                                name: "google_search", payload: @grounding)
+          index = @blocks.size
+          emit_event(:server_tool_result_start, content_index: index, &)
+          @blocks << block
+          @grounding = nil
+          emit_event(:server_tool_result_end, content_index: index, &)
         end
 
         # A blocked prompt arrives as promptFeedback with no candidates; a

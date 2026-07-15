@@ -74,6 +74,35 @@ module Mistri
       def to_h = { type: :image, data:, mime_type: }
     end
 
+    # A tool the provider executed on its own side (hosted web search, say).
+    # The loop never runs it and it never pairs with a tool-result message;
+    # it exists so the turn replays. `signature` carries the opaque provider
+    # payload some providers need to replay the block verbatim.
+    ServerToolCall = Data.define(:id, :name, :arguments, :signature) do
+      def initialize(id:, name:, arguments: {}, signature: nil)
+        signature = Content.freeze_string(signature) if signature.is_a?(String)
+        super(id: Content.freeze_string(id), name: Content.freeze_string(name),
+              arguments:, signature:)
+      end
+
+      def type = :server_tool_call
+
+      def to_h = { type: :server_tool_call, id:, name:, arguments:, signature: }.compact
+    end
+
+    # What a provider-executed tool returned, preserved in the provider's own
+    # shape so the turn replays without the loop knowing it.
+    ServerToolResult = Data.define(:tool_call_id, :name, :payload) do
+      def initialize(tool_call_id:, name:, payload: nil)
+        super(tool_call_id: Content.freeze_string(tool_call_id),
+              name: Content.freeze_string(name), payload:)
+      end
+
+      def type = :server_tool_result
+
+      def to_h = { type: :server_tool_result, tool_call_id:, name:, payload: }.compact
+    end
+
     # Coerce a value into a list of blocks: nil becomes none, a String becomes
     # one Text block, blocks pass through, arrays may mix all of these.
     def self.wrap(content)
@@ -97,6 +126,12 @@ module Mistri
         ToolCall.new(id: h["id"], name: h["name"], arguments:,
                      signature: h["signature"], arguments_error: h["arguments_error"],
                      provider_call_id: h["provider_call_id"])
+      when "server_tool_call"
+        ServerToolCall.new(id: h["id"], name: h["name"],
+                           arguments: h.fetch("arguments", {}), signature: h["signature"])
+      when "server_tool_result"
+        ServerToolResult.new(tool_call_id: h["tool_call_id"], name: h["name"],
+                             payload: h["payload"])
       else raise ArgumentError, "unknown content block type #{h["type"].inspect}"
       end
     end

@@ -100,4 +100,41 @@ class TestAnthropicSerializer < Minitest::Test
     refute SERIALIZER.tools([{ name: "read", description: "d", input_schema: {} }])
                      .first.key?(:eager_input_streaming)
   end
+
+  def test_web_search_serializes_as_the_hosted_search_tool
+    wire = SERIALIZER.tools([{ name: "read", description: "d", input_schema: {} },
+                             Mistri.web_search])
+
+    assert_equal({ type: "web_search_20250305", name: "web_search" }, wire.last)
+    assert_equal "read", wire.first[:name]
+  end
+
+  def test_server_tool_blocks_replay_verbatim_on_own_turns
+    call = Mistri::Content::ServerToolCall.new(id: "srvtoolu_1", name: "web_search",
+                                               arguments: { "query" => "ruby" })
+    result = Mistri::Content::ServerToolResult.new(
+      tool_call_id: "srvtoolu_1", name: "web_search",
+      payload: [{ "type" => "web_search_result", "url" => "https://ruby-lang.org" }]
+    )
+    content = [call, result, Mistri::Content::Text.new(text: "found it")]
+    history = [Mistri::Message.assistant(content: content, provider: :anthropic)]
+
+    blocks = SERIALIZER.messages(history).first[:content]
+
+    assert_equal({ type: "server_tool_use", id: "srvtoolu_1", name: "web_search",
+                   input: { "query" => "ruby" } }, blocks[0])
+    assert_equal({ type: "web_search_tool_result", tool_use_id: "srvtoolu_1",
+                   content: [{ "type" => "web_search_result", "url" => "https://ruby-lang.org" }] },
+                 blocks[1])
+  end
+
+  def test_server_tool_blocks_from_another_provider_drop_from_replay
+    call = Mistri::Content::ServerToolCall.new(id: "ws_1", name: "web_search", arguments: {})
+    history = [Mistri::Message.assistant(content: [call, Mistri::Content::Text.new(text: "hi")],
+                                         provider: :openai)]
+
+    blocks = SERIALIZER.messages(history).first[:content]
+
+    assert_equal [{ type: "text", text: "hi" }], blocks
+  end
 end

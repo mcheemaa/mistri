@@ -31,8 +31,12 @@ module Mistri
           wire
         end
 
+        WEB_SEARCH_TOOL = { type: "web_search_20250305", name: "web_search" }.freeze
+
         def tools(definitions)
           definitions.map do |tool|
+            next WEB_SEARCH_TOOL if tool.is_a?(WebSearch)
+
             spec = tool.transform_keys(&:to_sym)
             wire = { name: spec[:name], description: spec[:description],
                      input_schema: spec[:input_schema] }
@@ -71,9 +75,27 @@ module Mistri
           when ToolCall
             { type: "tool_use", id: block.id, name: block.name,
               input: ToolArguments.replay_object(block) }
+          when Content::ServerToolCall then server_tool_call_block(block, own:)
+          when Content::ServerToolResult then server_tool_result_block(block, own:)
           else
             raise SchemaError, "cannot serialize #{block.class} for Anthropic"
           end
+        end
+
+        # Server-tool blocks replay only to the provider that ran them;
+        # another provider's hosted searches drop, like unsigned thinking.
+        def server_tool_call_block(block, own:)
+          return nil unless own
+
+          input = block.arguments.is_a?(Hash) ? block.arguments : {}
+          { type: "server_tool_use", id: block.id, name: block.name, input: input }
+        end
+
+        def server_tool_result_block(block, own:)
+          return nil unless own && block.name == "web_search"
+
+          { type: "web_search_tool_result", tool_use_id: block.tool_call_id,
+            content: block.payload }
         end
 
         # The API rejects empty text content blocks.

@@ -96,7 +96,8 @@ module Mistri
                              :argument_bytes, :argument_error,
                              :argument_preview, :preview_bytes, :item_id, :call_id, :name)
         KINDS = { "message" => :text, "reasoning" => :thinking,
-                  "function_call" => :toolcall }.freeze
+                  "function_call" => :toolcall,
+                  "web_search_call" => :server_tool_call }.freeze
         STREAM_EVENTS = %w[
           response.output_item.added response.output_text.delta
           response.reasoning_summary_text.delta response.refusal.delta
@@ -264,10 +265,14 @@ module Mistri
           @current = nil
           fields = { content_index: index }
           fields[:tool_call] = block if block.is_a?(ToolCall)
-          unless block.is_a?(ToolCall)
-            fields[:content] = block.respond_to?(:text) ? block.text : block.thinking
-          end
+          fields[:content] = block_text(block)
           emit_event(:"#{kind}_end", **fields.compact, &)
+        end
+
+        def block_text(block)
+          return block.text if block.respond_to?(:text)
+
+          block.respond_to?(:thinking) ? block.thinking : nil
         end
 
         # A refusal is an explicit provider verdict outside the requested
@@ -316,6 +321,13 @@ module Mistri
                                end
             ToolCall.new(id: item["call_id"], name: item["name"],
                          arguments:, signature: item["id"], arguments_error: error)
+          when :server_tool_call
+            # The provider already ran the search; the signature keeps the
+            # whole item so replay resends it verbatim.
+            action = item["action"]
+            Content::ServerToolCall.new(id: item["id"], name: "web_search",
+                                        arguments: action.is_a?(Hash) ? action : {},
+                                        signature: JSON.generate(item))
           end
         end
 
@@ -426,14 +438,14 @@ module Mistri
 
           builder = @current
           block = interrupted ? interrupted_block(builder) : partial_block(builder, final: true)
-          @blocks << block
           @current = nil
+          return nil unless block
+
+          @blocks << block
           fields = { content_index: builder.index }
           fields[:tool_call] = block if block.is_a?(ToolCall)
-          unless block.is_a?(ToolCall)
-            fields[:content] = block.respond_to?(:text) ? block.text : block.thinking
-          end
-          emit_event(:"#{builder.kind}_end", **fields, &)
+          fields[:content] = block_text(block)
+          emit_event(:"#{builder.kind}_end", **fields.compact, &)
           block
         end
 
@@ -444,6 +456,11 @@ module Mistri
           when :toolcall
             ToolCall.new(id: builder.call_id, name: builder.name, arguments: nil,
                          signature: builder.item_id, arguments_error: "incomplete")
+          when :server_tool_call
+            # Without its done item the search cannot replay; it keeps its
+            # place in the transcript without a signature.
+            Content::ServerToolCall.new(id: builder.item_id.to_s, name: "web_search",
+                                        arguments: {})
           end
         end
 
@@ -465,6 +482,11 @@ module Mistri
 
             ToolCall.new(id: "pending", name: "pending",
                          arguments: builder.argument_preview, canonicalize: false)
+          when :server_tool_call
+            return nil if final
+
+            Content::ServerToolCall.new(id: builder.item_id.to_s, name: "web_search",
+                                        arguments: {})
           end
         end
 
