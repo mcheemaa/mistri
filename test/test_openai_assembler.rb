@@ -525,6 +525,41 @@ class TestOpenAIAssembler < Minitest::Test # rubocop:disable Metrics/ClassLength
     assert_equal %i[server_tool_call_start server_tool_call_end], server_events
   end
 
+  def test_a_web_search_call_without_an_action_object_degrades_to_empty_arguments
+    item = { "type" => "web_search_call", "id" => "ws_2", "status" => "completed" }
+    message = drive([], [
+                      { "type" => "response.output_item.added", "output_index" => 0,
+                        "item" => { "type" => "web_search_call", "id" => "ws_2" } },
+                      { "type" => "response.output_item.done", "output_index" => 0,
+                        "item" => item },
+                      { "type" => "response.completed",
+                        "response" => { "status" => "completed" } }
+                    ])
+    call = message.content.first
+
+    assert_equal "web_search", call.name
+    assert_empty call.arguments
+    assert_equal item, JSON.parse(call.signature)
+  end
+
+  def test_an_interrupted_web_search_call_keeps_its_place_without_a_signature
+    events = []
+    message = drive(events, [
+                      { "type" => "response.output_item.added", "output_index" => 0,
+                        "item" => { "type" => "web_search_call", "id" => "ws_3" } },
+                      { "type" => "error", "code" => "server_error", "message" => "boom" }
+                    ])
+    call = message.content.first
+
+    assert_equal "web_search", call.name
+    assert_empty call.arguments
+    assert_nil call.signature
+    assert_equal :error, message.stop_reason
+    server_events = events.map(&:type).select { |type| type.start_with?("server_tool") }
+
+    assert_equal %i[server_tool_call_start server_tool_call_end], server_events
+  end
+
   private
 
   def tool_argument_limit

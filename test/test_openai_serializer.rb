@@ -124,12 +124,18 @@ class TestOpenAISerializer < Minitest::Test
 
   def test_a_web_search_call_without_its_item_drops_from_replay
     unsigned = Mistri::Content::ServerToolCall.new(id: "ws_1", name: "web_search", arguments: {})
+    malformed = Mistri::Content::ServerToolCall.new(id: "ws_2", name: "web_search",
+                                                    arguments: {}, signature: "not json")
+    non_item = Mistri::Content::ServerToolCall.new(id: "ws_3", name: "web_search",
+                                                   arguments: {}, signature: JSON.generate([1, 2]))
     foreign = Mistri::Content::ServerToolCall.new(id: "srvtoolu_1", name: "web_search",
-                                                  arguments: {}, signature: "not json")
+                                                  arguments: {}, signature: "sig_abc")
 
-    assert_empty SERIALIZER.assistant_items(
-      Mistri::Message.assistant(content: [unsigned], provider: :openai)
-    )
+    [unsigned, malformed, non_item].each do |block|
+      assert_empty SERIALIZER.assistant_items(
+        Mistri::Message.assistant(content: [block], provider: :openai)
+      )
+    end
     assert_empty SERIALIZER.assistant_items(
       Mistri::Message.assistant(content: [foreign], provider: :anthropic)
     )

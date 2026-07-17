@@ -137,4 +137,26 @@ class TestAnthropicSerializer < Minitest::Test
 
     assert_equal [{ type: "text", text: "hi" }], blocks
   end
+
+  def test_a_server_tool_call_with_non_object_arguments_replays_as_an_empty_object
+    call = Mistri::Content::ServerToolCall.new(id: "srvtoolu_2", name: "web_search",
+                                               arguments: "not a hash")
+    history = [Mistri::Message.assistant(content: [call], provider: :anthropic)]
+
+    blocks = SERIALIZER.messages(history).first[:content]
+
+    assert_equal({ type: "server_tool_use", id: "srvtoolu_2", name: "web_search", input: {} },
+                 blocks[0])
+  end
+
+  def test_a_non_web_search_server_result_drops_from_replay
+    result = Mistri::Content::ServerToolResult.new(tool_call_id: "srvtoolu_3",
+                                                   name: "code_execution", payload: [])
+    history = [Mistri::Message.assistant(content: [result, Mistri::Content::Text.new(text: "hi")],
+                                         provider: :anthropic)]
+
+    blocks = SERIALIZER.messages(history).first[:content]
+
+    assert_equal [{ type: "text", text: "hi" }], blocks
+  end
 end

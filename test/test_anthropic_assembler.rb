@@ -474,6 +474,25 @@ class TestAnthropicAssembler < Minitest::Test # rubocop:disable Metrics/ClassLen
     assert_equal :stop, message.stop_reason
   end
 
+  def test_a_hosted_search_with_non_object_input_degrades_to_empty_arguments
+    message = drive([], [
+                      { "type" => "content_block_start", "index" => 0,
+                        "content_block" => { "type" => "server_tool_use", "id" => "srvtoolu_2",
+                                             "name" => "web_search" } },
+                      { "type" => "content_block_delta", "index" => 0,
+                        "delta" => { "type" => "input_json_delta",
+                                     "partial_json" => "[1, 2]" } },
+                      { "type" => "content_block_stop", "index" => 0 },
+                      { "type" => "message_delta", "delta" => { "stop_reason" => "end_turn" },
+                        "usage" => { "output_tokens" => 1 } },
+                      { "type" => "message_stop" }
+                    ])
+    call = message.content.first
+
+    assert_equal "web_search", call.name
+    assert_empty call.arguments
+  end
+
   private
 
   def tool_argument_limit
