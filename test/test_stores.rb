@@ -86,14 +86,27 @@ if defined?(Mistri::Stores::ActiveRecord)
       @rows = []
       @mutex = Mutex.new
       @before_insert = nil
-      @read_uncached = false
+      @caching = false
+      @cache = nil
     end
 
-    attr_reader :read_uncached
+    # Simulates Rails' per-job query cache: while caching, identical reads
+    # are served from the first snapshot until a write through this model
+    # clears it or an uncached window bypasses it.
+    def cache
+      @caching = true
+      yield
+    ensure
+      @caching = false
+      @cache = nil
+    end
 
     def uncached
-      @read_uncached = true
+      was_caching = @caching
+      @caching = false
       yield
+    ensure
+      @caching = was_caching
     end
 
     # Runs inside the insert lock, before uniqueness is checked: a hook a
@@ -103,11 +116,19 @@ if defined?(Mistri::Stores::ActiveRecord)
     end
 
     def where(session_id:)
+      if @caching
+        @cache ||= {}
+        rows = @cache[session_id] ||=
+          @mutex.synchronize { @rows.select { |row| row.session_id == session_id }.dup }
+        return Scope.new(rows)
+      end
+
       rows = @mutex.synchronize { @rows.select { |row| row.session_id == session_id }.dup }
       Scope.new(rows)
     end
 
     def create!(session_id:, position:, payload:)
+      @cache = nil
       @mutex.synchronize do
         if (hook = @before_insert)
           @before_insert = nil
@@ -147,12 +168,16 @@ if defined?(Mistri::Stores::ActiveRecord)
       @store = Mistri::Stores::ActiveRecord.new(@model)
     end
 
-    def test_load_reads_past_the_query_cache
+    def test_load_sees_appends_from_other_processes_despite_the_query_cache
       @store.append("s", { "type" => "message" })
 
-      @store.load("s")
+      @model.cache do
+        assert_equal 1, @store.load("s").size
 
-      assert @model.read_uncached
+        @model.insert_bare("s", 2)
+
+        assert_equal 2, @store.load("s").size
+      end
     end
 
     def test_appends_and_loads_in_position_order

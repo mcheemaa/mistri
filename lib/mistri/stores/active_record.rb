@@ -55,6 +55,8 @@ module Mistri
       # Other processes append to a session by design, and hosts poll these
       # reads inside jobs where Rails caches repeated identical queries, so
       # a cached read would never see a child's report land. Read past it.
+      # Only past Rails' cache: an open REPEATABLE READ transaction still
+      # pins its snapshot, so never poll from inside one.
       def load(id)
         @model.uncached do
           @model.where(session_id: id).pluck(:position, :payload)

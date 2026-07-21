@@ -105,6 +105,11 @@ if defined?(Mistri::Workspace::ActiveRecord)
 
     def where(**criteria) = Relation.new(self, criteria)
     def lock = Locked.new(self)
+
+    def uncached
+      yield
+    end
+
     def table_name = "atomic_documents"
     def primary_key = "id"
 
@@ -456,6 +461,91 @@ if defined?(Mistri::Workspace::ActiveRecord)
       assert_match(/cannot join an open transaction/, error.message)
     ensure
       @model.connection.transaction_open = false
+    end
+  end
+end
+
+if defined?(Mistri::Workspace::ActiveRecord)
+  # The smallest model that can lie the way Rails' query cache lies: while
+  # caching, identical reads serve the first snapshot until an uncached
+  # window bypasses it. Writes here stand for another process's writes, so
+  # they do not clear the cache.
+  class CachingDocumentModel
+    class Relation
+      def initialize(rows) = @rows = rows
+
+      def pick(column) = @rows.first&.fetch(column, nil)
+
+      def pluck(column) = @rows.map { |row| row.fetch(column) }
+    end
+
+    def initialize
+      @rows = []
+      @caching = false
+      @cache = nil
+    end
+
+    def insert_out_of_band(path, content)
+      @rows << { path: path, content: content }
+    end
+
+    def cache
+      @caching = true
+      yield
+    ensure
+      @caching = false
+      @cache = nil
+    end
+
+    def uncached
+      was_caching = @caching
+      @caching = false
+      yield
+    ensure
+      @caching = was_caching
+    end
+
+    def where(**criteria)
+      if @caching
+        @cache ||= {}
+        return Relation.new(@cache[criteria] ||= select_rows(criteria))
+      end
+
+      Relation.new(select_rows(criteria))
+    end
+
+    private
+
+    def select_rows(criteria)
+      path = criteria[:path]
+      path ? @rows.select { |row| row[:path] == path }.dup : @rows.dup
+    end
+  end
+
+  class TestWorkspaceQueryCache < Minitest::Test
+    def setup
+      @model = CachingDocumentModel.new
+      @workspace = Mistri::Workspace::ActiveRecord.new(@model)
+    end
+
+    def test_read_sees_writes_from_other_processes_despite_the_query_cache
+      @model.cache do
+        assert_nil @workspace.read("index.html")
+
+        @model.insert_out_of_band("index.html", "<h1>Draft</h1>")
+
+        assert_equal "<h1>Draft</h1>", @workspace.read("index.html")
+      end
+    end
+
+    def test_list_sees_writes_from_other_processes_despite_the_query_cache
+      @model.cache do
+        assert_empty @workspace.list
+
+        @model.insert_out_of_band("notes.md", "notes")
+
+        assert_equal ["notes.md"], @workspace.list
+      end
     end
   end
 end
