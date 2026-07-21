@@ -20,6 +20,11 @@ module Mistri
     #     t.timestamps
     #   end
     #   add_index :mistri_documents, [:session_id, :path], unique: true
+    #
+    # Reads run uncached: other processes write documents by design, and a
+    # cached read inside a job would serve the job's first snapshot forever.
+    # Uncached only defeats Rails' cache; an open REPEATABLE READ transaction
+    # still pins what reads see, so do not read from inside one.
     class ActiveRecord
       MYSQL_ADAPTERS = %w[Mysql2 Trilogy].freeze
       private_constant :MYSQL_ADAPTERS
@@ -42,7 +47,7 @@ module Mistri
       end
 
       def read(path)
-        @model.where(**@scope, path: path.to_s).pick(:content)
+        @model.uncached { @model.where(**@scope, path: path.to_s).pick(:content) }
       end
 
       def write(path, content)
@@ -60,7 +65,7 @@ module Mistri
 
       def snapshot(path)
         verify_atomic_context!
-        content = relation(path).pick(:content)
+        content = @model.uncached { relation(path).pick(:content) }
         content.nil? ? nil : Snapshot.for(content.to_s)
       end
 
@@ -90,7 +95,7 @@ module Mistri
       end
 
       def list(prefix = nil)
-        paths = @model.where(**@scope).pluck(:path).sort
+        paths = @model.uncached { @model.where(**@scope).pluck(:path) }.sort
         prefix ? paths.select { |p| p.start_with?(prefix.to_s) } : paths
       end
 
