@@ -5,6 +5,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [0.6.1] - 2026-07-21
+
 - The ActiveRecord store and workspace read past the host's query cache.
   Rails keeps the cache on for a job's whole span and serves repeated
   identical queries from it, so a parent polling for a child's report inside
@@ -880,7 +882,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 - Reserved the gem name.
 
-[Unreleased]: https://github.com/mcheemaa/mistri/compare/v0.6.0...HEAD
+[Unreleased]: https://github.com/mcheemaa/mistri/compare/v0.6.1...HEAD
+[0.6.1]: https://github.com/mcheemaa/mistri/compare/v0.6.0...v0.6.1
 [0.6.0]: https://github.com/mcheemaa/mistri/compare/v0.5.0...v0.6.0
 [0.5.0]: https://github.com/mcheemaa/mistri/compare/v0.4.1...v0.5.0
 [0.4.1]: https://github.com/mcheemaa/mistri/compare/v0.4.0...v0.4.1
