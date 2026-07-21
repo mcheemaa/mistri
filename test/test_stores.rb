@@ -86,6 +86,14 @@ if defined?(Mistri::Stores::ActiveRecord)
       @rows = []
       @mutex = Mutex.new
       @before_insert = nil
+      @read_uncached = false
+    end
+
+    attr_reader :read_uncached
+
+    def uncached
+      @read_uncached = true
+      yield
     end
 
     # Runs inside the insert lock, before uniqueness is checked: a hook a
@@ -129,10 +137,22 @@ if defined?(Mistri::Stores::ActiveRecord)
   # The optimistic append: writers that collide on the unique index retry
   # at the next position, because sessions have concurrent appenders by
   # design (the loop, a steer from another process, a child's report).
+  #
+  # Loads must bypass the host's query cache: a parent awaiting a child's
+  # report polls the same query for minutes, and Rails would serve the
+  # first snapshot for a job's whole span.
   class TestActiveRecordStore < Minitest::Test
     def setup
       @model = FakeEntryModel.new
       @store = Mistri::Stores::ActiveRecord.new(@model)
+    end
+
+    def test_load_reads_past_the_query_cache
+      @store.append("s", { "type" => "message" })
+
+      @store.load("s")
+
+      assert @model.read_uncached
     end
 
     def test_appends_and_loads_in_position_order

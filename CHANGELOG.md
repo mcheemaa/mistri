@@ -5,6 +5,13 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [0.6.1] - 2026-07-21
+
+- The ActiveRecord store reads past the host's query cache. Rails keeps the
+  cache on for a job's whole span and serves repeated identical queries from
+  it, so a parent polling for a child's report inside a job never saw the
+  report land and every wait ran to its timeout.
+
 ## [0.6.0] - 2026-07-12
 
 - Synchronous event subscribers now propagate the exact exception object even

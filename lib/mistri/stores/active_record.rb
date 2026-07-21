@@ -52,10 +52,15 @@ module Mistri
         end
       end
 
+      # Other processes append to a session by design, and hosts poll these
+      # reads inside jobs where Rails caches repeated identical queries, so
+      # a cached read would never see a child's report land. Read past it.
       def load(id)
-        @model.where(session_id: id).pluck(:position, :payload)
-              .sort_by(&:first)
-              .map { |_position, payload| JSON.parse(payload) }
+        @model.uncached do
+          @model.where(session_id: id).pluck(:position, :payload)
+                .sort_by(&:first)
+                .map { |_position, payload| JSON.parse(payload) }
+        end
       end
     end
   end
