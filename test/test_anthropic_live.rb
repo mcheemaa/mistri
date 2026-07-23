@@ -127,4 +127,26 @@ class TestAnthropicLive < Minitest::Test
   ensure
     provider&.close
   end
+
+  def test_a_hosted_web_search_turn_folds_search_blocks_and_answers
+    provider = Mistri::Providers::Anthropic.new(api_key: ENV.fetch("ANTHROPIC_API_KEY"),
+                                                service_tier: "standard_only")
+    events = []
+
+    message = provider.stream(
+      messages: [Mistri::Message.user(
+        "Search the web for the current stable Ruby version and answer in one sentence."
+      )],
+      tools: [Mistri.web_search]
+    ) { |event| events << event }
+
+    assert_includes %i[stop tool_use], message.stop_reason
+    assert message.content.any?(Mistri::Content::ServerToolCall),
+           "expected a server tool call block from the hosted search"
+    assert events.any? { |e| e.type == :server_tool_call_start },
+           "expected a server tool event"
+    assert_empty message.tool_calls, "a hosted search must not surface executable calls"
+  ensure
+    provider&.close
+  end
 end

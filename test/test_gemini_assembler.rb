@@ -271,6 +271,32 @@ class TestGeminiAssembler < Minitest::Test
     assert_equal %i[text_start text_delta text_end error], events.map(&:type)
   end
 
+  def test_grounding_metadata_folds_into_a_server_tool_result_block
+    events = []
+    grounding = { "webSearchQueries" => ["ruby 3.4 release"],
+                  "groundingChunks" => [{ "web" => { "uri" => "https://ruby-lang.org" } }] }
+    message = drive(events, [
+                      { "candidates" => [{ "content" => {
+                        "parts" => [{ "text" => "Released" }]
+                      } }] },
+                      { "candidates" => [{ "content" => { "parts" => [] },
+                                           "groundingMetadata" => grounding,
+                                           "finishReason" => "STOP" }],
+                        "usageMetadata" => { "promptTokenCount" => 4,
+                                             "candidatesTokenCount" => 2 } }
+                    ])
+
+    text, result = message.content
+
+    assert_equal "Released", text.text
+    assert_equal "google_search", result.name
+    assert_equal grounding, result.payload
+    assert_equal :stop, message.stop_reason
+    server_events = events.map(&:type).select { |type| type.start_with?("server_tool") }
+
+    assert_equal %i[server_tool_result_start server_tool_result_end], server_events
+  end
+
   private
 
   def function_call(fields = {})

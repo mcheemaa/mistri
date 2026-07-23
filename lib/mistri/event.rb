@@ -35,6 +35,8 @@ module Mistri
       text_start text_delta text_end
       thinking_start thinking_delta thinking_end
       toolcall_start toolcall_delta toolcall_end
+      server_tool_call_start server_tool_call_end
+      server_tool_result_start server_tool_result_end
       done error
       tool_started tool_result approval_needed
       compacting compaction

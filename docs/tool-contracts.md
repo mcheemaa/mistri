@@ -316,6 +316,32 @@ These are safety boundaries, not business validation. Keep tool schemas narrow,
 validate domain rules explicitly, and return references rather than embedding
 unbounded data in a tool call.
 
+## Provider-executed web search
+
+`Mistri.web_search` enables the provider's own hosted search. It rides the
+`tools:` array next to ordinary tools, but nothing about the execution
+boundary above applies: the provider runs the search on its side, the loop
+never executes anything, and no result crosses the tool-result boundary.
+
+```ruby
+agent = Mistri.agent("claude-opus-4-8", tools: [Mistri.web_search])
+result = agent.run("What is the current stable Ruby version? One sentence.")
+```
+
+Each provider maps it to its native mechanism: Anthropic's `web_search` server
+tool, the OpenAI Responses `web_search` tool, and Gemini's Google Search
+grounding. Search activity streams as `server_tool_call_start/_end` and
+`server_tool_result_start/_end` events, and lands on the assistant message as
+`Content::ServerToolCall` and `Content::ServerToolResult` blocks. The blocks
+persist in the session and replay verbatim, but only to the provider that
+produced them; on any other provider they drop from the history, like
+unsigned thinking.
+
+Boundaries to know: searches bill on the provider's side and do not appear in
+`Usage`; a failed search arrives as model-visible content the model reacts
+to, never as an exception; and Gemini reports grounding as response metadata,
+so it folds into one `ServerToolResult` block and never replays.
+
 ## Related guides
 
 - [Sessions and control](sessions.md)

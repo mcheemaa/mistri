@@ -5,6 +5,14 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+- Provider-executed web search: pass `Mistri.web_search` alongside tools and
+  the model searches the web while it answers, on all three providers
+  (Anthropic `web_search`, OpenAI Responses `web_search`, Gemini Google
+  Search grounding). Search activity arrives as `server_tool_*` events and as
+  `Content::ServerToolCall` / `Content::ServerToolResult` blocks that persist
+  in the session and replay to the provider that produced them; the loop
+  never executes anything and no search crosses the tool-result boundary.
+
 ## [0.6.1] - 2026-07-21
 
 - The ActiveRecord store and workspace read past the host's query cache.

@@ -44,12 +44,16 @@ module Mistri
         end
 
         def tools(definitions)
-          declarations = definitions.map do |tool|
+          hosted, functions = definitions.partition { |tool| tool.is_a?(WebSearch) }
+          declarations = functions.map do |tool|
             spec = tool.transform_keys(&:to_sym)
             { name: spec[:name], description: spec[:description],
               parametersJsonSchema: spec[:input_schema] }
           end
-          [{ functionDeclarations: declarations }]
+          wire = []
+          wire << { functionDeclarations: declarations } if declarations.any?
+          wire << { googleSearch: {} } if hosted.any?
+          wire
         end
 
         def turn(msg)
@@ -106,6 +110,8 @@ module Mistri
           end
         end
 
+        # Server-tool blocks never replay: grounding is response metadata the
+        # API does not accept back, and Gemini rejects parts it did not sign.
         def assistant_parts(msg)
           own = msg.provider == :gemini
           msg.content.filter_map do |block|

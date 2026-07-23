@@ -21,8 +21,12 @@ module Mistri
           history.reject(&:system?).flat_map { |msg| items_for(msg) }
         end
 
+        WEB_SEARCH_TOOL = { type: "web_search" }.freeze
+
         def tools(definitions)
           definitions.map do |tool|
+            next WEB_SEARCH_TOOL if tool.is_a?(WebSearch)
+
             spec = tool.transform_keys(&:to_sym)
             { type: "function", name: spec[:name], description: spec[:description],
               parameters: spec[:input_schema] }
@@ -71,7 +75,20 @@ module Mistri
           when Content::Thinking then reasoning_item(block, own:)
           when Content::Text then message_item(block, own:)
           when ToolCall then function_call_item(block, own:)
+          when Content::ServerToolCall then server_tool_item(block, own:)
           end
+        end
+
+        # Like reasoning, a hosted search replays exactly as it arrived or
+        # not at all: the signature carries the whole item, and one without
+        # it (or from another provider) drops.
+        def server_tool_item(block, own: true)
+          return nil unless own && block.signature
+
+          item = JSON.parse(block.signature)
+          item.is_a?(Hash) && item["type"] ? item : nil
+        rescue JSON::ParserError
+          nil
         end
 
         # The reasoning item replays exactly as it arrived or not at all. An
