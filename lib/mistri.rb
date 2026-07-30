@@ -51,6 +51,7 @@ require_relative "mistri/mcp"
 require_relative "mistri/sinks/action_cable"
 require_relative "mistri/sinks/sse"
 require_relative "mistri/sinks/coalesced"
+require_relative "mistri/sinks/logger"
 require_relative "mistri/providers/fake"
 require_relative "mistri/providers/anthropic"
 require_relative "mistri/providers/openai"
@@ -66,8 +67,25 @@ module Mistri
                   gemini: "GEMINI_API_KEY" }.freeze
 
   # The configured lock adapter, nil until a host sets one. See Locks.
+  # The run logger, nil until a host sets one: a Logger-compatible object
+  # (info/warn/error), or a Sinks::Logger for options. Every Agent run
+  # then logs its story. A wrong assignment raises here, where the typo
+  # is, instead of leaving every run's log silently empty.
   class << self
     attr_accessor :locks
+    attr_reader :logger
+
+    def logger=(value)
+      sink_like = value.is_a?(Sinks::Logger)
+      logger_like = %i[info warn error].all? { |severity| value.respond_to?(severity) }
+      unless value.nil? || sink_like || logger_like
+        raise ConfigurationError,
+              "Mistri.logger takes a Logger-compatible object (info/warn/error) " \
+              "or a Mistri::Sinks::Logger"
+      end
+
+      @logger = value
+    end
   end
 
   module_function

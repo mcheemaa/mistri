@@ -39,10 +39,12 @@ module Mistri
     # when an approved call finally executes, so a decision that aged days
     # still passes current policy); after_tool(call, result, context) may
     # return a replacement result, or nil to keep the original.
+    # log_label tags this agent's log lines (sub-agents
+    # get their worker label); nil falls back to the session id.
     def initialize(provider:, session: nil, system: nil, tools: [], budget: nil,
                    max_concurrency: 4, transform_context: nil, compaction: Compaction.new,
                    retries: RetryPolicy.new, skills: [], before_tool: nil, after_tool: nil,
-                   context: nil)
+                   context: nil, log_label: nil)
       @provider = provider
       @session = session || Session.new(store: Stores::Memory.new)
       skills = skills.is_a?(String) ? Skills.load(skills) : Array(skills)
@@ -62,6 +64,8 @@ module Mistri
       @before_tool = before_tool
       @after_tool = after_tool
       @context = context
+      @log_label = log_label
+      @log_depth = 0
     end
 
     attr_reader :session
@@ -73,18 +77,22 @@ module Mistri
     # schema, natively where the provider supports it. task adds validation
     # on top; run alone does not validate.
     def run(input, images: [], signal: nil, output_schema: nil, &emit)
-      if refresh_tool_control.any?
-        raise ConfigurationError,
-              "session is awaiting approvals; call resume"
-      end
-      if input.to_s.empty? && Array(images).empty?
-        raise ArgumentError,
-              "run needs input text or images"
-      end
+      # The frame covers the whole public method, so an audit rejection or
+      # a store failure gets a crash line too, not just loop failures.
+      logged(emit, verb: "run", input: input) do |subscriber|
+        if refresh_tool_control.any?
+          raise ConfigurationError,
+                "session is awaiting approvals; call resume"
+        end
+        if input.to_s.empty? && Array(images).empty?
+          raise ArgumentError,
+                "run needs input text or images"
+        end
 
-      fold_inbox # anything queued while this session sat idle arrived first; keep that order
-      @session.append_message(Message.user_with_images(input, images))
-      loop_turns(signal, output_schema, &emit)
+        fold_inbox # anything queued while this session sat idle arrived first; keep that order
+        @session.append_message(Message.user_with_images(input, images))
+        loop_turns(signal, output_schema, &subscriber)
+      end
     end
 
     # Continue a suspended run. Undecided approvals return immediately, still
@@ -93,25 +101,27 @@ module Mistri
     # carries on as if it never stopped, unless a settled call's tool ends
     # the turn, in which case its execution was the run's last word.
     def resume(signal: nil, &emit)
-      open = refresh_tool_control
-      pending = open.select { |approval| approval[:decision].nil? }
-      if pending.any?
-        return Result.new(message: nil, status: :awaiting_approval,
+      logged(emit, verb: "resume") do |subscriber|
+        open = refresh_tool_control
+        pending = open.select { |approval| approval[:decision].nil? }
+        if pending.any?
+          next Result.new(message: nil, status: :awaiting_approval,
                           pending: pending.map { |approval| approval[:call] },
                           usage: Usage.zero)
-      end
+        end
 
-      executed = settle(open, signal, &emit)
-      if signal&.aborted?
-        last = @session.messages.reverse_each.find(&:assistant?)
-        return finished(last, Usage.zero, signal)
-      end
-      if executed.any? { |call| ends_turn?(call) }
-        last = @session.messages.reverse_each.find(&:assistant?)
-        return finished(last, Usage.zero, signal, handed_off: true)
-      end
+        executed = settle(open, signal, &subscriber)
+        if signal&.aborted?
+          last = @session.messages.reverse_each.find(&:assistant?)
+          next finished(last, Usage.zero, signal)
+        end
+        if executed.any? { |call| ends_turn?(call) }
+          last = @session.messages.reverse_each.find(&:assistant?)
+          next finished(last, Usage.zero, signal, handed_off: true)
+        end
 
-      loop_turns(signal, nil, &emit)
+        loop_turns(signal, nil, &subscriber)
+      end
     end
 
     # Run an exchange that must end in a JSON value matching schema. Tools
@@ -126,23 +136,12 @@ module Mistri
     # belongs to whoever answers, and re-prompting for JSON would steal it
     # back. Ask again once the answer arrives.
     def task(input, schema:, images: [], signal: nil, fixes: 1, &emit)
-      plan = Schema.task_plan(schema)
-      result = run(
-        TaskOutput.prompt(input, plan), images:, signal:, output_schema: plan, &emit
-      )
-      spent = result.usage
-      fixes.downto(0) do |remaining|
-        result = result.with(usage: spent)
-        return result unless result.completed?
-        return result if result.handed_off?
-
-        value = TaskOutput.parse(result.text)
-        errors = TaskOutput.errors(value, plan)
-        return result.with(output: value) if errors.empty?
-        raise SchemaError, "task output failed validation: #{errors.join("; ")}" if remaining.zero?
-
-        result = run(TaskOutput.fix_prompt(errors), signal:, output_schema: plan, &emit)
-        spent += result.usage
+      # One log frame for the whole task, fix passes included: the inner
+      # runs see the frame open and only tee, so the single done line
+      # reports the validated outcome, not a rejected intermediate answer.
+      logged(emit, verb: "task", input: input) do |subscriber|
+        plan = Schema.task_plan(schema)
+        validated_task(input, plan, images, signal, fixes, &subscriber)
       end
     end
 
@@ -164,6 +163,70 @@ module Mistri
     end
 
     private
+
+    # The body of task, extracted so its early returns close the log frame
+    # instead of skipping it.
+    def validated_task(input, plan, images, signal, fixes, &emit)
+      result = run(
+        TaskOutput.prompt(input, plan), images:, signal:, output_schema: plan, &emit
+      )
+      spent = result.usage
+      fixes.downto(0) do |remaining|
+        result = result.with(usage: spent)
+        return result unless result.completed?
+        return result if result.handed_off?
+
+        value = TaskOutput.parse(result.text)
+        errors = TaskOutput.errors(value, plan)
+        return result.with(output: value) if errors.empty?
+        raise SchemaError, "task output failed validation: #{errors.join("; ")}" if remaining.zero?
+
+        result = run(TaskOutput.fix_prompt(errors), signal:, output_schema: plan, &emit)
+        spent += result.usage
+      end
+    end
+
+    # When a host sets Mistri.logger, every public run tees its events into
+    # a fresh logging sink for this session alongside the caller's block,
+    # and the framing lines carry what the stream cannot: the input, the
+    # model, and the final Result. Nothing wraps when no logger is set, a
+    # nested public call (task's inner runs) reuses the open frame, and a
+    # caller's subscriber failures propagate exactly as before because the
+    # sink never raises.
+    def logged(emit, verb:, input: nil)
+      sink = log_sink
+      return yield(emit) unless sink
+
+      @log_depth += 1
+      begin
+        sink.run_started(verb: verb, input: input, model: @provider.model,
+                         tool_count: @tools.length)
+        subscriber = if emit
+                       lambda { |event|
+                         sink.call(event)
+                         emit.call(event)
+                       }
+                     else
+                       sink.to_proc
+                     end
+        begin
+          result = yield(subscriber)
+        rescue StandardError => e
+          sink.run_crashed(EventDelivery.original(e))
+          raise
+        end
+        sink.run_finished(result)
+        result
+      ensure
+        @log_depth -= 1
+      end
+    end
+
+    def log_sink
+      return nil if @log_depth.positive?
+
+      Sinks::Logger.attach(@session.id, label: @log_label)
+    end
 
     def loop_turns(signal, output_schema = nil, &emit)
       turns = 0

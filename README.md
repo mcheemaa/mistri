@@ -231,6 +231,64 @@ The same event stream works in Sinatra, Rack, a WebSocket server, a background
 job, or a test. Event types form an extensible union; consumers should handle
 the types they use and ignore the rest.
 
+## Logging
+
+One assignment makes every run tell its story in your log:
+
+```ruby
+Mistri.logger = Rails.logger   # or any Logger-compatible object
+```
+
+```text
+[mistri 0a1b2c3d] run "What is 2 plus 3?" (gpt-5.6, 3 tools)
+[mistri 0a1b2c3d] turn 1 done tool_use (312 in / 48 out)
+[mistri 0a1b2c3d] tool add#7f3a {"a":2,"b":3}
+[mistri 0a1b2c3d] tool add#7f3a ok 12ms "5"
+[mistri 0a1b2c3d] text "The sum is 5."
+[mistri 0a1b2c3d] turn 2 done stop (410 in / 22 out)
+[mistri 0a1b2c3d] done completed in 1.2s, 2 turns, 722 in / 70 out, $0.0042
+```
+
+A turn line lands when the model finishes speaking, so it precedes the tool
+executions that turn requested. The short `#id` on tool lines pairs
+concurrent same-name calls; an `approval needed` line carries the full call
+id, which is what `session.approve` takes. Failed tools and retries log at
+warn and provider errors at error, while expected stops (a cancel, a budget
+ceiling) log calmly. Cached prompt tokens count toward "in" and are called
+out, dollar cost appears whenever pricing is known (including a known
+$0.0000), and hidden bytes in any value render as visible escapes.
+Sub-agents log under their own worker label (`[mistri researcher#89bb20de]`)
+exactly once, whichever process runs them; a `worker` report line appears
+wherever a sink watched the spawn. Interleaved lines stay whole as long as
+the logger serializes writes, which stdlib `Logger` and Rails' do. A `task`
+logs one frame around all its fix passes.
+
+By default the lines carry payloads: inputs, thinking, arguments, results.
+That is the point in development, and it is fine in production too when
+your log pipeline is where you want the story (shipping these lines to your
+log platform gives you agent observability for free). When payloads must
+stay out of a log, `content: false` keeps the whole story as metadata:
+names, ids, durations, sizes, tokens, cost, and statuses, and error, crash,
+and retry text reduces to its byte size while classes and reasons stay. `level: :debug`
+floors the ordinary lines, `truncate` bounds rendered values, and a wrong
+assignment raises at assignment time:
+
+```ruby
+Mistri.logger = Mistri::Sinks::Logger.new(logger, content: false, level: :debug)
+```
+
+Composing per run (`agent.run(input, &Mistri::Sinks::Logger.new(logger))`)
+is deliberately smaller: event lines under a bare `[mistri]` tag, no
+framing, and forwarded child events rendered with their origin, since no
+child sink exists to log them. Logger calls are synchronous on
+the run's own threads, so a slow logger slows the run: keep the destination
+local (stdout, a file) and let your log shipper make the network hop, or
+buffer at the logger layer. Logging never breaks a run: construction and
+every write are contained, and a failing logger warns once per run and that
+run's sink goes quiet. With no logger assigned the cost is one nil check
+per run; with one assigned, delta events short-circuit without allocating
+and per-line work is bounded by the truncation limit, not the payload.
+
 ## Long conversations and structured tasks
 
 Compaction is on by default for catalogued models. When a session enters the

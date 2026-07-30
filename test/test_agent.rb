@@ -274,6 +274,21 @@ class TestAgent < Minitest::Test
     assert_equal 100, result.usage.input, "both passes count"
   end
 
+  def test_context_usage_reports_tokens_window_and_fraction
+    provider = Mistri::Providers::Fake.new(turns: [])
+    usage = Mistri::Agent.new(provider:).context_usage
+
+    assert_operator usage.fetch(:tokens), :>=, 0
+    assert usage.key?(:window)
+    assert usage.key?(:fraction)
+  end
+
+  def test_compact_returns_nil_when_there_is_nothing_to_compact
+    provider = Mistri::Providers::Fake.new(turns: [])
+
+    assert_nil Mistri::Agent.new(provider:).compact
+  end
+
   private
 
   def session_ready_for_compaction
