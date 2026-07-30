@@ -76,9 +76,12 @@ module Mistri
     attr_reader :logger
 
     def logger=(value)
-      unless value.nil? || value.respond_to?(:for_session) || value.respond_to?(:info)
+      sink_like = value.respond_to?(:for_session)
+      logger_like = %i[info warn error].all? { |severity| value.respond_to?(severity) }
+      unless value.nil? || sink_like || logger_like
         raise ConfigurationError,
-              "Mistri.logger takes a Logger-compatible object or a Mistri::Sinks::Logger"
+              "Mistri.logger takes a Logger-compatible object (info/warn/error) " \
+              "or a Mistri::Sinks::Logger"
       end
 
       @logger = value

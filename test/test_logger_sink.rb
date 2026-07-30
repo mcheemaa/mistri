@@ -57,9 +57,9 @@ class TestLoggerSink < Minitest::Test # rubocop:disable Metrics/ClassLength -- o
     assert_match(/WARN \[mistri\] tool boom#c1 FAILED 2.3s "kaboom"/, io.string)
   end
 
-  def test_skips_deltas_origin_tagged_events_and_empty_text
+  def test_run_sinks_skip_deltas_forwarded_events_and_empty_text
     logger, io = capture
-    sink = Mistri::Sinks::Logger.new(logger)
+    sink = Mistri::Sinks::Logger.new(logger).for_session("0a1b2c3d-ffff")
 
     sink.call(Mistri::Event.new(type: :text_delta, content_index: 0, delta: "Hel"))
     sink.call(Mistri::Event.new(type: :text_end, content_index: 0, content: "from a child",
@@ -67,6 +67,16 @@ class TestLoggerSink < Minitest::Test # rubocop:disable Metrics/ClassLength -- o
     sink.call(Mistri::Event.new(type: :text_end, content_index: 0, content: "  "))
 
     assert_empty io.string
+  end
+
+  def test_a_standalone_sink_renders_forwarded_events_with_their_origin
+    logger, io = capture
+    sink = Mistri::Sinks::Logger.new(logger)
+
+    sink.call(Mistri::Event.new(type: :text_end, content_index: 0, content: "from a child",
+                                origin: "Corgi#ab12cd34"))
+
+    assert_match(/INFO \[mistri\] Corgi#ab12cd34 text "from a child"/, io.string)
   end
 
   def test_renders_thinking_approvals_compaction_and_worker_reports
@@ -182,7 +192,7 @@ class TestLoggerSink < Minitest::Test # rubocop:disable Metrics/ClassLength -- o
     sink.call(Mistri::Event.new(type: :text_end, content_index: 0,
                                 content: "hi \e[31mboo\u0000tail"))
 
-    assert_includes io.string, 'text "hi \x1b[31mboo\x00tail"'
+    assert_includes io.string, 'text "hi \u001b[31mboo\u0000tail"'
   end
 
   def test_no_size_suffix_when_only_whitespace_collapsed
@@ -400,6 +410,174 @@ class TestLoggerSink < Minitest::Test # rubocop:disable Metrics/ClassLength -- o
     assert_equal 1, log.scan('text "It is Paris."').length
     assert_match(/\[mistri researcher#[0-9a-f]{8}\] run "Capital of France\?"/, log)
     assert_match(/\[mistri [0-9a-f]{8}\] run "Ask the researcher\."/, log)
+  end
+
+  def test_content_off_keeps_the_story_without_the_words
+    logger, io = capture
+    sink = Mistri::Sinks::Logger.new(logger, content: false)
+
+    sink.run_started(verb: "run", input: "the secret question", model: "fake-1", tool_count: 1)
+    sink.call(Mistri::Event.new(type: :tool_started,
+                                tool_call: tool_call("add", { "secret" => "value" })))
+    sink.call(Mistri::Event.new(type: :tool_result, tool_call: tool_call("add"),
+                                content: "secret answer", duration: 0.012, tool_error: false))
+    sink.call(Mistri::Event.new(type: :text_end, content_index: 0, content: "secret text"))
+
+    refute_includes io.string, "secret"
+    assert_match(/run \(fake-1, 1 tool\)/, io.string)
+    assert_match(/tool add#c1$/, io.string)
+    assert_match(/tool add#c1 ok 12ms \(13B\)/, io.string)
+    assert_match(/text \(11B\)/, io.string)
+  end
+
+  def test_hidden_bytes_in_labels_and_names_cannot_forge_lines
+    logger, io = capture
+    forged = "evil\nINFO [mistri] fake line\u202e"
+    sink = Mistri::Sinks::Logger.new(logger).for_session("id", label: forged)
+
+    sink.call(Mistri::Event.new(type: :tool_started,
+                                tool_call: Mistri::ToolCall.new(id: "c1", name: "na\u0085me")))
+
+    assert_equal 1, io.string.lines.length, "a hidden byte must never mint an extra line"
+    assert_includes io.string, "\\u202e"
+    assert_includes io.string, "na\\u0085me"
+  end
+
+  def test_rejects_bad_options_at_construction_time
+    logger, = capture
+
+    assert_raises(ArgumentError) { Mistri::Sinks::Logger.new(logger, level: :loud) }
+    assert_raises(ArgumentError) { Mistri::Sinks::Logger.new(logger, truncate: -1) }
+    assert_raises(ArgumentError) { Mistri::Sinks::Logger.new(logger, forwarded: :maybe) }
+  end
+
+  def test_a_raising_sink_factory_never_breaks_the_run
+    factory = Object.new
+    def factory.for_session(*) = raise "factory died"
+    Mistri.logger = factory
+    provider = Mistri::Providers::Fake.new(turns: [{ text: "hi" }])
+
+    result = nil
+    assert_output(nil, /logging sink construction failed/) do
+      result = Mistri::Agent.new(provider:).run("hello")
+    end
+
+    assert_predicate result, :completed?
+  end
+
+  def test_the_global_requires_the_full_severity_contract
+    half = Object.new
+    def half.info(*); end
+
+    assert_raises(Mistri::ConfigurationError) { Mistri.logger = half }
+  end
+
+  def test_argument_previews_stay_bounded
+    logger, io = capture
+    sink = Mistri::Sinks::Logger.new(logger)
+    huge = { "blob" => "x" * 2_000_000, "list" => Array.new(2_000) { "v" } }
+
+    sink.call(Mistri::Event.new(type: :tool_started, tool_call: tool_call("save", huge)))
+
+    line = io.string.lines.fetch(0)
+
+    assert_operator line.length, :<, 400, "a huge argument tree must render as a bounded preview"
+    assert_includes line, "..."
+  end
+
+  def test_renders_argument_errors_instead_of_arguments
+    logger, io = capture
+    sink = Mistri::Sinks::Logger.new(logger)
+    call = Mistri::ToolCall.new(id: "c1", name: "add", arguments_error: "too_large")
+
+    sink.call(Mistri::Event.new(type: :tool_started, tool_call: call))
+
+    assert_match(/tool add#c1 \[.*too_large.*\]/, io.string)
+  end
+
+  def test_skips_formatting_when_the_floor_level_is_disabled
+    io = StringIO.new
+    logger = ::Logger.new(io)
+    logger.level = ::Logger::WARN
+    sink = Mistri::Sinks::Logger.new(logger)
+
+    sink.run_started(verb: "run", input: "hi", model: "fake-1", tool_count: 0)
+    sink.call(Mistri::Event.new(type: :text_end, content_index: 0, content: "quiet"))
+    sink.call(Mistri::Event.new(type: :tool_result, tool_call: tool_call("boom"),
+                                content: "bad", tool_error: true))
+
+    refute_includes io.string, "quiet"
+    assert_includes io.string, "FAILED"
+  end
+
+  def test_store_failures_get_a_crash_line
+    logger, io = capture
+    Mistri.logger = logger
+    store = Class.new(Mistri::Stores::Memory) do
+      def append(*) = raise "store down"
+    end.new
+    provider = Mistri::Providers::Fake.new(turns: [{ text: "hi" }])
+    agent = Mistri::Agent.new(provider:, session: Mistri::Session.new(store: store))
+
+    assert_raises(RuntimeError) { agent.run("hello") }
+    assert_match(/run "hello"/, io.string)
+    assert_match(/crashed RuntimeError: store down/, io.string)
+  end
+
+  def test_known_free_usage_stays_distinguishable_from_unpriced
+    logger, io = capture
+    sink = Mistri::Sinks::Logger.new(logger)
+
+    sink.run_finished(Mistri::Result.new(message: nil, status: :completed,
+                                         usage: Mistri::Usage.zero))
+    sink.run_finished(Mistri::Result.new(message: nil, status: :completed,
+                                         usage: Mistri::Usage.new))
+
+    lines = io.string.lines
+
+    assert_includes lines.fetch(0), "$0.0000"
+    refute_includes lines.fetch(1), "$"
+  end
+
+  def test_every_entry_point_contains_its_own_failures
+    logger, io = capture
+    sink = Mistri::Sinks::Logger.new(logger)
+    poison = Object.new
+    def poison.to_s = raise "unrenderable"
+
+    assert_output(nil, /logging sink failed/) do
+      sink.call(Mistri::Event.new(type: :retry, content: "note", attempt: 1,
+                                  max_attempts: 2, delay: poison))
+    end
+    [-> { sink.run_started(verb: "run", input: poison, model: "m", tool_count: 0) },
+     -> { sink.run_finished(nil) },
+     -> { sink.run_crashed(nil) },
+     -> { sink.call(Mistri::Event.new(type: :done, reason: :stop)) }].each do |entry|
+      assert_silent { entry.call }
+    end
+    assert_empty io.string.lines.grep(/unrenderable/)
+  end
+
+  def test_a_raising_level_query_counts_as_enabled
+    io = StringIO.new
+    logger = ::Logger.new(io)
+    def logger.info? = raise "gauge broken"
+    sink = Mistri::Sinks::Logger.new(logger)
+
+    sink.call(Mistri::Event.new(type: :text_end, content_index: 0, content: "still here"))
+
+    assert_includes io.string, "still here"
+  end
+
+  def test_argument_previews_cut_inside_collections
+    logger, io = capture
+    sink = Mistri::Sinks::Logger.new(logger, truncate: 30)
+    call = tool_call("list", { "items" => ["x" * 40, "second", "third"] })
+
+    sink.call(Mistri::Event.new(type: :tool_started, tool_call: call))
+
+    assert_includes io.string, "..."
+    refute_includes io.string, "third"
   end
 
   def test_no_logger_builds_no_sink

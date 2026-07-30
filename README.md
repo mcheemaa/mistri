@@ -233,7 +233,7 @@ the types they use and ignore the rest.
 
 ## Logging
 
-One assignment makes every run tell its story in your development log:
+One assignment makes every run tell its story in your log:
 
 ```ruby
 Mistri.logger = Rails.logger   # or any Logger-compatible object
@@ -251,35 +251,39 @@ Mistri.logger = Rails.logger   # or any Logger-compatible object
 
 A turn line lands when the model finishes speaking, so it precedes the tool
 executions that turn requested. The short `#id` on tool lines pairs
-concurrent same-name calls and is the handle `session.approve` needs when an
-`approval needed` line appears. Failed tools and retries log at warn
-and provider errors at error, while expected stops (a cancel, a budget
-ceiling) log calmly; the closing line reports suspension, abort, or budget
-stops just as plainly. Cached prompt tokens count toward "in" and are called
-out, and non-printing bytes render as visible escapes. Sub-agents log under their own worker label
-(`[mistri researcher#89bb20de]`) exactly once, whichever process runs them;
-interleaved lines stay whole as long as the logger serializes writes, which
-stdlib `Logger` and Rails' do. A `task` logs one frame around all its fix
-passes.
+concurrent same-name calls; an `approval needed` line carries the full call
+id, which is what `session.approve` takes. Failed tools and retries log at
+warn and provider errors at error, while expected stops (a cancel, a budget
+ceiling) log calmly. Cached prompt tokens count toward "in" and are called
+out, dollar cost appears whenever pricing is known (including a known
+$0.0000), and hidden bytes in any value render as visible escapes.
+Sub-agents log under their own worker label (`[mistri researcher#89bb20de]`)
+exactly once, whichever process runs them; a `worker` report line appears
+wherever a sink watched the spawn. Interleaved lines stay whole as long as
+the logger serializes writes, which stdlib `Logger` and Rails' do. A `task`
+logs one frame around all its fix passes.
 
-Assign a preconfigured sink for options. `level: :debug` floors the ordinary
-lines so a production logger sitting at `:info` stays clean, `truncate`
-bounds quoted values, and a wrong assignment raises at assignment time
-rather than leaving the log silently empty:
+By default the lines carry payloads: inputs, thinking, arguments, results.
+That is the point in development, and it is fine in production too when
+your log pipeline is where you want the story (shipping these lines to your
+log platform gives you agent observability for free). When payloads must
+stay out of a log, `content: false` keeps the whole story as metadata:
+names, ids, durations, sizes, tokens, cost, and statuses. `level: :debug`
+floors the ordinary lines, `truncate` bounds rendered values, and a wrong
+assignment raises at assignment time:
 
 ```ruby
-Mistri.logger = Mistri::Sinks::Logger.new(logger, color: true, truncate: 500,
-                                          level: :debug)
+Mistri.logger = Mistri::Sinks::Logger.new(logger, content: false, level: :debug)
 ```
 
 Composing per run (`agent.run(input, &Mistri::Sinks::Logger.new(logger))`)
-is deliberately smaller: it delivers the event lines only, with no framing
-and no tag, because those come from the Agent. Logging never breaks a run: a
-failing logger warns once per run and that run's sink goes quiet. With no
-logger assigned the cost is one nil check per run; with one assigned, delta
-events short-circuit without allocating. Production observability belongs to
-your telemetry sink; this one is for humans (and their AI agents) reading a
-log.
+is deliberately smaller: event lines under a bare `[mistri]` tag, no
+framing, and forwarded child events rendered with their origin, since no
+child sink exists to log them. Logging never breaks a run: construction and
+every write are contained, and a failing logger warns once per run and that
+run's sink goes quiet. With no logger assigned the cost is one nil check
+per run; with one assigned, delta events short-circuit without allocating
+and per-line work is bounded by the truncation limit, not the payload.
 
 ## Long conversations and structured tasks
 

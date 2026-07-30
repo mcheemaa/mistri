@@ -8,26 +8,32 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - `Mistri.logger` and `Mistri::Sinks::Logger`: assign any Logger-compatible
   object and every run logs its story as one scannable line per beat, tagged
   by session (sub-agents get their worker label): the input, each tool call
-  and result with a short pairing id, arguments, duration, and payload size,
-  each turn's token usage, retries, compaction, approvals, worker reports,
-  and a closing line with the run's outcome, elapsed time, turn count, and
-  dollar cost when pricing is known. `task` logs one frame around all its
-  fix passes. Deltas never log; origin-tagged events are skipped so every
-  agent, in any process, logs its own events exactly once. `level:` floors
-  the ordinary lines (warnings and errors keep their own levels), `color:`
+  and result with a short pairing id, arguments, duration, and result size,
+  each turn's token usage with cached prompt tokens called out, retries,
+  compaction, approvals (carrying the full call id `Session#approve` takes),
+  worker reports wherever a sink watched the spawn, and a closing line with
+  the run's outcome, elapsed time, turn count, and dollar cost whenever
+  pricing is known, a known $0.0000 included. `task` logs one frame around
+  all its fix passes, and the frame covers the whole public method, so store
+  and audit failures get a crash line too. Payloads log in full by default;
+  `content: false` keeps the same story as metadata only. `level:` floors
+  the ordinary lines (warnings and errors keep their own levels, and
+  expected stops such as cancels and budget ceilings log calmly), `color:`
   and `truncate:` are per-sink options, and a preconfigured sink can be
-  assigned directly; a wrong assignment raises `ConfigurationError` at
-  assignment time. Logging failures warn once per run and the run's sink
-  goes quiet: they never raise into the run or replace a host exception,
-  including on invalid byte sequences. Cached prompt tokens count toward
-  the tokens in and are called out (`900 in (890 cached)`); expected stops
-  log calmly (a cancel at info, a budget stop at warn, and a synthetic
-  budget stop never counts as a turn) so only real failures log at error;
-  non-printing bytes render as visible escapes so untrusted output cannot
-  steer a terminal. With no logger assigned the event path is untouched
-  (one nil check per run, nothing per event); with one assigned, delta
-  events short-circuit without allocating and per-line string work is
-  bounded by the truncation limit, not the payload.
+  assigned directly; wrong assignments and options raise at configuration
+  time. Sinks the Agent builds skip origin-tagged events so every agent, in
+  any process, logs its own events exactly once; a sink composed directly
+  per run renders forwarded child events with their origin instead. Logging
+  never breaks a run: sink construction and every write are contained,
+  failures warn once per run and the run's sink goes quiet, host exceptions
+  are never replaced (invalid byte sequences included), and hidden bytes in
+  payloads, names, ids, and labels render as visible escapes so untrusted
+  output cannot forge lines or steer a terminal. With no logger assigned
+  the event path is untouched (one nil check per run, nothing per event);
+  with one assigned, delta events short-circuit without allocating,
+  formatting is skipped when the floor level is disabled, and per-line
+  string work, tool arguments included, is bounded by the truncation limit,
+  not the payload.
 
 ## [0.6.1] - 2026-07-21
 

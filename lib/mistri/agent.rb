@@ -77,18 +77,20 @@ module Mistri
     # schema, natively where the provider supports it. task adds validation
     # on top; run alone does not validate.
     def run(input, images: [], signal: nil, output_schema: nil, &emit)
-      if refresh_tool_control.any?
-        raise ConfigurationError,
-              "session is awaiting approvals; call resume"
-      end
-      if input.to_s.empty? && Array(images).empty?
-        raise ArgumentError,
-              "run needs input text or images"
-      end
-
-      fold_inbox # anything queued while this session sat idle arrived first; keep that order
-      @session.append_message(Message.user_with_images(input, images))
+      # The frame covers the whole public method, so an audit rejection or
+      # a store failure gets a crash line too, not just loop failures.
       logged(emit, verb: "run", input: input) do |subscriber|
+        if refresh_tool_control.any?
+          raise ConfigurationError,
+                "session is awaiting approvals; call resume"
+        end
+        if input.to_s.empty? && Array(images).empty?
+          raise ArgumentError,
+                "run needs input text or images"
+        end
+
+        fold_inbox # anything queued while this session sat idle arrived first; keep that order
+        @session.append_message(Message.user_with_images(input, images))
         loop_turns(signal, output_schema, &subscriber)
       end
     end
@@ -99,9 +101,9 @@ module Mistri
     # carries on as if it never stopped, unless a settled call's tool ends
     # the turn, in which case its execution was the run's last word.
     def resume(signal: nil, &emit)
-      open = refresh_tool_control
-      pending = open.select { |approval| approval[:decision].nil? }
       logged(emit, verb: "resume") do |subscriber|
+        open = refresh_tool_control
+        pending = open.select { |approval| approval[:decision].nil? }
         if pending.any?
           next Result.new(message: nil, status: :awaiting_approval,
                           pending: pending.map { |approval| approval[:call] },
@@ -134,11 +136,11 @@ module Mistri
     # belongs to whoever answers, and re-prompting for JSON would steal it
     # back. Ask again once the answer arrives.
     def task(input, schema:, images: [], signal: nil, fixes: 1, &emit)
-      plan = Schema.task_plan(schema)
       # One log frame for the whole task, fix passes included: the inner
       # runs see the frame open and only tee, so the single done line
       # reports the validated outcome, not a rejected intermediate answer.
       logged(emit, verb: "task", input: input) do |subscriber|
+        plan = Schema.task_plan(schema)
         validated_task(input, plan, images, signal, fixes, &subscriber)
       end
     end
@@ -223,11 +225,7 @@ module Mistri
     def log_sink
       return nil if @log_depth.positive?
 
-      configured = Mistri.logger
-      return nil unless configured
-
-      sink = configured.respond_to?(:for_session) ? configured : Sinks::Logger.new(configured)
-      sink.for_session(@session.id, label: @log_label)
+      Sinks::Logger.attach(@session.id, label: @log_label)
     end
 
     def loop_turns(signal, output_schema = nil, &emit)
