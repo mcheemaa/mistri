@@ -42,5 +42,22 @@ require "minitest/autorun"
 module Mistri
   module Test
     ALLOW_LOOPBACK = ->(_uri, address) { address.loopback? }
+
+    # Live provider calls ride out capacity spikes: retry a turn whose
+    # terminal the gem's own RetryPolicy classifies as transient, so the
+    # live ring retries exactly what the loop itself would (429s, 5xx,
+    # overload, truncated streams) and fails fast on everything else (a
+    # retired id's 404, a schema rejection), as it should.
+    def self.retry_transient(attempts: 3, pause: 10, policy: Mistri::RetryPolicy.new)
+      result = nil
+      attempts.times do |round|
+        result = yield
+        error = result.respond_to?(:stop_reason) ? policy.error_for(result) : nil
+        return result unless error && policy.retryable?(error)
+
+        sleep(pause * (round + 1)) unless round == attempts - 1
+      end
+      result
+    end
   end
 end

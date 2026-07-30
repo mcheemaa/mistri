@@ -80,8 +80,11 @@ class TestGeminiLive < Minitest::Test
   end
 
   def test_foreign_tool_history_projects_into_a_valid_gemini_continuation
-    provider = Mistri::Providers::Gemini.new(api_key: ENV.fetch("GEMINI_API_KEY"),
-                                             model: "gemini-3.5-flash")
+    # The provider default, like every other test here: this test proves
+    # history projection, and pinning the newest model makes it fail on
+    # that model's capacity spikes instead. The matrix suite owns per-model
+    # liveness.
+    provider = Mistri::Providers::Gemini.new(api_key: ENV.fetch("GEMINI_API_KEY"))
     fact = "Mistri-cross-provider-#{SecureRandom.hex(5)}"
     call = Mistri::ToolCall.new(id: "openai-call-1", name: "lookup",
                                 arguments: { "record" => "one" },
@@ -94,9 +97,11 @@ class TestGeminiLive < Minitest::Test
       Mistri::Message.user("Repeat the exact historical lookup result and nothing else.")
     ]
 
-    message = provider.stream(messages: history) { |_event| nil }
+    message = Mistri::Test.retry_transient do
+      provider.stream(messages: history) { |_event| nil }
+    end
 
-    assert_equal :stop, message.stop_reason
+    assert_equal :stop, message.stop_reason, message.error_message.to_s
     assert_includes message.text, fact
   ensure
     provider&.close
