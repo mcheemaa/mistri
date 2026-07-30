@@ -7,9 +7,12 @@ require "stringio"
 # The logging sink renders the event stream as one line per beat, and
 # assigning Mistri.logger makes every run log its own story exactly once,
 # sub-agents included.
-class TestLoggerSink < Minitest::Test
+class TestLoggerSink < Minitest::Test # rubocop:disable Metrics/ClassLength -- one behavior test per renderer and run path adds up
   class Boom < StandardError
   end
+
+  SCHEMA = { type: "object", properties: { "answer" => { type: "string" } },
+             required: ["answer"] }.freeze
 
   def teardown
     Mistri.logger = nil
@@ -26,7 +29,13 @@ class TestLoggerSink < Minitest::Test
     Mistri::ToolCall.new(id: "c1", name: name, arguments: arguments)
   end
 
-  def test_logs_tool_calls_with_arguments_duration_and_verdict
+  # The first word after the tag, one per line: the cheapest way to pin
+  # line order without matching volatile ids and timings.
+  def kinds(io)
+    io.string.lines.map { |line| line[/\] (\S+)/, 1] }
+  end
+
+  def test_logs_tool_calls_with_ids_arguments_duration_and_verdict
     logger, io = capture
     sink = Mistri::Sinks::Logger.new(logger)
 
@@ -34,8 +43,8 @@ class TestLoggerSink < Minitest::Test
     sink.call(Mistri::Event.new(type: :tool_result, tool_call: tool_call("add"),
                                 content: "5", duration: 0.012, tool_error: false))
 
-    assert_match(/INFO \[mistri\] tool add \{"a":2\}/, io.string)
-    assert_match(/INFO \[mistri\] tool add ok 12ms "5"/, io.string)
+    assert_match(/INFO \[mistri\] tool add#c1 \{"a":2\}/, io.string)
+    assert_match(/INFO \[mistri\] tool add#c1 ok 12ms "5"/, io.string)
   end
 
   def test_marks_failed_tools_at_warn
@@ -45,34 +54,56 @@ class TestLoggerSink < Minitest::Test
     sink.call(Mistri::Event.new(type: :tool_result, tool_call: tool_call("boom"),
                                 content: "kaboom", duration: 2.34, tool_error: true))
 
-    assert_match(/WARN \[mistri\] tool boom FAILED 2.3s "kaboom"/, io.string)
+    assert_match(/WARN \[mistri\] tool boom#c1 FAILED 2.3s "kaboom"/, io.string)
   end
 
-  def test_skips_deltas_and_origin_tagged_events
+  def test_skips_deltas_origin_tagged_events_and_empty_text
     logger, io = capture
     sink = Mistri::Sinks::Logger.new(logger)
 
     sink.call(Mistri::Event.new(type: :text_delta, content_index: 0, delta: "Hel"))
     sink.call(Mistri::Event.new(type: :text_end, content_index: 0, content: "from a child",
                                 origin: "Corgi#ab12cd34"))
+    sink.call(Mistri::Event.new(type: :text_end, content_index: 0, content: "  "))
 
     assert_empty io.string
   end
 
-  def test_numbers_turns_and_flags_errors_and_retries
+  def test_renders_thinking_approvals_compaction_and_worker_reports
+    logger, io = capture
+    sink = Mistri::Sinks::Logger.new(logger)
+
+    sink.call(Mistri::Event.new(type: :thinking_end, content_index: 0,
+                                content: "Weighing the options"))
+    sink.call(Mistri::Event.new(type: :approval_needed,
+                                tool_call: tool_call("send_gift", { "to" => "sarah" })))
+    sink.call(Mistri::Event.new(type: :compacting))
+    sink.call(Mistri::Event.new(type: :compaction, content: "The story so far"))
+    sink.call(Mistri::Event.new(type: :subagent_report, agent: "Corgi",
+                                session_id: "ef56ab12-0000-4444-aaaa-000000000000",
+                                status: "done", content: "found it"))
+
+    assert_match(/INFO \[mistri\] thinking "Weighing the options"/, io.string)
+    assert_match(/INFO \[mistri\] approval needed send_gift#c1 \{"to":"sarah"\}/, io.string)
+    assert_match(/INFO \[mistri\] compacting/, io.string)
+    assert_match(/INFO \[mistri\] compacted "The story so far"/, io.string)
+    assert_match(/INFO \[mistri\] worker Corgi \(ef56ab12\) done "found it"/, io.string)
+  end
+
+  def test_numbers_turns_counting_errored_turns_and_flags_retries
     logger, io = capture
     sink = Mistri::Sinks::Logger.new(logger)
 
     sink.call(Mistri::Event.new(type: :done, reason: :tool_use))
-    sink.call(Mistri::Event.new(type: :done, reason: :stop))
     sink.call(Mistri::Event.new(type: :retry, content: "rate limited", attempt: 2,
                                 max_attempts: 5, delay: 4.0))
     sink.call(Mistri::Event.new(type: :error, reason: :rate_limit, error_message: "slow down"))
+    sink.run_finished(Mistri::Result.new(message: nil, status: :error))
 
     assert_match(/INFO \[mistri\] turn 1 done tool_use/, io.string)
-    assert_match(/INFO \[mistri\] turn 2 done stop/, io.string)
     assert_match(%r{WARN \[mistri\] retry 2/5 in 4.0s: rate limited}, io.string)
     assert_match(/ERROR \[mistri\] error rate_limit: slow down/, io.string)
+    assert_match(/ERROR \[mistri\] done error in \d+m?s, 2 turns/, io.string)
   end
 
   def test_frames_a_run_with_input_and_result
@@ -91,27 +122,55 @@ class TestLoggerSink < Minitest::Test
                  io.string)
   end
 
-  def test_renders_suspension_and_crashes
+  def test_renders_every_terminal_status
     logger, io = capture
     sink = Mistri::Sinks::Logger.new(logger)
 
-    sink.run_started(verb: "run", input: "send it", model: "fake-1", tool_count: 2)
     sink.run_finished(Mistri::Result.new(message: nil, status: :awaiting_approval,
                                          pending: [tool_call("send_gift")]))
+    sink.run_finished(Mistri::Result.new(message: nil, status: :completed, handed_off: true))
+    sink.run_finished(Mistri::Result.new(message: nil, status: :aborted))
+    sink.run_finished(Mistri::Result.new(message: nil, status: :budget))
     sink.run_crashed(RuntimeError.new("boom"))
 
     assert_match(/INFO \[mistri\] done suspended \(1 approval pending\)/, io.string)
+    assert_match(/INFO \[mistri\] done completed \(handed off\)/, io.string)
+    assert_match(/INFO \[mistri\] done aborted/, io.string)
+    assert_match(/WARN \[mistri\] done stopped on budget/, io.string)
     assert_match(/ERROR \[mistri\] crashed RuntimeError: boom/, io.string)
   end
 
-  def test_truncates_long_values_and_reports_sizes
+  def test_truncates_long_values_and_reports_original_sizes
     logger, io = capture
     sink = Mistri::Sinks::Logger.new(logger, truncate: 20)
 
     sink.call(Mistri::Event.new(type: :tool_result, tool_call: tool_call("read"),
                                 content: "x" * 5000, tool_error: false))
 
-    assert_match(/tool read ok "x{1,20}\.\.\." \(4.9KB\)/, io.string)
+    assert_match(/tool read#c1 ok "x{1,20}\.\.\." \(4.9KB\)/, io.string)
+  end
+
+  def test_no_size_suffix_when_only_whitespace_collapsed
+    logger, io = capture
+    sink = Mistri::Sinks::Logger.new(logger)
+
+    sink.call(Mistri::Event.new(type: :tool_result, tool_call: tool_call("read"),
+                                content: "#{"x" * 100}#{" " * 500}", tool_error: false))
+
+    assert_match(/tool read#c1 ok "x{100}"/, io.string)
+    refute_match(/B\)/, io.string)
+  end
+
+  def test_level_floors_the_ordinary_lines_only
+    logger, io = capture
+    sink = Mistri::Sinks::Logger.new(logger, level: :debug)
+
+    sink.call(Mistri::Event.new(type: :text_end, content_index: 0, content: "hi"))
+    sink.call(Mistri::Event.new(type: :tool_result, tool_call: tool_call("boom"),
+                                content: "bad", tool_error: true))
+
+    assert_match(/DEBUG \[mistri\] text "hi"/, io.string)
+    assert_match(/WARN \[mistri\] tool boom#c1 FAILED/, io.string)
   end
 
   def test_color_paints_tool_names_only_when_asked
@@ -120,7 +179,7 @@ class TestLoggerSink < Minitest::Test
 
     sink.call(Mistri::Event.new(type: :tool_started, tool_call: tool_call("add")))
 
-    assert_includes io.string, "\e[32madd\e[0m"
+    assert_includes io.string, "\e[32madd\e[0m#c1"
   end
 
   def test_a_broken_logger_never_raises_and_warns_once
@@ -131,18 +190,44 @@ class TestLoggerSink < Minitest::Test
 
     assert_output(nil, /logging sink failed.*logging disabled/) { sink.call(event) }
     assert_silent { sink.call(event) }
+    assert_silent { sink.run_started(verb: "run", model: "m", tool_count: 0) }
   end
 
-  def test_for_session_tags_lines_with_the_session
-    logger, io = capture
-    sink = Mistri::Sinks::Logger.new(logger).for_session("0a1b2c3d-ffff-4444-aaaa-000000000000")
+  def test_framing_is_total_on_a_broken_logger
+    broken = Object.new
+    def broken.info(*) = raise "io dead"
+    sink = Mistri::Sinks::Logger.new(broken)
 
-    sink.call(Mistri::Event.new(type: :text_end, content_index: 0, content: "hi"))
+    assert_output(nil, /logging sink failed/) do
+      sink.run_started(verb: "run", model: "m", tool_count: 0)
+    end
+  end
+
+  def test_for_session_tags_lines_with_the_session_or_a_label
+    logger, io = capture
+    base = Mistri::Sinks::Logger.new(logger)
+
+    base.for_session("0a1b2c3d-ffff-4444-aaaa-000000000000")
+        .call(Mistri::Event.new(type: :text_end, content_index: 0, content: "hi"))
+    base.for_session("0a1b2c3d-ffff-4444-aaaa-000000000000", label: "researcher#0a1b2c3d")
+        .call(Mistri::Event.new(type: :text_end, content_index: 0, content: "ho"))
 
     assert_match(/\[mistri 0a1b2c3d\] text "hi"/, io.string)
+    assert_match(/\[mistri researcher#0a1b2c3d\] text "ho"/, io.string)
   end
 
-  def test_a_run_logs_its_whole_story
+  def test_rejects_junk_assignments_at_assignment_time
+    assert_raises(Mistri::ConfigurationError) { Mistri.logger = Object.new }
+    assert_raises(Mistri::ConfigurationError) do
+      Mistri.logger = Mistri::Sinks::Coalesced.new(->(_event) {})
+    end
+
+    Mistri.logger = capture.first
+    Mistri.logger = Mistri::Sinks::Logger.new(capture.first)
+    Mistri.logger = nil
+  end
+
+  def test_a_run_logs_its_whole_story_in_order
     logger, io = capture
     Mistri.logger = logger
     provider = Mistri::Providers::Fake.new(turns: [
@@ -159,16 +244,61 @@ class TestLoggerSink < Minitest::Test
     result = Mistri::Agent.new(provider:, tools: [add]).run("What is 2 plus 3?")
 
     assert_predicate result, :completed?
+    # The model's turn genuinely completes before its tools execute, so the
+    # turn line precedes the tool lines. This order is the README example's
+    # source of truth.
+    assert_equal %w[run turn tool tool text turn done], kinds(io)
     log = io.string
 
     assert_match(/run "What is 2 plus 3\?" \(fake-1, 1 tool\)/, log)
-    assert_match(/tool add \{"a":2,"b":3\}/, log)
-    assert_match(/tool add ok/, log)
-    assert_match(/turn 1 done tool_use/, log)
+    assert_match(/tool add#\S+ \{"a":2,"b":3\}/, log)
+    assert_match(/tool add#\S+ ok/, log)
     assert_match(/text "The sum is 5\."/, log)
-    assert_match(/turn 2 done stop/, log)
     assert_match(/done completed in/, log)
     assert_match(/\[mistri [0-9a-f]{8}\]/, log)
+  end
+
+  def test_task_logs_one_frame_around_its_fix_passes
+    logger, io = capture
+    Mistri.logger = logger
+    provider = Mistri::Providers::Fake.new(turns: [
+                                             { text: '{"answer": 41}' },
+                                             { text: '{"answer": "42"}' }
+                                           ])
+
+    result = Mistri::Agent.new(provider:).task("The answer?", schema: SCHEMA)
+
+    assert_equal({ "answer" => "42" }, result.output)
+    assert_equal %w[task text turn text turn done], kinds(io)
+    assert_match(/task "The answer\?" \(fake-1, 0 tools\)/, io.string)
+    assert_match(/done completed in \d+m?s, 2 turns/, io.string)
+  end
+
+  def test_resume_frames_its_outcomes_including_still_pending
+    logger, io = capture
+    Mistri.logger = logger
+    gated = Mistri::Tool.define("send_gift", "Sends.", needs_approval: true) { "sent" }
+    provider = Mistri::Providers::Fake.new(turns: [
+                                             { tool_calls: [{ name: "send_gift",
+                                                              arguments: {} }] },
+                                             { text: "Sent it." }
+                                           ])
+    agent = Mistri::Agent.new(provider:, tools: [gated])
+
+    suspended = agent.run("send sarah a gift")
+    agent.resume
+    agent.session.approve(suspended.pending.fetch(0).id)
+    finished = agent.resume
+
+    assert_predicate finished, :completed?
+    log = io.string
+
+    assert_match(/approval needed send_gift#\S+ \{\}/, log)
+    assert_equal 2, log.scan("done suspended (1 approval pending)").length,
+                 "the run frame and the still-pending resume frame both report suspension"
+    assert_equal 2, log.scan("resume (fake-1, 1 tool)").length
+    assert_match(/tool send_gift#\S+ ok/, log)
+    assert_match(/done completed in/, log)
   end
 
   def test_the_callers_block_still_sees_every_event
@@ -196,7 +326,23 @@ class TestLoggerSink < Minitest::Test
     assert_match(/crashed TestLoggerSink::Boom: host sink died/, io.string)
   end
 
-  def test_sub_agents_log_once_each_under_their_own_session
+  def test_an_invalid_byte_crash_keeps_the_hosts_exception
+    logger, io = capture
+    Mistri.logger = logger
+    provider = Mistri::Providers::Fake.new(turns: [{ text: "Hello!" }])
+    bad = "boom \xFF".dup.force_encoding(Encoding::UTF_8)
+
+    error = assert_raises(Boom) do
+      Mistri::Agent.new(provider:).run("hi") do |event|
+        raise Boom, bad if event.type == :done
+      end
+    end
+
+    assert_instance_of Boom, error
+    assert_match(/crashed TestLoggerSink::Boom/, io.string)
+  end
+
+  def test_sub_agents_log_once_each_under_their_own_label
     logger, io = capture
     Mistri.logger = logger
     child_provider = Mistri::Providers::Fake.new(turns: [{ text: "Paris." }])
@@ -217,17 +363,24 @@ class TestLoggerSink < Minitest::Test
     assert_equal 1, log.scan('text "Paris."').length,
                  "the child's answer logs once, from the child's own agent"
     assert_equal 1, log.scan('text "It is Paris."').length
-    assert_match(/run "Capital of France\?"/, log)
-    assert_equal 2, log.scan(/\[mistri ([0-9a-f]{8})\]/).uniq.length,
-                 "parent and child log under their own session tags"
+    assert_match(/\[mistri researcher#[0-9a-f]{8}\] run "Capital of France\?"/, log)
+    assert_match(/\[mistri [0-9a-f]{8}\] run "Ask the researcher\."/, log)
   end
 
-  def test_no_logger_means_no_logging
+  def test_no_logger_builds_no_sink
     provider = Mistri::Providers::Fake.new(turns: [{ text: "Hello!" }])
+    built = false
+    original = Mistri::Sinks::Logger.method(:new)
+    Mistri::Sinks::Logger.define_singleton_method(:new) do |*args, **options|
+      built = true
+      original.call(*args, **options)
+    end
 
-    result = nil
-    assert_silent { result = Mistri::Agent.new(provider:).run("hi") }
+    result = Mistri::Agent.new(provider:).run("hi")
 
     assert_predicate result, :completed?
+    refute built, "with no logger assigned, no sink should ever be constructed"
+  ensure
+    Mistri::Sinks::Logger.singleton_class.remove_method(:new)
   end
 end

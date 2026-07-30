@@ -58,9 +58,9 @@ module Mistri
 
       def run_child_agent(child:, label:, provider:, system:, tools:, task:, schema:,
                           signal:, emit:, agent_options:)
-        agent = Agent.new(provider: provider, session: child, system: system,
-                          tools: tools, **agent_options)
         origin = "#{label}##{child.id[0, 8]}"
+        agent = Agent.new(provider: provider, session: child, system: system,
+                          tools: tools, log_label: origin, **agent_options)
         tagged = ->(event) { forward(event, origin, emit) }
         return agent.task(task, schema: schema, signal: signal, &tagged) if schema
 

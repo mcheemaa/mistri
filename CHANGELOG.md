@@ -7,15 +7,21 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 - `Mistri.logger` and `Mistri::Sinks::Logger`: assign any Logger-compatible
   object and every run logs its story as one scannable line per beat, tagged
-  with its session: the input, each tool call with its arguments, each
-  result with its duration, each turn's token usage, retries, compaction,
-  approvals, worker reports, and a closing line with the run's outcome,
-  elapsed time, and dollar cost when pricing is known. Deltas never log;
-  origin-tagged events are skipped so every agent (sub-agents included, in
-  any process) logs its own events exactly once. Assign a preconfigured
-  `Sinks::Logger` for options (`color:`, `truncate:`), or compose one per
-  run like any sink. A logging failure warns once and goes quiet; it never
-  breaks a run. With no logger assigned, nothing changes.
+  by session (sub-agents get their worker label): the input, each tool call
+  and result with a short pairing id, arguments, duration, and payload size,
+  each turn's token usage, retries, compaction, approvals, worker reports,
+  and a closing line with the run's outcome, elapsed time, turn count, and
+  dollar cost when pricing is known. `task` logs one frame around all its
+  fix passes. Deltas never log; origin-tagged events are skipped so every
+  agent, in any process, logs its own events exactly once. `level:` floors
+  the ordinary lines (warnings and errors keep their own levels), `color:`
+  and `truncate:` are per-sink options, and a preconfigured sink can be
+  assigned directly; a wrong assignment raises `ConfigurationError` at
+  assignment time. Logging failures warn once per run and the run's sink
+  goes quiet: they never raise into the run or replace a host exception,
+  including on invalid byte sequences. With no logger assigned the event
+  path is untouched (one nil check per run, nothing per event); with one
+  assigned, delta events short-circuit without allocating.
 
 ## [0.6.1] - 2026-07-21
 

@@ -39,10 +39,12 @@ module Mistri
     # when an approved call finally executes, so a decision that aged days
     # still passes current policy); after_tool(call, result, context) may
     # return a replacement result, or nil to keep the original.
+    # log_label tags this agent's log lines (sub-agents
+    # get their worker label); nil falls back to the session id.
     def initialize(provider:, session: nil, system: nil, tools: [], budget: nil,
                    max_concurrency: 4, transform_context: nil, compaction: Compaction.new,
                    retries: RetryPolicy.new, skills: [], before_tool: nil, after_tool: nil,
-                   context: nil)
+                   context: nil, log_label: nil)
       @provider = provider
       @session = session || Session.new(store: Stores::Memory.new)
       skills = skills.is_a?(String) ? Skills.load(skills) : Array(skills)
@@ -62,6 +64,8 @@ module Mistri
       @before_tool = before_tool
       @after_tool = after_tool
       @context = context
+      @log_label = log_label
+      @log_depth = 0
     end
 
     attr_reader :session
@@ -97,13 +101,13 @@ module Mistri
     def resume(signal: nil, &emit)
       open = refresh_tool_control
       pending = open.select { |approval| approval[:decision].nil? }
-      if pending.any?
-        return Result.new(message: nil, status: :awaiting_approval,
+      logged(emit, verb: "resume") do |subscriber|
+        if pending.any?
+          next Result.new(message: nil, status: :awaiting_approval,
                           pending: pending.map { |approval| approval[:call] },
                           usage: Usage.zero)
-      end
+        end
 
-      logged(emit, verb: "resume") do |subscriber|
         executed = settle(open, signal, &subscriber)
         if signal&.aborted?
           last = @session.messages.reverse_each.find(&:assistant?)
@@ -131,22 +135,11 @@ module Mistri
     # back. Ask again once the answer arrives.
     def task(input, schema:, images: [], signal: nil, fixes: 1, &emit)
       plan = Schema.task_plan(schema)
-      result = run(
-        TaskOutput.prompt(input, plan), images:, signal:, output_schema: plan, &emit
-      )
-      spent = result.usage
-      fixes.downto(0) do |remaining|
-        result = result.with(usage: spent)
-        return result unless result.completed?
-        return result if result.handed_off?
-
-        value = TaskOutput.parse(result.text)
-        errors = TaskOutput.errors(value, plan)
-        return result.with(output: value) if errors.empty?
-        raise SchemaError, "task output failed validation: #{errors.join("; ")}" if remaining.zero?
-
-        result = run(TaskOutput.fix_prompt(errors), signal:, output_schema: plan, &emit)
-        spent += result.usage
+      # One log frame for the whole task, fix passes included: the inner
+      # runs see the frame open and only tee, so the single done line
+      # reports the validated outcome, not a rejected intermediate answer.
+      logged(emit, verb: "task", input: input) do |subscriber|
+        validated_task(input, plan, images, signal, fixes, &subscriber)
       end
     end
 
@@ -169,42 +162,72 @@ module Mistri
 
     private
 
+    # The body of task, extracted so its early returns close the log frame
+    # instead of skipping it.
+    def validated_task(input, plan, images, signal, fixes, &emit)
+      result = run(
+        TaskOutput.prompt(input, plan), images:, signal:, output_schema: plan, &emit
+      )
+      spent = result.usage
+      fixes.downto(0) do |remaining|
+        result = result.with(usage: spent)
+        return result unless result.completed?
+        return result if result.handed_off?
+
+        value = TaskOutput.parse(result.text)
+        errors = TaskOutput.errors(value, plan)
+        return result.with(output: value) if errors.empty?
+        raise SchemaError, "task output failed validation: #{errors.join("; ")}" if remaining.zero?
+
+        result = run(TaskOutput.fix_prompt(errors), signal:, output_schema: plan, &emit)
+        spent += result.usage
+      end
+    end
+
     # When a host sets Mistri.logger, every public run tees its events into
     # a fresh logging sink for this session alongside the caller's block,
     # and the framing lines carry what the stream cannot: the input, the
-    # model, and the final Result. Nothing wraps when no logger is set, and
-    # a caller's subscriber failures propagate exactly as before because
-    # the sink never raises.
+    # model, and the final Result. Nothing wraps when no logger is set, a
+    # nested public call (task's inner runs) reuses the open frame, and a
+    # caller's subscriber failures propagate exactly as before because the
+    # sink never raises.
     def logged(emit, verb:, input: nil)
       sink = log_sink
       return yield(emit) unless sink
 
-      sink.run_started(verb: verb, input: input, model: @provider.model,
-                       tool_count: @tools.length)
-      subscriber = if emit
-                     lambda { |event|
-                       sink.call(event)
-                       emit.call(event)
-                     }
-                   else
-                     sink.to_proc
-                   end
+      @log_depth += 1
       begin
-        result = yield(subscriber)
-      rescue StandardError => e
-        sink.run_crashed(EventDelivery.original(e))
-        raise
+        sink.run_started(verb: verb, input: input, model: @provider.model,
+                         tool_count: @tools.length)
+        subscriber = if emit
+                       lambda { |event|
+                         sink.call(event)
+                         emit.call(event)
+                       }
+                     else
+                       sink.to_proc
+                     end
+        begin
+          result = yield(subscriber)
+        rescue StandardError => e
+          sink.run_crashed(EventDelivery.original(e))
+          raise
+        end
+        sink.run_finished(result)
+        result
+      ensure
+        @log_depth -= 1
       end
-      sink.run_finished(result)
-      result
     end
 
     def log_sink
+      return nil if @log_depth.positive?
+
       configured = Mistri.logger
       return nil unless configured
 
-      sink = configured.is_a?(Sinks::Logger) ? configured : Sinks::Logger.new(configured)
-      sink.for_session(@session.id)
+      sink = configured.respond_to?(:for_session) ? configured : Sinks::Logger.new(configured)
+      sink.for_session(@session.id, label: @log_label)
     end
 
     def loop_turns(signal, output_schema = nil, &emit)

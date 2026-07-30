@@ -241,28 +241,43 @@ Mistri.logger = Rails.logger   # or any Logger-compatible object
 
 ```text
 [mistri 0a1b2c3d] run "What is 2 plus 3?" (gpt-5.6, 3 tools)
-[mistri 0a1b2c3d] tool add {"a":2,"b":3}
-[mistri 0a1b2c3d] tool add ok 12ms "5"
 [mistri 0a1b2c3d] turn 1 done tool_use (312 in / 48 out)
+[mistri 0a1b2c3d] tool add#7f3a {"a":2,"b":3}
+[mistri 0a1b2c3d] tool add#7f3a ok 12ms "5"
 [mistri 0a1b2c3d] text "The sum is 5."
 [mistri 0a1b2c3d] turn 2 done stop (410 in / 22 out)
 [mistri 0a1b2c3d] done completed in 1.2s, 2 turns, 722 in / 70 out, $0.0042
 ```
 
-Failed tools and retries log at warn, provider errors at error, and the
-closing line reports suspension, abort, or budget stops just as plainly.
-Sub-agents log under their own session tags exactly once, whichever process
-runs them, so concurrent workers interleave without garbling. Assign a
-preconfigured sink for options, or compose one per run like any other sink:
+A turn line lands when the model finishes speaking, so it precedes the tool
+executions that turn requested. The short `#id` on tool lines pairs
+concurrent same-name calls and is the handle `session.approve` needs when an
+`approval needed` line appears. Failed tools and retries log at warn,
+provider errors at error, and the closing line reports suspension, abort, or
+budget stops just as plainly. Sub-agents log under their own worker label
+(`[mistri researcher#89bb20de]`) exactly once, whichever process runs them;
+interleaved lines stay whole as long as the logger serializes writes, which
+stdlib `Logger` and Rails' do. A `task` logs one frame around all its fix
+passes.
+
+Assign a preconfigured sink for options. `level: :debug` floors the ordinary
+lines so a production logger sitting at `:info` stays clean, `truncate`
+bounds quoted values, and a wrong assignment raises at assignment time
+rather than leaving the log silently empty:
 
 ```ruby
-Mistri.logger = Mistri::Sinks::Logger.new(logger, color: true, truncate: 500)
-agent.run(input, &Mistri::Sinks::Logger.new(logger))
+Mistri.logger = Mistri::Sinks::Logger.new(logger, color: true, truncate: 500,
+                                          level: :debug)
 ```
 
-Logging never breaks a run: a failing logger warns once and the sink goes
-quiet. Production observability belongs to your telemetry sink; this one is
-for humans (and their AI agents) reading a log.
+Composing per run (`agent.run(input, &Mistri::Sinks::Logger.new(logger))`)
+is deliberately smaller: it delivers the event lines only, with no framing
+and no tag, because those come from the Agent. Logging never breaks a run: a
+failing logger warns once per run and that run's sink goes quiet. With no
+logger assigned the cost is one nil check per run; with one assigned, delta
+events short-circuit without allocating. Production observability belongs to
+your telemetry sink; this one is for humans (and their AI agents) reading a
+log.
 
 ## Long conversations and structured tasks
 

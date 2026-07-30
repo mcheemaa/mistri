@@ -68,10 +68,21 @@ module Mistri
 
   # The configured lock adapter, nil until a host sets one. See Locks.
   # The run logger, nil until a host sets one: a Logger-compatible object
-  # (info/warn/error), or a Sinks::Logger for options. Every Agent#run and
-  # #resume then logs its story. See Sinks::Logger.
+  # (info/warn/error), or a Sinks::Logger for options. Every Agent run
+  # then logs its story. A wrong assignment raises here, where the typo
+  # is, instead of leaving every run's log silently empty.
   class << self
-    attr_accessor :locks, :logger
+    attr_accessor :locks
+    attr_reader :logger
+
+    def logger=(value)
+      unless value.nil? || value.respond_to?(:for_session) || value.respond_to?(:info)
+        raise ConfigurationError,
+              "Mistri.logger takes a Logger-compatible object or a Mistri::Sinks::Logger"
+      end
+
+      @logger = value
+    end
   end
 
   module_function
