@@ -16,12 +16,13 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   pricing is known, a known $0.0000 included. `task` logs one frame around
   all its fix passes, and the frame covers the whole public method, so store
   and audit failures get a crash line too. Payloads log in full by default;
-  `content: false` keeps the same story as metadata only. `level:` floors
+  `content: false` keeps the same story as metadata only, error, crash, and
+  retry free text included, since exception messages can echo payloads. `level:` floors
   the ordinary lines (warnings and errors keep their own levels, and
   expected stops such as cancels and budget ceilings log calmly), `color:`
-  and `truncate:` are per-sink options, and a preconfigured sink can be
-  assigned directly; wrong assignments and options raise at configuration
-  time. Sinks the Agent builds skip origin-tagged events so every agent, in
+  and `truncate:` are per-sink options, and a preconfigured `Sinks::Logger`
+  (subclasses included) can be assigned directly; wrong assignments and
+  options raise at configuration time. Sinks the Agent builds skip origin-tagged events so every agent, in
   any process, logs its own events exactly once; a sink composed directly
   per run renders forwarded child events with their origin instead. Logging
   never breaks a run: sink construction and every write are contained,
@@ -32,8 +33,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   the event path is untouched (one nil check per run, nothing per event);
   with one assigned, delta events short-circuit without allocating,
   formatting is skipped when the floor level is disabled, and per-line
-  string work, tool arguments included, is bounded by the truncation limit,
-  not the payload.
+  string work, tool argument keys and values included, is bounded by the
+  truncation limit, not the payload.
 
 ## [0.6.1] - 2026-07-21
 

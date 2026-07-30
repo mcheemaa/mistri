@@ -93,7 +93,7 @@ module Mistri
         configured = Mistri.logger
         return nil unless configured
 
-        sink = configured.respond_to?(:for_session) ? configured : new(configured)
+        sink = configured.is_a?(self) ? configured : new(configured)
         sink.for_session(id, label: label)
       rescue StandardError => e
         warn "mistri: logging sink construction failed (#{e.class}: #{e.message}); run not logged"
@@ -110,7 +110,7 @@ module Mistri
         handler = LINES[event.type]
         prefix = event.origin ? "#{field(event.origin)} " : ""
         # Future event types degrade to a greppable line, never to silence.
-        line = handler ? send(handler, event) : "#{event.type} #{trim(event.content)}".rstrip
+        line = handler ? send(handler, event) : "#{event.type} #{body_of(event.content)}".rstrip
         write("#{prefix}#{line.first}", level: line.last) if line.is_a?(Array)
         write("#{prefix}#{line}") if line.is_a?(String)
       rescue StandardError => e
@@ -145,7 +145,7 @@ module Mistri
       end
 
       def run_crashed(error)
-        write("#{paint("crashed", :red)} #{error.class}: #{trim(error.message)}", level: :error)
+        write("#{paint("crashed", :red)} #{error.class}#{note(error.message)}", level: :error)
       rescue StandardError => e
         quiet(e)
       end
@@ -189,15 +189,14 @@ module Mistri
           "aborted"
         else
           @turns += 1
-          detail = [event.reason, presence(trim(event.error_message))].compact.join(": ")
-          ["#{paint("error", :red)} #{detail}", :error]
+          ["#{paint("error", :red)} #{event.reason}#{note(event.error_message)}", :error]
         end
       end
 
       def retry_line(event)
         wait = event.delay ? " in #{event.delay.round(1)}s" : ""
-        ["#{paint("retry", :yellow)} #{event.attempt}/#{event.max_attempts}#{wait}: " \
-         "#{trim(event.content)}", :warn]
+        ["#{paint("retry", :yellow)} #{event.attempt}/#{event.max_attempts}#{wait}" \
+         "#{note(event.content)}", :warn]
       end
 
       # The full call id rides the line: Session#approve takes exactly that
@@ -278,17 +277,19 @@ module Mistri
         case value
         when Hash
           walk(value, out, "{", "}") do |(key, item)|
-            out << JSON.generate(key.to_s) << ":"
+            out << JSON.generate(snip(key.to_s)) << ":"
             preview(item, out)
           end
         when Array
           walk(value, out, "[", "]") { |item| preview(item, out) }
         when String
-          out << JSON.generate(@truncate ? value[0, @truncate] : value)
+          out << JSON.generate(snip(value))
         else
           out << JSON.generate(value)
         end
       end
+
+      def snip(text) = @truncate ? text[0, @truncate] : text
 
       def walk(items, out, open, close)
         out << open
@@ -299,6 +300,15 @@ module Mistri
           yield(item)
         end
         out << close
+      end
+
+      # Diagnostics keep their class and reason in every mode; the free
+      # text obeys content:, because exception messages can echo payloads.
+      def note(text)
+        flat = presence(trim(text))
+        return "" unless flat
+
+        @content ? ": #{flat}" : " (#{bytes(text)})"
       end
 
       # content: false keeps the beat and the volume, never the words.

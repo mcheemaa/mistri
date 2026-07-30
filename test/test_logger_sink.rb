@@ -451,10 +451,11 @@ class TestLoggerSink < Minitest::Test # rubocop:disable Metrics/ClassLength -- o
     assert_raises(ArgumentError) { Mistri::Sinks::Logger.new(logger, forwarded: :maybe) }
   end
 
-  def test_a_raising_sink_factory_never_breaks_the_run
-    factory = Object.new
-    def factory.for_session(*) = raise "factory died"
-    Mistri.logger = factory
+  def test_a_raising_sink_never_breaks_the_run
+    broken = Class.new(Mistri::Sinks::Logger) do
+      def for_session(*) = raise "factory died"
+    end.new(capture.first)
+    Mistri.logger = broken
     provider = Mistri::Providers::Fake.new(turns: [{ text: "hi" }])
 
     result = nil
@@ -463,6 +464,39 @@ class TestLoggerSink < Minitest::Test # rubocop:disable Metrics/ClassLength -- o
     end
 
     assert_predicate result, :completed?
+  end
+
+  def test_foreign_sink_factories_are_rejected_at_assignment
+    factory = Object.new
+    def factory.for_session(*) = self
+
+    assert_raises(Mistri::ConfigurationError) { Mistri.logger = factory }
+  end
+
+  def test_content_off_covers_diagnostic_free_text
+    logger, io = capture
+    sink = Mistri::Sinks::Logger.new(logger, content: false)
+
+    sink.run_crashed(RuntimeError.new("password=hunter2"))
+    sink.call(Mistri::Event.new(type: :error, reason: :error,
+                                error_message: "token sk-secret rejected"))
+    sink.call(Mistri::Event.new(type: :retry, content: "key sk-secret throttled",
+                                attempt: 1, max_attempts: 3, delay: 2.0))
+
+    refute_match(/hunter2|sk-secret/, io.string)
+    assert_match(/crashed RuntimeError \(16B\)/, io.string)
+    assert_match(/error error \(24B\)/, io.string)
+    assert_match(%r{retry 1/3 in 2.0s \(23B\)}, io.string)
+  end
+
+  def test_argument_previews_bound_hash_keys_too
+    logger, io = capture
+    sink = Mistri::Sinks::Logger.new(logger)
+    call = tool_call("save", { ("k" * 300_000) => 1 })
+
+    sink.call(Mistri::Event.new(type: :tool_started, tool_call: call))
+
+    assert_operator io.string.lines.fetch(0).length, :<, 400
   end
 
   def test_the_global_requires_the_full_severity_contract

@@ -76,7 +76,7 @@ module Mistri
     attr_reader :logger
 
     def logger=(value)
-      sink_like = value.respond_to?(:for_session)
+      sink_like = value.is_a?(Sinks::Logger)
       logger_like = %i[info warn error].all? { |severity| value.respond_to?(severity) }
       unless value.nil? || sink_like || logger_like
         raise ConfigurationError,

@@ -268,7 +268,8 @@ That is the point in development, and it is fine in production too when
 your log pipeline is where you want the story (shipping these lines to your
 log platform gives you agent observability for free). When payloads must
 stay out of a log, `content: false` keeps the whole story as metadata:
-names, ids, durations, sizes, tokens, cost, and statuses. `level: :debug`
+names, ids, durations, sizes, tokens, cost, and statuses, and error, crash,
+and retry text reduces to its byte size while classes and reasons stay. `level: :debug`
 floors the ordinary lines, `truncate` bounds rendered values, and a wrong
 assignment raises at assignment time:
 
@@ -279,7 +280,10 @@ Mistri.logger = Mistri::Sinks::Logger.new(logger, content: false, level: :debug)
 Composing per run (`agent.run(input, &Mistri::Sinks::Logger.new(logger))`)
 is deliberately smaller: event lines under a bare `[mistri]` tag, no
 framing, and forwarded child events rendered with their origin, since no
-child sink exists to log them. Logging never breaks a run: construction and
+child sink exists to log them. Logger calls are synchronous on
+the run's own threads, so a slow logger slows the run: keep the destination
+local (stdout, a file) and let your log shipper make the network hop, or
+buffer at the logger layer. Logging never breaks a run: construction and
 every write are contained, and a failing logger warns once per run and that
 run's sink goes quiet. With no logger assigned the cost is one nil check
 per run; with one assigned, delta events short-circuit without allocating
