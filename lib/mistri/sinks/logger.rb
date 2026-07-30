@@ -38,7 +38,9 @@ module Mistri
                 approval_needed: :approval_line, compacting: :compacting_line,
                 compaction: :compaction_line, subagent_report: :report_line }.freeze
       COLORS = { bold: "1", dim: "2", red: "31", green: "32", yellow: "33" }.freeze
-      private_constant :SKIPPED, :LINES, :COLORS
+      CONTROLS = /[\x00-\x1f\x7f]/
+      HEAD = 4096
+      private_constant :SKIPPED, :LINES, :COLORS, :CONTROLS, :HEAD
 
       # truncate bounds every quoted value (nil for full payloads). session
       # is the line tag, verbatim, so concurrent runs stay distinguishable.
@@ -132,11 +134,20 @@ module Mistri
         write("turn #{@turns} done #{event.reason}#{tokens(event.message&.usage)}")
       end
 
-      # An errored turn still made a provider call, so it counts.
+      # :error also carries expected stops, which log calmly; only real
+      # failures alarm. A budget stop is synthetic (no provider call), so
+      # it alone does not count as a turn.
       def error_line(event)
-        @turns += 1
-        detail = [event.reason, presence(trim(event.error_message))].compact.join(": ")
-        write("#{paint("error", :red)} #{detail}", level: :error)
+        case event.reason
+        when StopReason::BUDGET then write("stopped on budget", level: :warn)
+        when StopReason::ABORTED
+          @turns += 1
+          write("aborted")
+        else
+          @turns += 1
+          detail = [event.reason, presence(trim(event.error_message))].compact.join(": ")
+          write("#{paint("error", :red)} #{detail}", level: :error)
+        end
       end
 
       def retry_line(event)
@@ -173,13 +184,21 @@ module Mistri
       def summary(usage)
         return "" unless usage
 
-        base = ", #{usage.input} in / #{usage.output} out"
+        base = ", #{prompt(usage)} / #{usage.output} out"
         cost = usage.cost
         cost&.known? && cost.total.positive? ? base + format(", $%.4f", cost.total) : base
       end
 
       def tokens(usage)
-        usage ? " (#{usage.input} in / #{usage.output} out)" : ""
+        usage ? " (#{prompt(usage)} / #{usage.output} out)" : ""
+      end
+
+      # Cache traffic is real prompt volume; input alone under-reports it.
+      def prompt(usage)
+        cached = usage.cache_read + usage.cache_write
+        return "#{usage.input} in" unless cached.positive?
+
+        "#{usage.input + cached} in (#{cached} cached)"
       end
 
       # A short call id makes concurrent same-name calls pairable and gives
@@ -210,14 +229,19 @@ module Mistri
 
       def trim(text) = clip(text).first
 
-      # Invalid bytes degrade to replacement characters instead of raising
-      # out of a log line: scrub repairs a string invalid in its own
-      # encoding (encode alone skips same-encoding validation), then encode
-      # converts binary. The size suffix reports the original payload.
+      # String work per line stays bounded: only a head of the payload is
+      # normalized, never all of it. scrub repairs invalid bytes (encode
+      # alone skips same-encoding validation), encode converts binary, and
+      # non-printing controls become visible escapes so untrusted output
+      # cannot steer a terminal. The size suffix reports the whole payload.
       def clip(text)
-        flat = text.to_s.scrub.encode(Encoding::UTF_8, invalid: :replace, undef: :replace)
+        raw = text.to_s
+        head = @truncate ? raw[0, [(@truncate * 2) + 1, HEAD].max] : raw
+        flat = head.scrub.encode(Encoding::UTF_8, invalid: :replace, undef: :replace)
                    .gsub(/\s+/, " ").strip
-        return [flat, false] unless @truncate && flat.length > @truncate
+                   .gsub(CONTROLS) { |control| format("\\x%02x", control.ord) }
+        cut = @truncate && (flat.length > @truncate || head.bytesize < raw.bytesize)
+        return [flat, false] unless cut
 
         ["#{flat[0, @truncate].rstrip}...", true]
       end

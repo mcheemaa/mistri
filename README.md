@@ -252,9 +252,11 @@ Mistri.logger = Rails.logger   # or any Logger-compatible object
 A turn line lands when the model finishes speaking, so it precedes the tool
 executions that turn requested. The short `#id` on tool lines pairs
 concurrent same-name calls and is the handle `session.approve` needs when an
-`approval needed` line appears. Failed tools and retries log at warn,
-provider errors at error, and the closing line reports suspension, abort, or
-budget stops just as plainly. Sub-agents log under their own worker label
+`approval needed` line appears. Failed tools and retries log at warn
+and provider errors at error, while expected stops (a cancel, a budget
+ceiling) log calmly; the closing line reports suspension, abort, or budget
+stops just as plainly. Cached prompt tokens count toward "in" and are called
+out, and non-printing bytes render as visible escapes. Sub-agents log under their own worker label
 (`[mistri researcher#89bb20de]`) exactly once, whichever process runs them;
 interleaved lines stay whole as long as the logger serializes writes, which
 stdlib `Logger` and Rails' do. A `task` logs one frame around all its fix

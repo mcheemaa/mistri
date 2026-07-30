@@ -19,9 +19,15 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   assigned directly; a wrong assignment raises `ConfigurationError` at
   assignment time. Logging failures warn once per run and the run's sink
   goes quiet: they never raise into the run or replace a host exception,
-  including on invalid byte sequences. With no logger assigned the event
-  path is untouched (one nil check per run, nothing per event); with one
-  assigned, delta events short-circuit without allocating.
+  including on invalid byte sequences. Cached prompt tokens count toward
+  the tokens in and are called out (`900 in (890 cached)`); expected stops
+  log calmly (a cancel at info, a budget stop at warn, and a synthetic
+  budget stop never counts as a turn) so only real failures log at error;
+  non-printing bytes render as visible escapes so untrusted output cannot
+  steer a terminal. With no logger assigned the event path is untouched
+  (one nil check per run, nothing per event); with one assigned, delta
+  events short-circuit without allocating and per-line string work is
+  bounded by the truncation limit, not the payload.
 
 ## [0.6.1] - 2026-07-21
 

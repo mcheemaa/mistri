@@ -150,6 +150,41 @@ class TestLoggerSink < Minitest::Test # rubocop:disable Metrics/ClassLength -- o
     assert_match(/tool read#c1 ok "x{1,20}\.\.\." \(4.9KB\)/, io.string)
   end
 
+  def test_expected_stops_log_calmly_and_budget_never_counts_a_turn
+    logger, io = capture
+    sink = Mistri::Sinks::Logger.new(logger)
+
+    sink.call(Mistri::Event.new(type: :done, reason: :stop))
+    sink.call(Mistri::Event.new(type: :error, reason: :budget))
+    sink.run_finished(Mistri::Result.new(message: nil, status: :budget))
+    sink.call(Mistri::Event.new(type: :error, reason: :aborted))
+
+    assert_match(/WARN \[mistri\] stopped on budget$/, io.string)
+    assert_match(/WARN \[mistri\] done stopped on budget in \d+m?s, 1 turn/, io.string)
+    assert_match(/INFO \[mistri\] aborted/, io.string)
+    refute_match(/ERROR/, io.string)
+  end
+
+  def test_counts_cached_prompt_tokens
+    logger, io = capture
+    sink = Mistri::Sinks::Logger.new(logger)
+    usage = Mistri::Usage.new(input: 10, output: 22, cache_read: 850, cache_write: 40)
+
+    sink.run_finished(Mistri::Result.new(message: nil, status: :completed, usage: usage))
+
+    assert_match(%r{done completed in \d+m?s, 0 turns, 900 in \(890 cached\) / 22 out}, io.string)
+  end
+
+  def test_escapes_control_characters_in_untrusted_content
+    logger, io = capture
+    sink = Mistri::Sinks::Logger.new(logger)
+
+    sink.call(Mistri::Event.new(type: :text_end, content_index: 0,
+                                content: "hi \e[31mboo\u0000tail"))
+
+    assert_includes io.string, 'text "hi \x1b[31mboo\x00tail"'
+  end
+
   def test_no_size_suffix_when_only_whitespace_collapsed
     logger, io = capture
     sink = Mistri::Sinks::Logger.new(logger)
