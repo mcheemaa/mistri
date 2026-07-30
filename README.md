@@ -104,6 +104,8 @@ send_gift = Mistri::Tool.define(
   needs_approval: ->(args) { args.fetch("total_usd") > 500 },
 ) { |args| Gifts.send!(args) }
 
+agent = Mistri.agent("claude-opus-5", tools: [send_gift])
+
 result = agent.run("Send the executive box to Sarah.")
 result.awaiting_approval? # => true; the handler did not run
 
@@ -114,8 +116,8 @@ agent.resume
 
 With a durable store, the decision can come from a controller, a job, or a
 console in a different process, days later, using only the session ID and the
-call ID. `resume` rebuilds current tools and policy, revalidates the exact
-call, and carries on. See
+call ID. A later process builds a fresh Agent with its current tools and
+policy; `resume` then revalidates the exact call and carries on. See
 [Sessions and control](docs/sessions.md#human-approval).
 
 ## Why Mistri
@@ -166,7 +168,8 @@ Mistri.agent("claude-opus-5", session: session).run("Start a haiku about the sea
 reloaded = Mistri::Session.new(store: store, id: session.id)
 Mistri.agent("claude-opus-5", session: reloaded).run("Now finish it.")
 
-# Steering redirects a live run from anywhere, without its Agent object.
+# Steering queues a redirect from anywhere, without the Agent object; a
+# run in flight folds it at its next turn.
 reloaded.steer("Make it about the mountains instead.")
 ```
 
@@ -193,14 +196,21 @@ background job, or a test.
 
 ## Long conversations and structured tasks
 
-Compaction is on by default: near the model's context limit, Mistri asks the
-provider for a visible summary and continues from it, while the exact history
-stays in the store. Task mode requires a final JSON value matching a schema,
-validated locally in every case.
+Compaction is on by default for models with a known context window: near the
+limit, Mistri asks the provider for a visible summary and continues from it,
+while the exact history stays in the store. Task mode requires a final JSON
+value matching a schema, validated locally whenever the run completes
+normally.
 
 ```ruby
 agent.context_usage
 # => { tokens: 141_000, window: 1_000_000, fraction: 0.141 }
+
+schema = {
+  type: "object",
+  properties: { "tiers" => { type: "array", items: { type: "string" } } },
+  required: ["tiers"],
+}
 
 result = agent.task("Extract the pricing tiers.", schema: schema)
 result.output # parsed and validated
