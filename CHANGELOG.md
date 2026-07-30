@@ -5,6 +5,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [0.7.0] - 2026-07-30
+
 - `Mistri.logger` and `Mistri::Sinks::Logger`: assign any Logger-compatible
   object and every run logs its story as one scannable line per beat, tagged
   by session (sub-agents get their worker label): the input, each tool call
@@ -913,7 +915,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 - Reserved the gem name.
 
-[Unreleased]: https://github.com/mcheemaa/mistri/compare/v0.6.1...HEAD
+[Unreleased]: https://github.com/mcheemaa/mistri/compare/v0.7.0...HEAD
+[0.7.0]: https://github.com/mcheemaa/mistri/compare/v0.6.1...v0.7.0
 [0.6.1]: https://github.com/mcheemaa/mistri/compare/v0.6.0...v0.6.1
 [0.6.0]: https://github.com/mcheemaa/mistri/compare/v0.5.0...v0.6.0
 [0.5.0]: https://github.com/mcheemaa/mistri/compare/v0.4.1...v0.5.0
