@@ -17,7 +17,7 @@ jobs:
       # One entry measures coverage and enforces the floor.
       COVERAGE: ${{ matrix.ruby == '3.4' && '1' || '0' }}
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@v7.0.1
       - uses: ruby/setup-ruby@v1
         with:
           ruby-version: ${{ matrix.ruby }}
@@ -34,7 +34,7 @@ jobs:
     env:
       BUNDLE_WITHOUT: mysql_test:postgres_test:rails_test
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@v7.0.1
       - uses: ruby/setup-ruby@v1
         with:
           ruby-version: "3.4"
@@ -61,7 +61,7 @@ jobs:
       BUNDLE_WITHOUT: lint:postgres_test
       MISTRI_MYSQL_URL: mysql2://root:root@127.0.0.1:3306/mistri_test?pool=10
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@v7.0.1
       - run: sudo apt-get update && sudo apt-get install -y default-libmysqlclient-dev
       - uses: ruby/setup-ruby@v1
         with:
@@ -90,7 +90,7 @@ jobs:
       BUNDLE_WITHOUT: lint:mysql_test
       MISTRI_POSTGRES_URL: postgresql://postgres:postgres@127.0.0.1:5432/mistri_test?pool=10
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@v7.0.1
       - run: sudo apt-get update && sudo apt-get install -y libpq-dev
       - uses: ruby/setup-ruby@v1
         with:
