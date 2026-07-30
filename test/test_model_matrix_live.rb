@@ -31,11 +31,15 @@ class TestModelMatrixLive < Minitest::Test
     provider = config[:klass].new(api_key: ENV.fetch(config[:key]), model: model.id,
                                   **config[:options])
     events = []
-    message = provider.stream(
-      messages: [Mistri::Message.user("Reply with exactly: ok")]
-    ) { |event| events << event }
+    message = Mistri::Test.retry_transient do
+      events = []
+      provider.stream(
+        messages: [Mistri::Message.user("Reply with exactly: ok")]
+      ) { |event| events << event }
+    end
 
-    assert_equal :stop, message.stop_reason, "#{model.id} did not finish cleanly"
+    assert_equal :stop, message.stop_reason,
+                 "#{model.id} did not finish cleanly: #{message.error_message}"
     assert_match(/ok/i, message.text, "#{model.id} produced no usable text")
     assert(events.any? { |e| e.type == :text_delta }, "#{model.id} did not stream")
     assert_operator message.usage.output, :>, 0, "#{model.id} reported no output tokens"

@@ -42,5 +42,25 @@ require "minitest/autorun"
 module Mistri
   module Test
     ALLOW_LOOPBACK = ->(_uri, address) { address.loopback? }
+
+    # Live provider calls ride out capacity spikes: retry a turn whose
+    # terminal is a transient server-side failure, so the live ring proves a
+    # model is real without failing on its provider's bad minute. Anything
+    # else (a 404 for a retired id, a schema rejection) returns immediately
+    # and fails the test as it should.
+    TRANSIENT = /ServerError|status 5\d\d|UNAVAILABLE|overloaded|try again/i
+
+    def self.retry_transient(attempts: 3, pause: 10)
+      result = nil
+      attempts.times do |round|
+        result = yield
+        transient = result.respond_to?(:stop_reason) && result.stop_reason == :error &&
+                    result.error_message.to_s.match?(TRANSIENT)
+        return result unless transient
+
+        sleep(pause * (round + 1)) unless round == attempts - 1
+      end
+      result
+    end
   end
 end
