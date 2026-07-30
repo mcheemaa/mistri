@@ -5,6 +5,18 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+- `Mistri.logger` and `Mistri::Sinks::Logger`: assign any Logger-compatible
+  object and every run logs its story as one scannable line per beat, tagged
+  with its session: the input, each tool call with its arguments, each
+  result with its duration, each turn's token usage, retries, compaction,
+  approvals, worker reports, and a closing line with the run's outcome,
+  elapsed time, and dollar cost when pricing is known. Deltas never log;
+  origin-tagged events are skipped so every agent (sub-agents included, in
+  any process) logs its own events exactly once. Assign a preconfigured
+  `Sinks::Logger` for options (`color:`, `truncate:`), or compose one per
+  run like any sink. A logging failure warns once and goes quiet; it never
+  breaks a run. With no logger assigned, nothing changes.
+
 ## [0.6.1] - 2026-07-21
 
 - The ActiveRecord store and workspace read past the host's query cache.

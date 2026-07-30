@@ -231,6 +231,39 @@ The same event stream works in Sinatra, Rack, a WebSocket server, a background
 job, or a test. Event types form an extensible union; consumers should handle
 the types they use and ignore the rest.
 
+## Logging
+
+One assignment makes every run tell its story in your development log:
+
+```ruby
+Mistri.logger = Rails.logger   # or any Logger-compatible object
+```
+
+```text
+[mistri 0a1b2c3d] run "What is 2 plus 3?" (gpt-5.6, 3 tools)
+[mistri 0a1b2c3d] tool add {"a":2,"b":3}
+[mistri 0a1b2c3d] tool add ok 12ms "5"
+[mistri 0a1b2c3d] turn 1 done tool_use (312 in / 48 out)
+[mistri 0a1b2c3d] text "The sum is 5."
+[mistri 0a1b2c3d] turn 2 done stop (410 in / 22 out)
+[mistri 0a1b2c3d] done completed in 1.2s, 2 turns, 722 in / 70 out, $0.0042
+```
+
+Failed tools and retries log at warn, provider errors at error, and the
+closing line reports suspension, abort, or budget stops just as plainly.
+Sub-agents log under their own session tags exactly once, whichever process
+runs them, so concurrent workers interleave without garbling. Assign a
+preconfigured sink for options, or compose one per run like any other sink:
+
+```ruby
+Mistri.logger = Mistri::Sinks::Logger.new(logger, color: true, truncate: 500)
+agent.run(input, &Mistri::Sinks::Logger.new(logger))
+```
+
+Logging never breaks a run: a failing logger warns once and the sink goes
+quiet. Production observability belongs to your telemetry sink; this one is
+for humans (and their AI agents) reading a log.
+
 ## Long conversations and structured tasks
 
 Compaction is on by default for catalogued models. When a session enters the

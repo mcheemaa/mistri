@@ -84,7 +84,9 @@ module Mistri
 
       fold_inbox # anything queued while this session sat idle arrived first; keep that order
       @session.append_message(Message.user_with_images(input, images))
-      loop_turns(signal, output_schema, &emit)
+      logged(emit, verb: "run", input: input) do |subscriber|
+        loop_turns(signal, output_schema, &subscriber)
+      end
     end
 
     # Continue a suspended run. Undecided approvals return immediately, still
@@ -101,17 +103,19 @@ module Mistri
                           usage: Usage.zero)
       end
 
-      executed = settle(open, signal, &emit)
-      if signal&.aborted?
-        last = @session.messages.reverse_each.find(&:assistant?)
-        return finished(last, Usage.zero, signal)
-      end
-      if executed.any? { |call| ends_turn?(call) }
-        last = @session.messages.reverse_each.find(&:assistant?)
-        return finished(last, Usage.zero, signal, handed_off: true)
-      end
+      logged(emit, verb: "resume") do |subscriber|
+        executed = settle(open, signal, &subscriber)
+        if signal&.aborted?
+          last = @session.messages.reverse_each.find(&:assistant?)
+          next finished(last, Usage.zero, signal)
+        end
+        if executed.any? { |call| ends_turn?(call) }
+          last = @session.messages.reverse_each.find(&:assistant?)
+          next finished(last, Usage.zero, signal, handed_off: true)
+        end
 
-      loop_turns(signal, nil, &emit)
+        loop_turns(signal, nil, &subscriber)
+      end
     end
 
     # Run an exchange that must end in a JSON value matching schema. Tools
@@ -164,6 +168,44 @@ module Mistri
     end
 
     private
+
+    # When a host sets Mistri.logger, every public run tees its events into
+    # a fresh logging sink for this session alongside the caller's block,
+    # and the framing lines carry what the stream cannot: the input, the
+    # model, and the final Result. Nothing wraps when no logger is set, and
+    # a caller's subscriber failures propagate exactly as before because
+    # the sink never raises.
+    def logged(emit, verb:, input: nil)
+      sink = log_sink
+      return yield(emit) unless sink
+
+      sink.run_started(verb: verb, input: input, model: @provider.model,
+                       tool_count: @tools.length)
+      subscriber = if emit
+                     lambda { |event|
+                       sink.call(event)
+                       emit.call(event)
+                     }
+                   else
+                     sink.to_proc
+                   end
+      begin
+        result = yield(subscriber)
+      rescue StandardError => e
+        sink.run_crashed(EventDelivery.original(e))
+        raise
+      end
+      sink.run_finished(result)
+      result
+    end
+
+    def log_sink
+      configured = Mistri.logger
+      return nil unless configured
+
+      sink = configured.is_a?(Sinks::Logger) ? configured : Sinks::Logger.new(configured)
+      sink.for_session(@session.id)
+    end
 
     def loop_turns(signal, output_schema = nil, &emit)
       turns = 0

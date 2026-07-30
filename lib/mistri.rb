@@ -51,6 +51,7 @@ require_relative "mistri/mcp"
 require_relative "mistri/sinks/action_cable"
 require_relative "mistri/sinks/sse"
 require_relative "mistri/sinks/coalesced"
+require_relative "mistri/sinks/logger"
 require_relative "mistri/providers/fake"
 require_relative "mistri/providers/anthropic"
 require_relative "mistri/providers/openai"
@@ -66,8 +67,11 @@ module Mistri
                   gemini: "GEMINI_API_KEY" }.freeze
 
   # The configured lock adapter, nil until a host sets one. See Locks.
+  # The run logger, nil until a host sets one: a Logger-compatible object
+  # (info/warn/error), or a Sinks::Logger for options. Every Agent#run and
+  # #resume then logs its story. See Sinks::Logger.
   class << self
-    attr_accessor :locks
+    attr_accessor :locks, :logger
   end
 
   module_function
