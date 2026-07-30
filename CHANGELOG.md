@@ -5,6 +5,9 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+- `claude-opus-5` joins the model catalog with its published pricing and
+  context window, verified against the live API.
+
 ## [0.7.0] - 2026-07-30
 
 - `Mistri.logger` and `Mistri::Sinks::Logger`: assign any Logger-compatible
