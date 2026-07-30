@@ -21,6 +21,7 @@ agent becomes part of a real application.
 | --- | --- |
 | [Tool contracts](tool-contracts.md) | Defining schemas, validating arguments, gating tools, returning UI data, or handing off a turn |
 | [Sessions and control](sessions.md) | Choosing a store, resuming, steering, approving, compacting, or rendering transcripts |
+| [Logging](logging.md) | Turning on the run log, tuning its options, and its operational guarantees |
 | [Context and workspaces](context-and-workspaces.md) | Loading Skills and Definitions, transforming context, storing host-owned memory, or exposing editable documents |
 | [Sub-agents](sub-agents.md) | Delegating into child sessions, dispatching background workers, or exposing worker controls |
 | [MCP](mcp.md) | Connecting Streamable HTTP or stdio servers, OAuth, private networks, or large results |
