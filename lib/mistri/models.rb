@@ -100,6 +100,8 @@ module Mistri
     CATALOG = [
       ["claude-fable-5", :anthropic, 128_000, 1_000_000, :adaptive,
        [price(input: 10.0, output: 50.0, cache_read: 1.0, cache_write: 12.5)]],
+      ["claude-opus-5", :anthropic, 128_000, 1_000_000, :adaptive,
+       [price(input: 5.0, output: 25.0, cache_read: 0.5, cache_write: 6.25)]],
       ["claude-opus-4-8", :anthropic, 128_000, 1_000_000, :adaptive,
        [price(input: 5.0, output: 25.0, cache_read: 0.5, cache_write: 6.25)]],
       ["claude-opus-4-7", :anthropic, 128_000, 1_000_000, :adaptive,
