@@ -7,6 +7,9 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 - `claude-opus-5` joins the model catalog with its published pricing and
   context window, verified against the live API.
+- Fuzzy edits preserve the final LF or CRLF separator when the search text
+  does not include it, rather than joining the replacement to the next line.
+  Trailing blank lines remain part of the search anchor and its diagnostics.
 
 ## [0.7.0] - 2026-07-30
 

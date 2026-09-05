@@ -23,8 +23,7 @@ class TestEdit < Minitest::Test
     edit = { old: "do_work\nfinish", new: "do_work\n    log\n    finish" }
     result = Mistri::Edit.apply(content, [edit])
 
-    assert_includes result, "log"
-    assert_equal "def run\n", result.lines.first
+    assert_equal "def run\ndo_work\n    log\n    finish\nend\n", result
   end
 
   def test_a_match_that_is_not_unique_raises
@@ -122,7 +121,6 @@ class TestEdit < Minitest::Test
     content = "﻿<html>\n  <body></body>\n</html>\n"
     result = Mistri::Edit.replace(content, "<html>\n<body></body>", "<html>\n<body>hi</body>")
 
-    assert result.content.start_with?("﻿")
-    assert_includes result.content, "hi"
+    assert_equal "﻿<html>\n<body>hi</body>\n</html>\n", result.content
   end
 end

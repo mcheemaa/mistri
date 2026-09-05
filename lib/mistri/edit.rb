@@ -121,13 +121,13 @@ module Mistri
     end
 
     # Match the old text's lines against a window of content lines, comparing
-    # each line stripped of leading and trailing whitespace. The matched region
-    # is the exact original bytes those content lines span.
+    # each line stripped of leading and trailing whitespace. A final line
+    # separator belongs to the match only when the old text includes it.
     def fuzzy_match(content, edit)
       lines = line_spans(content)
       wanted = edit[:old].lines.map(&:strip)
-      wanted.pop if wanted.last == "" # a trailing newline in old text is not a line to match
-      return nil if wanted.empty?
+      # Whitespace alone must not turn an empty line into a zero-length match.
+      return nil if wanted.empty? || wanted == [""]
 
       windows = matching_windows(lines, wanted)
       return nil if windows.empty?
@@ -135,8 +135,15 @@ module Mistri
       raise EditError, ambiguous_message(edit, windows.map { |w| w + 1 }) if windows.length > 1
 
       first = windows.first
-      Match.new(lines[first][:start], lines[first + wanted.length - 1][:finish],
-                edit[:new], edit[:index])
+      finish = fuzzy_finish(content, lines[first + wanted.length - 1][:finish], edit[:old])
+      Match.new(lines[first][:start], finish, edit[:new], edit[:index])
+    end
+
+    def fuzzy_finish(content, finish, old)
+      return finish if old.end_with?("\n")
+      return finish - 2 if content[finish - 2, 2] == "\r\n"
+
+      content[finish - 1] == "\n" ? finish - 1 : finish
     end
 
     # When nothing matched, show the model the closest region and exactly how
@@ -161,7 +168,6 @@ module Mistri
       lines = line_spans(content)
       wanted_raw = old_text.lines.map(&:chomp)
       wanted = wanted_raw.map(&:strip)
-      wanted.pop && wanted_raw.pop if wanted.last == ""
       return nil if wanted.empty? || lines.length < wanted.length
 
       best = best_window(lines, wanted)
