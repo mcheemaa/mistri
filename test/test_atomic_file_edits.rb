@@ -145,6 +145,22 @@ class TestAtomicFileEdits < Minitest::Test
     assert_equal 2, workspace.comparisons
   end
 
+  def test_a_fuzzy_edit_preserves_the_boundary_after_rebasing
+    workspace = ScriptedWorkspace.new(page) do |store, comparison|
+      next unless comparison == 1
+
+      store.replace(store.content.sub("</main>", "  <aside>Human</aside>\n</main>"))
+    end
+
+    result = tool(workspace).call(fuzzy_body_edit)
+
+    assert_equal "Replaced 1 occurrence(s) in page.html", result
+    assert_equal "<main>\n  <h1>Agent</h1>\n  <p>Updated</p>\n  <aside>Human</aside>\n</main>\n",
+                 workspace.content
+    assert_equal 2, workspace.snapshots
+    assert_equal 2, workspace.comparisons
+  end
+
   def test_a_same_target_conflict_becomes_a_typed_edit_error
     workspace = ScriptedWorkspace.new(page) do |store, comparison|
       store.replace(store.content.sub("Old", "Human")) if comparison == 1
@@ -314,6 +330,18 @@ class TestAtomicFileEdits < Minitest::Test
     assert_equal 1, workspace.writes
   end
 
+  def test_a_fuzzy_edit_preserves_the_boundary_in_a_legacy_workspace
+    workspace = LegacyWorkspace.new(page)
+
+    result = tool(workspace).call(fuzzy_body_edit)
+
+    assert_equal "Replaced 1 occurrence(s) in page.html", result
+    assert_equal 1, workspace.reads
+    assert_equal 1, workspace.writes
+    assert_equal "<main>\n  <h1>Agent</h1>\n  <p>Updated</p>\n</main>\n",
+                 workspace.read("page.html")
+  end
+
   def test_incomplete_atomic_claims_fail_at_tool_construction
     atomic_methods = %i[snapshot compare_and_write]
     atomic_methods.each do |present|
@@ -353,5 +381,10 @@ class TestAtomicFileEdits < Minitest::Test
   def paragraph_edit(value)
     { "path" => "page.html", "old_string" => "<p>Old copy</p>",
       "new_string" => "<p>#{value}</p>" }
+  end
+
+  def fuzzy_body_edit
+    { "path" => "page.html", "old_string" => "<h1>Old</h1>\n<p>Old copy</p>",
+      "new_string" => "  <h1>Agent</h1>\n  <p>Updated</p>" }
   end
 end

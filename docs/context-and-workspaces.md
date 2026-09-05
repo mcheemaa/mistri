@@ -201,6 +201,12 @@ intentional blind whole-document replacement, and deletion has no conditional
 form. When concurrent writers must preserve unrelated changes, use an anchored
 edit or provide a host tool with a stronger domain contract.
 
+For a single replacement, `edit_file` tries an exact match first, then tolerates
+indentation and trailing space differences across whole lines. In that fallback,
+the final line separator is replaced only when `old_string` includes it;
+otherwise it stays untouched. Trailing blank lines are part of the anchor.
+Replacement indentation is not adjusted automatically.
+
 Bind one to the built-in read, write, edit, find, and list tools:
 
 ```ruby

@@ -30,6 +30,16 @@ class TestFileTools < Minitest::Test
     assert_includes @workspace.read("hero.html"), "<h1>Hello</h1>"
   end
 
+  def test_a_fuzzy_edit_preserves_the_following_line_in_storage
+    reply = @tools["edit_file"].call({ "path" => "hero.html",
+                                       "old_string" => "<h1>Welcome</h1>\n<p>Hi</p>",
+                                       "new_string" => "  <h1>Hello</h1>\n  <p>Updated</p>" })
+
+    assert_equal "Replaced 1 occurrence(s) in hero.html", reply
+    assert_equal "<div>\n  <h1>Hello</h1>\n  <p>Updated</p>\n</div>\n",
+                 @workspace.read("hero.html")
+  end
+
   def test_edit_file_tolerates_alias_keys_and_stringly_booleans
     @workspace.write("x.txt", "a\na\n")
     reply = @tools["edit_file"].call({ "file" => "x.txt", "oldText" => "a",
