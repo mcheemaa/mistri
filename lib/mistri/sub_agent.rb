@@ -158,7 +158,7 @@ module Mistri
       # a queued cancellation or finished retry and returns nil. The runner
       # retains an acquired lease through terminal persistence and reporting,
       # suppressing ordinary redelivery while that lease remains live.
-      # rubocop:disable Metrics/AbcSize, Metrics/CyclomaticComplexity, Metrics/MethodLength, Metrics/PerceivedComplexity -- ordered dispatch transitions are the safety contract
+      # rubocop:disable-next Metrics/AbcSize, Metrics/CyclomaticComplexity, Metrics/MethodLength, Metrics/PerceivedComplexity -- ordered dispatch transitions are the safety contract
       def run_dispatched(spec, store:, emit: nil, runtime_factory: nil,
                          provider: UNSET_RUNTIME_FIELD, system: UNSET_RUNTIME_FIELD,
                          tools: UNSET_RUNTIME_FIELD, schema: UNSET_RUNTIME_FIELD,
@@ -248,7 +248,6 @@ module Mistri
         end
         raise cleanup_error if cleanup_error && primary_error.nil?
       end
-      # rubocop:enable Metrics/AbcSize, Metrics/CyclomaticComplexity, Metrics/MethodLength, Metrics/PerceivedComplexity
 
       # A child cannot wait for a human, whichever door it entered by: any
       # calls parked for approval are denied AND settled with the denial as

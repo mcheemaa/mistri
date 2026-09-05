@@ -8,6 +8,7 @@ require "tmpdir"
 class TestMcpStdio < Minitest::Test
   SERVER = <<~'SCRIPT'
     require "json"
+    sleep Float(ENV.fetch("STUB_STARTUP_DELAY", "0"))
     STDOUT.sync = true
     loop do
       line = STDIN.gets or exit
@@ -203,6 +204,7 @@ class TestMcpStdio < Minitest::Test
   def test_an_unterminated_stdio_record_fails_as_soon_as_it_crosses_the_limit
     stdio = client(env: { "STUB_RESPONSE_BYTES" => "513" }, max_record_bytes: 512,
                    read_timeout: 10)
+    stdio.connect
     started = Process.clock_gettime(Process::CLOCK_MONOTONIC)
 
     error = assert_raises(Mistri::AmbiguousDeliveryError) do
@@ -243,23 +245,25 @@ class TestMcpStdio < Minitest::Test
   def test_the_stdio_timeout_covers_the_whole_record
     Dir.mktmpdir do |directory|
       trace = File.join(directory, "trace")
-      stdio = client(env: { "STUB_TRACE" => trace }, read_timeout: 0.2)
+      # Startup exceeds the short response deadline, including on reconnect.
+      stdio = client(env: { "STUB_TRACE" => trace, "STUB_STARTUP_DELAY" => "0.3" })
       stdio.connect
       started = Process.clock_gettime(Process::CLOCK_MONOTONIC)
 
       error = assert_raises(Mistri::AmbiguousDeliveryError) do
-        stdio.call_tool("stall", {})
+        with_read_timeout(stdio, 0.2) { stdio.call_tool("stall", {}) }
       end
 
       elapsed = Process.clock_gettime(Process::CLOCK_MONOTONIC) - started
       first_trace = File.readlines(trace, chomp: true)
-      tool_pid = first_trace.find { |line| line.end_with?(":tools/call:stall") }.to_i
+      tool_line = first_trace.find { |line| line.end_with?(":tools/call:stall") }
 
+      refute_nil tool_line, "the server received the tool call before its response timed out"
       assert_kind_of Mistri::MCP::Error, error.cause
       assert_match(/timed out/, error.message)
       assert_operator elapsed, :<, 2
       assert_equal(1, first_trace.count { |line| line.end_with?(":tools/call:stall") })
-      assert_raises(Errno::ESRCH) { Process.kill(0, tool_pid) }
+      assert_raises(Errno::ESRCH) { Process.kill(0, tool_line.to_i) }
 
       stdio.connect
       pids = File.readlines(trace, chomp: true).map { |line| line.split(":", 2).first }.uniq
@@ -268,6 +272,30 @@ class TestMcpStdio < Minitest::Test
     ensure
       stdio&.close
     end
+  end
+
+  def test_stdio_fragments_share_one_record_deadline
+    wire = Mistri::MCP::Wires::Stdio.new(command: ["unused"], read_timeout: 10)
+    wire.instance_variable_set(:@read_buffer, +"".b)
+    wire.instance_variable_set(:@newline_search_offset, 0)
+    fragments = ["{", '"id":1}', "\n"].each
+    deadlines = []
+    wire.define_singleton_method(:read_chunk) do |deadline|
+      deadlines << deadline
+      fragments.next
+    end
+    clock_reads = 0
+    # Counting clock reads detects a reset even on clocks with coarse resolution.
+    clock = TracePoint.new(:call, :c_call) do |event|
+      clock_reads += 1 if event.self.equal?(Process) && event.method_id == :clock_gettime
+    end
+
+    record = clock.enable { wire.send(:read_record) }
+
+    assert_equal({ "id" => 1 }, record)
+    assert_equal 3, deadlines.length
+    assert_equal 1, deadlines.uniq.length
+    assert_equal 1, clock_reads, "partial records must not restart the timeout"
   end
 
   def test_close_terminates_the_child
@@ -291,5 +319,17 @@ class TestMcpStdio < Minitest::Test
     assert_raises(Mistri::ConfigurationError) do
       Mistri::MCP::Wires::Stdio.new(command: ["unused"], max_record_bytes: 0)
     end
+  end
+
+  private
+
+  # Only the stalled response gets the short deadline, never process startup.
+  def with_read_timeout(client, seconds)
+    wire = client.instance_variable_get(:@wire)
+    previous = wire.instance_variable_get(:@read_timeout)
+    wire.instance_variable_set(:@read_timeout, seconds)
+    yield
+  ensure
+    wire.instance_variable_set(:@read_timeout, previous)
   end
 end

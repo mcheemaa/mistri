@@ -80,7 +80,7 @@ module Mistri
     # grammar. Counting keys as tokens leaves room for every valid document
     # under MAX_NODES while stopping wide hostile inputs before JSON.parse.
     # This byte-state machine must branch on JSON token starts without building a tree.
-    # rubocop:disable Metrics/CyclomaticComplexity, Metrics/MethodLength, Metrics/PerceivedComplexity
+    # rubocop:disable-next Metrics/CyclomaticComplexity, Metrics/MethodLength, Metrics/PerceivedComplexity
     def raw_json_resource_error(raw)
       tokens = 0
       depth = 0
@@ -132,7 +132,6 @@ module Mistri
       end
       nil
     end
-    # rubocop:enable Metrics/CyclomaticComplexity, Metrics/MethodLength, Metrics/PerceivedComplexity
 
     def string_end(raw, index)
       while index < raw.bytesize
@@ -250,9 +249,8 @@ module Mistri
       within(value, state) do
         copied = []
         # Array#map preallocates from an untrusted length before the node ceiling fires.
-        # rubocop:disable Style/MapIntoArray
+        # rubocop:disable-next Style/MapIntoArray
         value.each { |item| copied << copy(item, state, depth + 1) }
-        # rubocop:enable Style/MapIntoArray
         copied.freeze
       end
     end

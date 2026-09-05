@@ -32,7 +32,7 @@ end
 # Lint tools run on one Ruby in CI; their dependencies drop old rubies faster
 # than the gem does, so the test matrix must not install them.
 group :lint do
-  gem "rubocop"
+  gem "rubocop", ">= 1.90"
   gem "rubocop-minitest"
   gem "rubocop-rake"
 end
