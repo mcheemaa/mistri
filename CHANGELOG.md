@@ -5,6 +5,14 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+- The summary request has its own output limit, `Compaction.new(max_tokens:)`
+  (16,384 by default, capped at the model's published output limit), and runs
+  with the provider's default thinking. A host's chat `max_tokens` or thinking
+  budget no longer shapes or truncates the summary.
+- A rejected summary appends a `compaction_failed` entry and emits
+  `:compaction_failed` with the reason in `error_message`. Automatic
+  compaction stops after three failed attempts in a row until a compaction
+  succeeds, instead of billing a full-context request every turn.
 - Compaction rejects incomplete summaries instead of replacing replay with
   partial context. Manual compaction raises `CompactionError`; automatic
   compaction retains the previous context and counts the failed attempt's

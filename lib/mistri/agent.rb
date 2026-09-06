@@ -269,10 +269,13 @@ module Mistri
     end
 
     # Compact when the context has grown into the reserve. A failed
-    # summarization skips quietly here: if the context genuinely no longer
-    # fits, the next turn surfaces the real provider error.
+    # summarization is recorded on the session and skipped here; after
+    # AUTOMATIC_ATTEMPTS failures in a row the loop stops paying for a
+    # full-context request every turn, and if the context genuinely no
+    # longer fits, the next turn surfaces the real provider error.
     def auto_compact(&)
       return nil unless @compaction
+      return nil if @session.compaction_failures >= Compaction::AUTOMATIC_ATTEMPTS
 
       tokens = @session.context_tokens
       return nil unless @compaction.needed?(tokens, context_window,

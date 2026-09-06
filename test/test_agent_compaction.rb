@@ -177,7 +177,8 @@ class TestAgentCompaction < Minitest::Test
       Mistri::Compactor.call(session:, provider:,
                              settings: Mistri::Compaction.new(keep_recent: 10))
     end
-    assert_equal before, session.entries
+    assert_equal before, session.entries.take(before.length)
+    assert_equal "compaction_failed", session.entries.last["type"]
     assert_nil session.last_compaction
   end
 

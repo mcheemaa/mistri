@@ -92,6 +92,14 @@ module Mistri
       entries.reverse_each.find { |entry| entry["type"] == "compaction" }
     end
 
+    # Failed summaries since the last checkpoint. Automatic compaction reads
+    # this to stop retrying a failure that has proven persistent.
+    def compaction_failures
+      log = entries
+      since = (log.rindex { |entry| entry["type"] == "compaction" } || -1) + 1
+      log.drop(since).count { |entry| entry["type"] == "compaction_failed" }
+    end
+
     # The inbox: entry types queued for the loop's next turn boundary, each
     # mapped to the marker key its fold leaves on the consuming message
     # entry.

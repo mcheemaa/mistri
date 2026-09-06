@@ -21,7 +21,7 @@ class TestCompactionLive < Minitest::Test
 
     options = { api_key: ENV.fetch("ANTHROPIC_API_KEY"), model: "claude-haiku-4-5-20251001",
                 thinking: { type: "disabled" }, service_tier: "standard_only", read_timeout: 120 }
-    @summarizer = ObservedAnthropic.new(**options, max_tokens: 48)
+    @summarizer = ObservedAnthropic.new(**options)
     @provider = Mistri::Providers::Anthropic.new(**options)
   end
 
@@ -39,7 +39,7 @@ class TestCompactionLive < Minitest::Test
       replay = session.replay
       events = []
       agent = Mistri::Agent.new(provider: @summarizer, session:,
-                                compaction: Mistri::Compaction.new(keep_recent: 20))
+                                compaction: Mistri::Compaction.new(keep_recent: 20, max_tokens: 48))
 
       error = assert_raises(Mistri::CompactionError) do
         agent.compact { |event| events << event.type }
@@ -51,11 +51,12 @@ class TestCompactionLive < Minitest::Test
       assert_operator error.usage.output, :>, 0
       assert_predicate error.usage.cost, :known?
       assert_operator error.usage.cost.total, :>, 0
-      assert_equal [:compacting], events
+      assert_equal %i[compacting compaction_failed], events
 
       reloaded = Mistri::Session.new(store: Mistri::Stores::JSONL.new(dir), id: session.id)
 
-      assert_equal durable, File.binread(path)
+      assert_failure_appended(path, durable)
+      assert_equal 1, reloaded.compaction_failures
       assert_equal replay, reloaded.replay
       assert_nil reloaded.last_compaction
       assert_original_filename(reloaded, filename)
@@ -63,6 +64,13 @@ class TestCompactionLive < Minitest::Test
   end
 
   private
+
+  def assert_failure_appended(path, durable)
+    after = File.binread(path)
+
+    assert after.start_with?(durable)
+    assert_equal "compaction_failed", JSON.parse(after.delete_prefix(durable)).fetch("type")
+  end
 
   def export_session(dir, filename)
     session = Mistri::Session.new(store: Mistri::Stores::JSONL.new(dir))

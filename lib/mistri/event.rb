@@ -22,11 +22,12 @@ module Mistri
     # The stream types come from a provider mid-turn; the loop adds
     # :tool_started when a resolved tool commits to execution, :tool_result
     # after it finishes, :approval_needed when a gated call parks for a human,
-    # :compacting/:compaction around a context
-    # compaction, and :retry (with attempt, max_attempts, delay) before it
-    # waits out a transient failure, so one subscription sees the whole
-    # exchange. :done and :error are loop-owned and terminal: only the
-    # accepted attempt's terminal event reaches the subscriber.
+    # :compacting before a context compaction and then :compaction or
+    # :compaction_failed (the reason in error_message), and :retry (with
+    # attempt, max_attempts, delay) before it waits out a transient failure,
+    # so one subscription sees the whole exchange. :done and :error are
+    # loop-owned and terminal: only the accepted attempt's terminal event
+    # reaches the subscriber.
     # :subagent_report announces a background child's terminal outcome
     # (agent, session_id, status; content carries the report), so a UI that
     # watched the spawn can settle the child's lane the moment it ends.
@@ -37,7 +38,7 @@ module Mistri
       toolcall_start toolcall_delta toolcall_end
       done error
       tool_started tool_result approval_needed
-      compacting compaction
+      compacting compaction compaction_failed
       retry
       subagent_report
     ].freeze
