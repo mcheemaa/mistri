@@ -153,16 +153,21 @@ module Mistri
         prompt << (previous ? UPDATE_PROMPT : CHECKPOINT_PROMPT)
         prompt << "\nAdditional focus: #{instructions}\n" if instructions
         reply = provider.stream(messages: [Message.user(prompt)], system: SUMMARIZER_SYSTEM)
-        unless usable?(reply)
-          raise CompactionError.new("summarization failed: #{reply.error_message}",
-                                    usage: reply.usage)
+        if (failure = summary_failure(reply))
+          raise CompactionError.new("summarization failed: #{failure}", usage: reply.usage)
         end
 
         reply
       end
 
-      def usable?(reply)
-        reply.stop_reason != StopReason::ERROR && !reply.text.to_s.strip.empty?
+      def summary_failure(reply)
+        return reply.error_message || "provider error" if reply.stop_reason == StopReason::ERROR
+        if reply.stop_reason != StopReason::STOP
+          return "unexpected stop reason: #{reply.stop_reason.inspect}"
+        end
+        return "unexpected tool calls" if reply.tool_calls?
+
+        "empty summary" if reply.text.to_s.strip.empty?
       end
 
       def finish(session, reply, tokens_before, &emit)
