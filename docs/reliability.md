@@ -370,6 +370,31 @@ Provider-specific per-turn overrides belong on a directly constructed
 provider's `stream` contract. The Agent intentionally exposes a stable common
 loop rather than mirroring every provider option as a top-level keyword.
 
+### GPT-6 Astra and Fable 5.1
+
+Select `gpt-6-astra` or `claude-fable-5-1` explicitly; adding them to the catalog
+does not change any default model. Both support streaming tools, native
+structured output, context-window accounting, and standard-tier cost estimates.
+
+[Astra](https://developers.openai.com/api/docs/models/gpt-6-astra) accepts
+reasoning effort `low`, `medium`, `high`, `xhigh`, or `max`, not `none` or
+`minimal`. Its standard rates increase above 272,000 input tokens, including
+cached tokens; Mistri applies that tier to each request.
+
+[Fable 5.1](https://platform.claude.com/docs/en/models/fable-5-1/migration-guide)
+uses always-on adaptive thinking. Keep Mistri's default thinking configuration;
+disabled or token-budget thinking and forced `tool_choice: any/tool` are not
+supported. It also requires an eligible Anthropic account with 30-day retention.
+
+Fable's signed thinking binds to all preceding messages, the system prompt,
+and tool definitions. Keep those stable when continuing a session. Transient
+context transforms, including `Reminder.every`, can invalidate later thinking
+when their injected messages disappear. Mistri handles its own
+[compaction boundary](sessions.md#compaction), not arbitrary host prefix
+rewrites. Start a new session for a different prefix, or deliberately remove
+the affected thinking blocks from the host's replay view. Do not rewrite the
+stored transcript or tool-call/result pairs.
+
 ## Custom providers
 
 A provider used by `Mistri::Agent` exposes a model ID and responds to `stream`:

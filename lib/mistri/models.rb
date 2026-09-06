@@ -98,6 +98,8 @@ module Mistri
     private_class_method :price
 
     CATALOG = [
+      ["claude-fable-5-1", :anthropic, 128_000, 1_000_000, :adaptive,
+       [price(input: 10.0, output: 50.0, cache_read: 0.25, cache_write: 12.5)]],
       ["claude-fable-5", :anthropic, 128_000, 1_000_000, :adaptive,
        [price(input: 10.0, output: 50.0, cache_read: 1.0, cache_write: 12.5)]],
       ["claude-opus-5", :anthropic, 128_000, 1_000_000, :adaptive,
@@ -116,6 +118,11 @@ module Mistri
        [price(input: 3.0, output: 15.0, cache_read: 0.3, cache_write: 3.75)]],
       ["claude-haiku-4-5", :anthropic, 64_000, 200_000, :budget,
        [price(input: 1.0, output: 5.0, cache_read: 0.1, cache_write: 1.25)]],
+      ["gpt-6-astra", :openai, 128_000, 1_050_000, :effort,
+       [price({ input: 10.0, output: 50.0, cache_read: 1.0, cache_write: 12.5 },
+              above: 272_000,
+              higher: { input: 20.0, output: 75.0, cache_read: 2.0,
+                        cache_write: 25.0 })]],
       ["gpt-5.6-sol", :openai, 128_000, 1_050_000, :effort,
        [price({ input: 5.0, output: 30.0, cache_read: 0.5, cache_write: 6.25 },
               above: 272_000,
@@ -175,6 +182,9 @@ module Mistri
     end
 
     def self.thinking(id) = find(id)&.thinking
+
+    # These signatures bind to the preceding conversation, not just their turn.
+    def self.prefix_bound_thinking?(id) = find(id)&.id == "claude-fable-5-1"
 
     def self.rates(id, usage: nil, at: Time.now) = find(id)&.rates(usage:, at:)
 
