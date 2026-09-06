@@ -5,6 +5,15 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+- Compaction summaries are handoffs in seven fixed sections: the requests
+  that shaped the work in the user's words, constraints, exact facts and
+  references, decisions, progress, open failures, and current work with the
+  next step, with fold rules for later checkpoints. The summarizer records
+  what each party said as theirs and keeps current values only. The replay
+  preface presents the summary as a handoff from another model.
+- The eval comparison tracks scenario digests per size, so a baseline that
+  holds several sizes no longer reads a smaller candidate run as a changed
+  scenario.
 - `Compaction.new(fallback:)` names a second summarizer, a provider or a
   model id, that gets one try when the session's provider cannot write a
   usable summary, a refusal included; a fallback naming the primary's own

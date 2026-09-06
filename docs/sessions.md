@@ -267,6 +267,15 @@ Manual `compact` returns nil when there is no useful cut. During a compaction,
 `:compacting` announces that work began. The later `:compaction` event carries
 the visible summary in `event.content`.
 
+The summary is a handoff for the model that resumes: seven fixed sections,
+goal and the requests that shaped the work in the user's words, constraints,
+exact facts and references, decisions, progress, open failures, and current
+work with the next step. The summarizer records what each party said as
+theirs, keeps current values only, and stays under a thousand words; later
+checkpoints fold new messages into the previous summary under the same
+headings. Replay introduces the result as a handoff written by another model
+from the full transcript, followed by the kept recent turns.
+
 Only a normally completed summary with nonblank text and no tool calls can
 become a checkpoint. A truncated or otherwise incomplete response leaves the
 previous summary and retained context unchanged, emits `:compaction_failed`
