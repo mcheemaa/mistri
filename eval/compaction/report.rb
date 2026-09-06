@@ -89,13 +89,23 @@ module CompactionEval
 
     def misses(rows)
       failed = rows.reject { |row| row[:skipped] || row[:mode] != "compacted" }.flat_map do |row|
-        Array(row[:probes]).reject { |probe| probe[:pass] }.map do |probe|
+        probes = Array(row[:probes]).reject { |probe| probe[:pass] }.map do |probe|
           "- #{row[:model]} #{row[:scenario]} #{row[:size]}: #{probe[:key]} (#{probe[:carrier]}) " \
             "expected #{Array(probe[:answer]).first.inspect}, " \
             "got #{probe[:reply].to_s[0, 80].inspect}"
         end
+        probes + continuation_miss(row)
       end
-      failed.empty? ? ["All probes passed."] : ["## Missed probes", "", *failed]
+      failed.empty? ? ["All probes passed."] : ["## Misses", "", *failed]
+    end
+
+    def continuation_miss(row)
+      continuation = row[:continuation]
+      return [] if continuation.nil? || continuation[:success]
+
+      wrong = continuation[:expected].keys.map(&:to_s) - continuation[:matched].map(&:to_s)
+      detail = continuation[:called] ? "wrong #{wrong.join(", ")}" : continuation[:status].to_s
+      ["- #{row[:model]} #{row[:scenario]} #{row[:size]}: continuation #{detail}"]
     end
 
     def verdict(regressions)
@@ -126,9 +136,11 @@ module CompactionEval
 
     def summary_tokens(row) = row[:compactions]&.last&.dig(:summary_tokens) || "–"
 
+    # The main compaction's numbers: a fold compacts a checkpoint plus a few
+    # turns, which says little about the size the summary had to cover.
     def compression(row)
-      last = row[:compactions]&.last
-      last ? "#{last[:tokens_before]} → #{last[:tokens_after]}" : "–"
+      first = row[:compactions]&.first
+      first ? "#{first[:tokens_before]} → #{first[:tokens_after]}" : "–"
     end
 
     def compaction_cost(row) = Array(row[:compactions]).sum { |item| item[:cost] || 0.0 }

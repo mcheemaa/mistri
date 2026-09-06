@@ -105,6 +105,7 @@ class TestCompactionEval < Minitest::Test
     assert_equal(3, row[:probes].count { |probe| probe[:pass] })
     assert_in_delta 3.0 / SCENARIO.probes(through: 0).length, row[:probe_accuracy], 0.001
     assert row.dig(:continuation, :success), "continuation: #{row[:continuation].inspect}"
+    assert row.dig(:continuation, :called)
     assert_in_delta(0.0, row[:accuracy_by_carrier]["tool_deep"])
     assert_operator row[:literal_recall], :>, 0
     assert_equal CompactionEval::Runner.prompt_digest, row[:prompt_digest]

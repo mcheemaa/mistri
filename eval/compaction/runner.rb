@@ -12,8 +12,9 @@ module CompactionEval
   class Runner
     PROBE_SYSTEM = "You are continuing this work. Answer from the conversation so far. Be exact " \
                    "and brief: when the answer is a value, reply with the value only."
-    CONTINUE_SYSTEM = "You are continuing this work. Use the tool exactly once, with the exact " \
-                      "values agreed earlier in the conversation."
+    CONTINUE_SYSTEM = "You are continuing this work. The values were agreed earlier in the " \
+                      "conversation; do not ask for confirmation. Call the tool exactly once, " \
+                      "now, with those exact values."
     PROBE_OVERRIDES = { max_tokens: 2_000, thinking: nil, reasoning: nil }.freeze
     TRANSIENT = /rate|overload|timeout|timed out|connection|reset|50[023]|529/i
 
@@ -140,7 +141,7 @@ module CompactionEval
       { key: probe.key, carrier: probe.carrier, segment: probe.segment, changed: probe.changed,
         question: probe.question, answer: probe.answer, reply: text[0, 300],
         pass: reply.stop_reason != :error && Grader.pass?(text, probe.answer, probe.match),
-        stop_reason: reply.stop_reason, cost: cost_of(reply.usage) }
+        stop_reason: reply.stop_reason, error: reply.error_message, cost: cost_of(reply.usage) }
     end
 
     def ask(model, messages, question)
@@ -163,11 +164,12 @@ module CompactionEval
       result = agent.run(spec.prompt)
       expected = spec.expected.call(latest)
       matched = expected.select { |key, value| recorded && Grader.same?(recorded[key], value) }.keys
-      { success: matched.length == expected.length, matched: matched, expected: expected,
-        actual: recorded, status: result.status, cost: cost_of(result.usage) }
+      { success: matched.length == expected.length, called: !recorded.nil?, matched: matched,
+        expected: expected, actual: recorded, status: recorded ? result.status : "no tool call",
+        cost: cost_of(result.usage) }
     rescue StandardError => e
-      { success: false, matched: [], expected: spec.expected.call(latest), actual: nil,
-        status: "error: #{e.class}: #{e.message[0, 200]}", cost: nil }
+      { success: false, called: false, matched: [], expected: spec.expected.call(latest),
+        actual: nil, status: "error: #{e.class}: #{e.message[0, 200]}", cost: nil }
     end
 
     def with_retry(attempts: 3)

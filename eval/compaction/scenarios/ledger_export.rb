@@ -108,7 +108,7 @@ CompactionEval::Scenario.define("ledger_export",
     fact :retry_job, "439597",
          at: 0.65, carrier: :tool_deep,
          text: "job=%<value>s status=retry latency=905ms shard=5 note=poison-pill",
-         probe: "Which job id was marked retry on shard 5? Reply with the job id only."
+         probe: "Which job id carried the poison-pill note? Reply with the job id only."
     change :filename, "exports/q3_ledger_2026-09-05_v8.csv",
            at: 0.7, answer: "yes",
            match: :yes_no,
