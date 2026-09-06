@@ -50,3 +50,10 @@ and honest reliability boundaries. Put detailed contracts in the task-oriented
 Markdown guides under `docs/`, and put required host migrations in
 `UPGRADING.md`. Link repository files relatively so links work on branches and
 pull requests. Do not duplicate the changelog into a guide.
+
+## Compaction prompts
+
+The compactor's prompts are measured, not argued about. A change to
+`Mistri::Compactor`'s prompt constants comes with a run of the compaction eval
+(`script/compaction_eval.rb`, see `eval/README.md`) against the committed
+baseline in `eval/baselines/`, and the comparison goes in the pull request.
