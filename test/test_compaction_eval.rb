@@ -74,6 +74,11 @@ class TestCompactionEval < Minitest::Test
     assert grader.pass?("5433.", "5433", :exact)
     refute grader.pass?("54331", "5433", :exact)
     assert grader.same?("3948820.57", "$3,948,820.57")
+    assert grader.same?("60.00", "$60")
+    refute grader.same?("54331", "5433")
+    assert grader.same?("October 9, 2026", "October 9")
+    assert grader.same?("Notebook bundle", "notebook bundle")
+    refute grader.same?("October 19", "October 9, 2026")
     assert grader.literal?("## Goal\nShip SEND-2831", "SEND-2831")
   end
 

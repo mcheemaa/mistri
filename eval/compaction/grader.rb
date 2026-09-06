@@ -21,11 +21,19 @@ module CompactionEval
       end
     end
 
-    # Tool arguments compare as values: case, quotes, currency marks, and
-    # thousands separators do not make "$3,948,820.57" a different amount.
+    # Tool arguments compare as values. Numbers compare as numbers, so "$60",
+    # "60" and "60.00" agree and a port cannot hide inside a longer one; text
+    # agrees when the actual value carries the expected one, so "October 9,
+    # 2026" still means "October 9".
     def same?(actual, expected)
-      normalize(actual).delete("$,") == normalize(expected).delete("$,")
+      left = normalize(actual).delete("$,")
+      right = normalize(expected).delete("$,")
+      return left.to_f == right.to_f if [left, right].all? { |value| value.match?(NUMBER) }
+
+      left == right || left.include?(right)
     end
+
+    NUMBER = /\A\d+(\.\d+)?\z/
 
     def literal?(summary, value)
       Array(value).any? { |candidate| normalize(summary).include?(normalize(candidate)) }

@@ -53,7 +53,9 @@ module CompactionEval
       FileUtils.mkdir_p(File.dirname(out))
       rows = File.open(out, "w") do |file|
         file.sync = true
-        Runner.new(**options.except(:prompts), on_row: ->(row) { file.puts(JSON.generate(row)) }).run
+        Runner.new(**options.except(:prompts), on_row: lambda { |row|
+          file.puts(JSON.generate(row))
+        }).run
       end
       File.write(out.sub(/\.jsonl\z/, ".md"), Report.markdown(rows))
       puts Report.markdown(rows)
