@@ -113,17 +113,24 @@ module CompactionEval
 
     # Anything that changes the experiment invalidates every baseline built on
     # it: the facts and where they sit by segment, the continuation contract,
-    # and the fixture itself, fingerprinted from one built session so a
-    # filler or builder change shows up too. Rows carry this so compare can
-    # tell.
-    def digest
-      fixture = Builder.new(self, size: "S", seed: 1).build.messages.map(&:text)
-      source = { segments: segments.map { |facts| facts.map(&:to_h) },
-                 continuation: [continuation.prompt, continuation.tool,
-                                Mistri::Schema.build(&continuation.schema),
-                                continuation.expected.call(latest)],
-                 fixture: fixture }
-      Digest::SHA256.hexdigest(JSON.generate(source))[0, 12]
+    # and the whole workload the builder produces for a size, every segment
+    # with full payloads (tool names and arguments included) at a fixed seed,
+    # so a filler or builder change shows up too. Rows carry this so compare
+    # can tell.
+    def digest(size: "S")
+      @digests ||= {}
+      @digests[size] ||= begin
+        builder = Builder.new(self, size: size, seed: 1)
+        session = builder.build
+        (1...segments.length).each { |index| builder.append_segment(session, index) }
+        fixture = session.entries.map { |entry| entry.except("at") }
+        source = { segments: segments.map { |facts| facts.map(&:to_h) },
+                   continuation: [continuation.prompt, continuation.tool,
+                                  Mistri::Schema.build(&continuation.schema),
+                                  continuation.expected.call(latest)],
+                   fixture: fixture }
+        Digest::SHA256.hexdigest(JSON.generate(source))[0, 12]
+      end
     end
 
     # Every base fact yields one probe expecting the latest value of its

@@ -164,7 +164,7 @@ module CompactionEval
       { model: model, scenario: scenario.name, size: size, rep: rep, mode: mode.to_s,
         seed: @seed + rep, reader: @reader, folds: @folds ? scenario.segments.length : 1,
         git_sha: self.class.git_sha, prompt_digest: self.class.prompt_digest,
-        scenario_digest: scenario.digest, grader_version: Grader::VERSION,
+        scenario_digest: scenario.digest(size: size), grader_version: Grader::VERSION,
         at: Time.now.utc.iso8601 }
     end
 
@@ -282,7 +282,8 @@ module CompactionEval
       usage = nil
       attempts.times do |attempt|
         reply = yield
-        usage = [usage, reply.usage].compact.reduce(:+)
+        measured = reply.usage || Mistri::Usage.new
+        usage = usage ? usage + measured : measured
         break unless reply.stop_reason == :error && reply.error_message.to_s.match?(TRANSIENT)
         break if attempt == attempts - 1
 
@@ -309,8 +310,11 @@ module CompactionEval
           literal_recall: (share(probes, :literal) if summary) }
       end
 
+      # Restamps the grader version and the scenario digest too, since both
+      # derive from code, not from model output.
       def regrade(row)
-        return row.merge(grader_version: Grader::VERSION) if row[:skipped] || row[:probes].nil?
+        stamped = row.merge(grader_version: Grader::VERSION, scenario_digest: digest_for(row))
+        return stamped if row[:skipped] || row[:probes].nil?
 
         summary = row[:compactions]&.last&.dig(:summary)
         probes = row[:probes].map do |probe|
@@ -319,9 +323,15 @@ module CompactionEval
           literal = summary ? Grader.literal?(summary, probe[:answer]) : nil
           probe.merge(pass: pass, literal: literal)
         end
-        row.merge(probes: probes, continuation: regrade_continuation(row[:continuation]),
-                  grader_version: Grader::VERSION)
-           .merge(scores(probes, summary))
+        stamped.merge(probes: probes, continuation: regrade_continuation(row[:continuation]))
+               .merge(scores(probes, summary))
+      end
+
+      def digest_for(row)
+        scenario = Scenario[row[:scenario].to_s]
+        scenario.digest(size: row[:size].to_s)
+      rescue ArgumentError
+        row[:scenario_digest]
       end
 
       # A row without the words: scores, verdicts, and costs stay; summaries,

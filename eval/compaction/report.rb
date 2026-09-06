@@ -37,9 +37,18 @@ module CompactionEval
       File.open(path, "w") { |file| rows.each { |row| file.puts(JSON.generate(row)) } }
     end
 
+    # Rows written before the exactly-once continuation rule carried a boolean
+    # `called`; they cannot certify one call, so they are refused rather than
+    # read as if they could.
     def read(path)
-      File.readlines(path, chomp: true).reject(&:empty?)
-          .map { |line| JSON.parse(line, symbolize_names: true) }
+      rows = File.readlines(path, chomp: true).reject(&:empty?)
+                 .map { |line| JSON.parse(line, symbolize_names: true) }
+      legacy = rows.any? { |row| [true, false].include?(row.dig(:continuation, :called)) }
+      if legacy
+        raise ArgumentError, "#{path} predates the exactly-once continuation rule; regenerate it"
+      end
+
+      rows
     end
 
     def markdown(rows)
@@ -90,9 +99,12 @@ module CompactionEval
        "Not comparable: #{problems.join("; ")}."].join("\n")
     end
 
+    # Each cell is summarized first, then cells combine with the same weights
+    # on both sides (the baseline cell's probes per repetition), so a cell
+    # that ran more repetitions on one side does not count for more.
     def per_model(base_cells, candidate_cells, regressions)
-      before_by_model = aggregates(base_cells.values.flatten)
-      aggregates(candidate_cells.values.flatten).filter_map do |model, after|
+      before_by_model = weighted(base_cells, base_cells)
+      weighted(candidate_cells, base_cells).filter_map do |model, after|
         before = before_by_model[model]
         next unless before
 
@@ -112,12 +124,48 @@ module CompactionEval
       rows = matched.map do |key|
         before = base_cells.fetch(key)
         group = candidate_cells.fetch(key)
-        table([*key.first(4), signed(delta_for(before, group, :probe_accuracy)),
+        table([*key.first(4), "#{before.length} -> #{group.length}",
+               signed(delta_for(before, group, :probe_accuracy)),
                signed(delta_for(before, group, :changed_accuracy)),
                signed(delta_for(before, group) { |row| continued(row) }),
                "#{summary_tokens(before)} -> #{summary_tokens(group)}"])
       end
-      [table(%w[model scenario size mode probes changed continuation] + ["summary tok"]), *rows]
+      [table(%w[model scenario size mode reps probes changed continuation] + ["summary tok"]),
+       *rows]
+    end
+
+    # One summary per cell: repetitions average within the cell, and the
+    # cell's weight is its probes per repetition on the baseline side.
+    def cell(rows, weight_rows)
+      measured = rows.reject { |row| row[:skipped] }
+      weight = weight_rows.reject { |row| row[:skipped] }.first || measured.first
+      { probes: mean(measured) { |row| ratio(Array(row[:probes])) },
+        changed: mean(measured) { |row| ratio(Array(row[:probes]).select { |p| p[:changed] }) },
+        continuation: mean(measured) { |row| continued(row) },
+        unsupported: mean(measured) { |row| row.dig(:judge, :unsupported) },
+        resumability: mean(measured) { |row| row.dig(:judge, :resumability) },
+        rejected: rows.count { |row| row[:skipped] }.fdiv(rows.length),
+        weight: weight ? Array(weight[:probes]).length : 0 }
+    end
+
+    def weighted(cells, weight_cells)
+      compacted = cells.select { |key, _| key[3] == "compacted" }
+      compacted.group_by { |key, _| key[0] }.to_h do |model, entries|
+        summaries = entries.map { |key, rows| cell(rows, weight_cells.fetch(key, rows)) }
+        [model, { probes: combine(summaries, :probes) || 0.0,
+                  changed: combine(summaries, :changed) || 0.0,
+                  continuation: combine(summaries, :continuation) || 0.0,
+                  unsupported: combine(summaries, :unsupported),
+                  resumability: combine(summaries, :resumability),
+                  rejected: summaries.sum { |c| c[:rejected] }.fdiv(summaries.length) }]
+      end
+    end
+
+    def combine(summaries, field)
+      known = summaries.select { |c| c[field] && c[:weight].positive? }
+      return nil if known.empty?
+
+      known.sum { |c| c[field] * c[:weight] }.fdiv(known.sum { |c| c[:weight] })
     end
 
     def coverage(base_keys, candidate_keys, changed)
@@ -151,23 +199,6 @@ module CompactionEval
 
     def grouped(rows)
       rows.group_by { |row| KEY.map { |key| row[key].to_s } }
-    end
-
-    # A rejected compaction is the worst outcome a prompt can produce, so it
-    # counts here as a rate rather than vanishing with the row.
-    def aggregates(rows)
-      compacted = rows.select { |row| row[:mode] == "compacted" }
-      compacted.group_by { |row| row[:model].to_s }.to_h do |model, group|
-        measured = group.reject { |row| row[:skipped] }
-        probes = measured.flat_map { |row| Array(row[:probes]) }
-        changed = probes.select { |probe| probe[:changed] }
-        [model, { probes: ratio(probes), changed: ratio(changed),
-                  continuation: measured.count { |row| row.dig(:continuation, :success) }
-                                        .fdiv([measured.length, 1].max),
-                  unsupported: mean(measured) { |row| row.dig(:judge, :unsupported) },
-                  resumability: mean(measured) { |row| row.dig(:judge, :resumability) },
-                  rejected: group.count { |row| row[:skipped] }.fdiv(group.length) }]
-      end
     end
 
     def ratio(probes)

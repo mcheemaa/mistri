@@ -240,6 +240,42 @@ class TestCompactionEval < Minitest::Test
                                           .markdown, "changed since the baseline"
   end
 
+  def test_compare_weighs_matched_cells_equally_whatever_their_repetitions
+    probes = ->(passes) { passes.map { |pass| { pass: pass, changed: false } } }
+    row = { model: "m", scenario: "s", mode: "compacted", reader: nil, folds: 2,
+            changed_accuracy: 1.0, continuation: { success: true },
+            compactions: [{ summary_tokens: 700 }], git_sha: "a", prompt_digest: "p1",
+            scenario_digest: "d1", grader_version: CompactionEval::Grader::VERSION }
+    cell = lambda do |size, accuracy, reps|
+      passes = (accuracy * 10).round
+      Array.new(reps) do |index|
+        row.merge(size: size, rep: index, probe_accuracy: accuracy,
+                  probes: probes.call(([true] * passes) + ([false] * (10 - passes))))
+      end
+    end
+    base = cell.call("S", 0.9, 1) + cell.call("M", 0.5, 9)
+    candidate = cell.call("S", 0.8, 9) + cell.call("M", 0.4, 1)
+
+    comparison = CompactionEval::Report.compare(base, candidate)
+
+    refute_predicate comparison, :passed,
+                     "every cell fell ten points; more repetitions must not hide it"
+    assert_includes comparison.markdown, "| m | 70% -> 60% (-10 pts) |"
+    assert_includes comparison.markdown, "| m | s | S | compacted | 1 -> 9 | -10 pts |"
+  end
+
+  def test_rows_from_before_the_exactly_once_rule_are_refused
+    Dir.mktmpdir do |dir|
+      path = File.join(dir, "legacy.jsonl")
+      CompactionEval::Report.write([{ model: "m", continuation: { called: true, success: true } }],
+                                   path)
+
+      error = assert_raises(ArgumentError) { CompactionEval::Report.read(path) }
+
+      assert_match(/exactly-once/, error.message)
+    end
+  end
+
   def test_compare_counts_rejections_and_lets_noise_through
     probes = ->(passes) { passes.map { |pass| { pass: pass, changed: false } } }
     row = { model: "m", scenario: "s", size: "S", mode: "compacted", reader: nil, folds: 2,
@@ -436,6 +472,14 @@ class TestCompactionEvalPaths < Minitest::Test
     retried_probe = row[:probes].first
 
     assert_in_delta 0.000201, retried_probe[:cost], 0.000001, "both attempts are paid for"
+
+    unpriced = Scripted.new(errors_before_answer: 1, error_usage: nil)
+    unknown = CompactionEval::Runner.new(models: ["scripted"], scenarios: ["ledger_export"],
+                                         sizes: ["S"], provider_for: ->(_) { unpriced },
+                                         io: StringIO.new, judge: nil, pause: 0).run.first
+
+    assert_nil unknown[:probes].first[:cost], "an attempt without usage makes the cost unknown"
+    assert_operator unknown[:unpriced], :>=, 1
     assert_match(/error: IOError/, row.dig(:judge, :status))
     assert_nil row.dig(:judge, :cost)
     assert_operator row[:unpriced], :>=, 1
@@ -562,9 +606,10 @@ class TestCompactionEvalPaths < Minitest::Test
   class Scripted
     attr_reader :requests, :retried
 
-    def initialize(errors_before_answer: 0)
+    def initialize(errors_before_answer: 0, error_usage: :priced)
       @requests = []
       @errors = errors_before_answer
+      @error_usage = error_usage
       @retried = 0
     end
 
@@ -580,7 +625,8 @@ class TestCompactionEvalPaths < Minitest::Test
         @errors -= 1
         @retried += 1
         return Mistri::Message.assistant(content: nil, stop_reason: :error,
-                                         error_message: "rate limit exceeded", usage: usage(1))
+                                         error_message: "rate limit exceeded",
+                                         usage: @error_usage == :priced ? usage(1) : nil)
       end
 
       question = messages.last.text
@@ -676,34 +722,47 @@ class TestCompactionEvalContracts < Minitest::Test
   end
 
   def test_scenario_digests_see_segment_placement_and_filler_changes
-    build = lambda do |name, filler_word, &facts|
-      CompactionEval::Scenario.build(name, summary: "x") do
-        filler do |turn, _rng|
-          { ask: "#{filler_word} #{turn}", doing: "d", tool: "t", arguments: {},
-            log: ->(chars) { "l" * chars }, done: "done" }
-        end
-        instance_exec(&facts)
-        continuation(prompt: "p", tool: "t", description: "d", schema: -> {},
-                     expected: ->(_) { {} })
-      end
-    end
-    one = build.call("digest-a", "ask") do
+    one = fixture_scenario("digest-a", "ask") do
       segment { fact :a, "1", at: 0.1, text: "%<value>s", probe: "?" }
       segment { fact :b, "2", at: 0.1, text: "%<value>s", probe: "?" }
     end
-    moved = build.call("digest-b", "ask") do
+    moved = fixture_scenario("digest-b", "ask") do
       segment do
         fact :a, "1", at: 0.1, text: "%<value>s", probe: "?"
         fact :b, "2", at: 0.8, text: "%<value>s", probe: "?"
       end
     end
-    refilled = build.call("digest-c", "step") do
+    refilled = fixture_scenario("digest-c", "step") do
       segment { fact :a, "1", at: 0.1, text: "%<value>s", probe: "?" }
       segment { fact :b, "2", at: 0.1, text: "%<value>s", probe: "?" }
     end
 
     refute_equal one.digest, moved.digest
     refute_equal one.digest, refilled.digest
+  end
+
+  def test_scenario_digests_cover_the_whole_workload_of_each_size
+    one = fixture_scenario("digest-a", "ask") do
+      segment { fact :a, "1", at: 0.1, text: "%<value>s", probe: "?" }
+      segment { fact :b, "2", at: 0.1, text: "%<value>s", probe: "?" }
+    end
+    argued = fixture_scenario("digest-d", "ask", arguments: { "page" => 2 }) do
+      segment { fact :a, "1", at: 0.1, text: "%<value>s", probe: "?" }
+      segment { fact :b, "2", at: 0.1, text: "%<value>s", probe: "?" }
+    end
+    late = fixture_scenario("digest-e", "ask", late: true) do
+      segment { fact :a, "1", at: 0.1, text: "%<value>s", probe: "?" }
+      segment { fact :b, "2", at: 0.1, text: "%<value>s", probe: "?" }
+    end
+    stale = { model: "m", scenario: "ledger_export", size: "S", skipped: "x",
+              scenario_digest: "stale" }
+
+    refute_equal one.digest, argued.digest, "tool arguments are part of the workload"
+    refute_equal one.digest, one.digest(size: "M"), "each size is its own workload"
+    assert_equal one.digest, late.digest, "a filler change past size S leaves the S digest alone"
+    refute_equal one.digest(size: "M"), late.digest(size: "M"), "and changes the M digest"
+    assert_equal CompactionEval::Scenario["ledger_export"].digest(size: "S"),
+                 CompactionEval::Runner.regrade(stale)[:scenario_digest]
   end
 
   def test_a_long_reply_regrades_the_same_way_it_graded
@@ -713,5 +772,19 @@ class TestCompactionEvalContracts < Minitest::Test
                        stop_reason: "stop" }] }
 
     assert CompactionEval::Runner.regrade(row)[:probes].first[:pass]
+  end
+
+  private
+
+  # A minimal scenario whose filler is the only thing that varies between calls.
+  def fixture_scenario(name, word, arguments: {}, late: false, &facts)
+    CompactionEval::Scenario.build(name, summary: "x") do
+      filler do |turn, _rng|
+        { ask: (late && turn > 30 ? "late #{turn}" : "#{word} #{turn}"), doing: "d", tool: "t",
+          arguments: arguments, log: ->(chars) { "l" * chars }, done: "done" }
+      end
+      instance_exec(&facts)
+      continuation(prompt: "p", tool: "t", description: "d", schema: -> {}, expected: ->(_) { {} })
+    end
   end
 end

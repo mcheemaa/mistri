@@ -73,9 +73,10 @@ bundle exec ruby script/compaction_eval.rb distill <file>.jsonl <distilled>.json
 
 Rows land in `tmp/compaction-eval/` as JSONL, one row per finished cell,
 with a markdown report beside them. Every row is tagged with the git SHA, a
-digest of the compactor prompts, a digest of its scenario (facts by segment,
-the continuation contract, and a fingerprint of one built session, so filler
-and builder changes count), and the grader's version, and keeps the summary,
+digest of the compactor prompts, a digest of its scenario at the row's size
+(facts by segment, the continuation contract, and the whole built workload
+for that size, every segment with tool names and arguments, so filler and
+builder changes count), and the grader's version, and keeps the summary,
 every probe reply, and every tool argument in full, so a miss can be read
 rather than guessed and a regrade grades the same text. `regrade` applies the
 current grading rules to a stored run, so a grading fix never needs another
@@ -135,13 +136,18 @@ bundle exec ruby script/compaction_eval.rb compare eval/baselines/current.jsonl 
 ```
 
 `compare` first refuses anything not comparable: different grader versions,
-or an empty side. Then it matches cells, a cell being model, scenario, size,
-mode, reader, and fold count, leaves out scenarios whose digest changed, names
-every baseline cell the candidate did not run and every candidate cell without
-a baseline, and aggregates per model over the matched cells only. The
-comparison passes when no model loses more than three points of aggregate
-probe accuracy and no model's rejected-compaction rate rises; it exits
-nonzero otherwise, and the CI job fails with it. The rest is read, not
+an empty side, or rows from before the exactly-once continuation rule. Then
+it matches cells, a cell being model, scenario, size, mode, reader, and fold
+count, leaves out scenarios whose digest changed, names every baseline cell
+the candidate did not run and every candidate cell without a baseline, and
+aggregates per model over the matched cells only. Each cell is summarized
+first, repetitions averaged within it, and cells combine with the same
+weights on both sides, the baseline cell's probes per repetition, so a cell
+with more repetitions on one side does not count for more; the per-cell table
+shows the repetition counts. The comparison passes when no model loses more
+than three points of aggregate probe accuracy and no model's
+rejected-compaction rate rises; it exits nonzero otherwise, and the CI job
+fails with it. The rest is read, not
 computed: changed facts and continuation stay within their noise, the judge's
 unsupported-claim count does not rise, the misses list reads as improvements
 rather than trades, and summary size stays within the compactor's limit with
