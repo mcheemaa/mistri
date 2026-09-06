@@ -10,7 +10,10 @@ module CompactionEval
     KEY = %i[model scenario size mode].freeze
     COLUMNS = ["model", "scenario", "size", "mode", "probes", "changed", "deep", "continuation",
                "literal", "summary tok", "before → after", "compaction $", "total $"].freeze
-    REGRESSION = 0.05
+    # Two runs of the same prompt differ by up to six points in one cell and
+    # by under two points in a model's aggregate over all cells, so the
+    # verdict reads the aggregate and the cell table stays informational.
+    REGRESSION = 0.03
 
     module_function
 
@@ -39,20 +42,51 @@ module CompactionEval
     end
 
     def compare(base, candidate)
-      lines = ["# Compaction eval comparison", "", versions(base, candidate), "",
-               table(%w[model scenario size mode probes changed continuation] + ["summary tok"])]
       regressions = []
-      grouped(candidate).each do |key, group|
+      per_model = aggregates(candidate).filter_map do |model, after|
+        before = aggregates(base)[model]
+        next unless before
+
+        delta = after[:probes] - before[:probes]
+        regressions << model if delta < -REGRESSION
+        table([model, "#{pct(before[:probes])} → #{pct(after[:probes])} (#{signed(delta)})",
+               "#{pct(before[:changed])} → #{pct(after[:changed])}",
+               "#{pct(before[:continuation])} → #{pct(after[:continuation])}"])
+      end
+      ["# Compaction eval comparison", "", versions(base, candidate), "",
+       "## Per model, compacted rows", "", table(%w[model probes changed continuation]),
+       *per_model, "", "## Per cell", "", *per_cell(base, candidate), "",
+       verdict(regressions)].join("\n")
+    end
+
+    def per_cell(base, candidate)
+      rows = grouped(candidate).filter_map do |key, group|
         before = grouped(base)[key]
         next unless before
 
-        delta = delta_for(before, group, :probe_accuracy)
-        regressions << key.join(" ") if delta && delta < -REGRESSION
-        lines << table([*key, signed(delta), signed(delta_for(before, group, :changed_accuracy)),
-                        signed(delta_for(before, group) { |row| continued(row) }),
-                        "#{summary_tokens(before.first)} → #{summary_tokens(group.first)}"])
+        table([*key, signed(delta_for(before, group, :probe_accuracy)),
+               signed(delta_for(before, group, :changed_accuracy)),
+               signed(delta_for(before, group) { |row| continued(row) }),
+               "#{summary_tokens(before.first)} → #{summary_tokens(group.first)}"])
       end
-      [*lines, "", verdict(regressions)].join("\n")
+      [table(%w[model scenario size mode probes changed continuation] + ["summary tok"]), *rows]
+    end
+
+    # One number per model across every compacted cell, weighted by probes,
+    # so a model with more scenarios does not count more per scenario.
+    def aggregates(rows)
+      compacted = rows.reject { |row| row[:skipped] || row[:mode] != "compacted" }
+      compacted.group_by { |row| row[:model].to_s }.to_h do |model, group|
+        probes = group.flat_map { |row| Array(row[:probes]) }
+        changed = probes.select { |probe| probe[:changed] }
+        [model, { probes: ratio(probes), changed: ratio(changed),
+                  continuation: group.count { |row| row.dig(:continuation, :success) }
+                                     .fdiv(group.length) }]
+      end
+    end
+
+    def ratio(probes)
+      probes.empty? ? 0.0 : probes.count { |probe| probe[:pass] }.fdiv(probes.length)
     end
 
     def grouped(rows)
@@ -110,9 +144,11 @@ module CompactionEval
 
     def verdict(regressions)
       points = (REGRESSION * 100).round
-      return "No probe-accuracy regression beyond #{points} points." if regressions.empty?
+      if regressions.empty?
+        return "No model loses more than #{points} points of aggregate probe accuracy."
+      end
 
-      "Probe-accuracy regressions beyond #{points} points: #{regressions.join("; ")}."
+      "Aggregate probe accuracy drops more than #{points} points: #{regressions.join(", ")}."
     end
 
     def mean(group, key = nil, &)

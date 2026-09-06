@@ -134,17 +134,24 @@ class TestCompactionEval < Minitest::Test
     assert regraded.dig(:continuation, :success)
   end
 
-  def test_compare_reports_deltas_and_flags_regressions
-    base = [{ model: "m", scenario: "s", size: "S", mode: "compacted", probe_accuracy: 0.9,
-              changed_accuracy: 1.0, continuation: { success: true },
-              compactions: [{ summary_tokens: 700 }],
-              git_sha: "a", prompt_digest: "p1" }]
-    candidate = [base.first.merge(probe_accuracy: 0.8, git_sha: "b", prompt_digest: "p2")]
+  def test_compare_reads_per_model_aggregates_and_flags_a_real_drop
+    probes = ->(passes) { passes.map { |pass| { pass: pass, changed: false } } }
+    row = { model: "m", scenario: "s", size: "S", mode: "compacted", changed_accuracy: 1.0,
+            continuation: { success: true }, compactions: [{ summary_tokens: 700 }],
+            git_sha: "a", prompt_digest: "p1" }
+    base = [row.merge(probe_accuracy: 0.9, probes: probes.call(([true] * 9) + [false]))]
+    candidate = [row.merge(probe_accuracy: 0.8, probes: probes.call(([true] * 8) + ([false] * 2)),
+                           git_sha: "b", prompt_digest: "p2")]
+    noise = [row.merge(probe_accuracy: 0.88, probes: probes.call(([true] * 88) + ([false] * 12)))]
+    steady = [row.merge(probe_accuracy: 0.9, probes: probes.call(([true] * 90) + ([false] * 10)))]
 
     report = CompactionEval::Report.compare(base, candidate)
 
+    assert_includes report, "| m | 90% → 80% (-10 pts) |"
     assert_includes report, "| m | s | S | compacted | -10 pts |"
-    assert_includes report, "regressions beyond 5 points: m s S compacted"
+    assert_includes report, "drops more than 3 points: m."
+    assert_includes CompactionEval::Report.compare(steady, noise),
+                    "No model loses more than 3 points"
   end
 
   # A model that knows some facts and nothing else: its summary lists the

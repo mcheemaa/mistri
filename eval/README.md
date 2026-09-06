@@ -74,11 +74,17 @@ cat tmp/compaction-eval/candidate-S.jsonl tmp/compaction-eval/candidate-M.jsonl 
 bundle exec ruby script/compaction_eval.rb compare eval/baselines/<current>.jsonl tmp/compaction-eval/candidate.jsonl
 ```
 
-The bar: no model loses more than five points of probe accuracy, changed
-facts and continuation do not regress, and summary size stays within the
-compactor's limit with room to spare. `--prompts FILE` loads a Ruby file that
-redefines the `Mistri::Compactor` prompt constants for local iteration; the
-prompt digest in every row keeps such a run from passing as a baseline.
+The bar reads per-model aggregates over all compacted cells, not single
+cells: two runs of the same prompt differed by up to six points in one cell
+but by under two points per model in aggregate (about 250 probes each), while
+changed-fact accuracy and continuation, with a few dozen and a dozen samples
+per model, moved by up to eight points. So: no model loses more than three
+points of aggregate probe accuracy, changed facts and continuation stay
+within their noise, the misses list reads as improvements rather than trades,
+and summary size stays within the compactor's limit with room to spare.
+`--prompts FILE` loads a Ruby file that redefines the `Mistri::Compactor`
+prompt constants for local iteration; the prompt digest in every row keeps
+such a run from passing as a baseline.
 
 ## Limits
 
