@@ -85,6 +85,10 @@ class TestCompactionEval < Minitest::Test
     refute grader.pass?("54331", "5433", :exact)
     assert grader.pass?("argMax was double-counting refunds.", "double count", :contains)
     assert grader.pass?("184203 rows", "184,203", :contains)
+    refute grader.pass?("10.3%", "0.3%", :contains)
+    refute grader.pass?("port 54331", "5433", :contains)
+    assert grader.pass?("The rate is 0.3% now.", "0.3%", :contains)
+    assert grader.pass?("Port 5433.", "5433", :contains)
     assert grader.same?("3948820.57", "$3,948,820.57")
     assert grader.same?("60.00", "$60")
     refute grader.same?("54331", "5433")
@@ -211,11 +215,15 @@ class TestCompactionEval < Minitest::Test
 
     report = CompactionEval::Report.compare(base, candidate)
 
-    assert_includes report, "| m | 90% → 80% (-10 pts) |"
+    rejected = [candidate.first.merge(probe_accuracy: nil, probes: nil,
+                                      skipped: "compaction rejected")]
+
+    assert_includes report, "| m | 90% -> 80% (-10 pts) |"
     assert_includes report, "| m | s | S | compacted | -10 pts |"
-    assert_includes report, "drops more than 3 points: m."
+    assert_includes report, "Regressions: m ("
     assert_includes CompactionEval::Report.compare(steady, noise),
                     "No model loses more than 3 points"
+    assert_includes CompactionEval::Report.compare(base, rejected), "m (rejected compactions)"
     assert_includes CompactionEval::Report.compare(base, edited), "changed since the baseline"
     refute_includes CompactionEval::Report.compare(base, edited), "-10 pts"
   end
@@ -267,6 +275,240 @@ class TestCompactionEval < Minitest::Test
     def probe_pattern(value)
       { "FIN-2831" => /ticket id/, "payouts_ledger" => /table must you not touch/,
         "5433" => /port does the read replica/ }.fetch(value)
+    end
+  end
+end
+
+# The parts of the eval that only a paid run exercised so far: every filler
+# shape and generator, the runner's failure paths, baselines and folds, and the
+# command-line wiring. Hermetic, with scripted providers.
+class TestCompactionEvalPaths < Minitest::Test
+  SUMMARY = "## Goal\nKnown: FIN-2831, INC-4471, CMP-8842\n## Critical Context\n- none"
+
+  def test_every_scenario_builds_at_every_size_with_all_of_its_shapes
+    CompactionEval::Scenario.names.each do |name|
+      scenario = CompactionEval::Scenario[name]
+      messages = CompactionEval::Builder.new(scenario, size: "M", seed: 3).build.messages
+      tools = messages.select(&:tool?)
+      shapes = messages.select { |m| m.assistant? && m.tool_calls? }
+                       .map { |m| m.text.to_s.gsub(/\d+/, "N") }.uniq
+
+      assert_operator shapes.length, :>=, 4, "#{name} rotates its shapes"
+      assert_operator tools.count { |result| result.text.start_with?("error:") }, :>=, 7
+      assert_operator tools.reject { |result| result.text.start_with?("error:") }
+                           .map { |result| result.text.length }.min, :>, 1_000
+    end
+    session = CompactionEval::Builder.new(CompactionEval::Scenario["ledger_export"], size: "S",
+                                                                                     seed: 1)
+    session.append_segment(session.build, 1)
+
+    assert_raises(ArgumentError) { CompactionEval::Builder.new(nil, size: "XL", seed: 1) }
+  end
+
+  def test_the_tail_session_holds_only_what_the_cut_keeps
+    builder = CompactionEval::Builder.new(CompactionEval::Scenario["ledger_export"], size: "S",
+                                                                                     seed: 1)
+    session = builder.build
+    tail = builder.tail_session(session)
+
+    assert_equal CompactionEval::Builder::TAIL_TURNS * 4, tail.messages.length
+    assert_equal session.messages.last.text, tail.messages.last.text
+    assert_equal builder.fact_entries.keys.sort, builder.facts_kept(0).sort
+  end
+
+  def test_scenario_definitions_are_validated
+    define = lambda do |&block|
+      CompactionEval::Scenario.define("invalid-#{rand(1_000_000)}", summary: "x", &block)
+    end
+    filler = ->(_turn, _rng) { {} }
+    finish = lambda do |scenario|
+      scenario.continuation(prompt: "p", tool: "t", description: "d", schema: -> {},
+                            expected: ->(_) { {} })
+    end
+
+    assert_raises(ArgumentError) { define.call { filler(&filler) } }
+    error = assert_raises(ArgumentError) do
+      define.call do
+        filler(&filler)
+        finish.call(self)
+        segment { fact :a, "1", at: 0.1, text: "%<value>s", probe: "?" }
+        segment { fact :a, "2", at: 0.1, text: "%<value>s", probe: "?" }
+      end
+    end
+
+    assert_match(/repeats fact keys/, error.message)
+    error = assert_raises(ArgumentError) do
+      define.call do
+        filler(&filler)
+        finish.call(self)
+        segment { change :ghost, "2", at: 0.1, text: "%<value>s" }
+      end
+    end
+
+    assert_match(/supersedes unknown/, error.message)
+    assert_raises(ArgumentError) do
+      CompactionEval::Fact.new(key: :a, value: "1", text: "x", at: 0.95, probe: "?")
+    end
+    assert_raises(ArgumentError) do
+      CompactionEval::Fact.new(key: :a, value: "1", text: "x", at: 0.1, probe: "?", carrier: :sms)
+    end
+  end
+
+  def test_a_rejected_compaction_skips_the_row_and_the_report_says_so
+    provider = Mistri::Providers::Fake.new(turns: [{ text: "cut", stop_reason: :length }])
+    runner = CompactionEval::Runner.new(models: ["fake"], scenarios: ["incident_debugging"],
+                                        sizes: ["S"], provider_for: ->(_) { provider },
+                                        io: StringIO.new, judge: nil)
+
+    row = runner.run.first
+
+    assert_equal "compaction rejected", row[:skipped]
+    refute row.dig(:compactions, 0, :accepted)
+    assert_match(/summarization failed/, row.dig(:compactions, 0, :reason))
+    assert_includes CompactionEval::Report.line(row), "skipped"
+    assert_includes CompactionEval::Report.markdown([row]), "All probes passed."
+  end
+
+  def test_baselines_and_folds_measure_the_full_history_the_tail_and_later_segments
+    scripted = Scripted.new
+    runner = CompactionEval::Runner.new(models: ["scripted"], scenarios: ["account_research"],
+                                        sizes: ["S"], provider_for: ->(_) { scripted },
+                                        io: StringIO.new, judge: nil, folds: true, baselines: true)
+
+    rows = runner.run
+    compacted, full, tail = rows
+
+    assert_equal(%w[compacted full tail], rows.map { |row| row[:mode] })
+    assert_equal 2, compacted[:folds]
+    assert_equal %w[0 1], compacted[:accuracy_by_segment].keys
+    assert_nil full[:literal_recall]
+    assert_nil tail[:compactions]
+    assert_equal 18, compacted[:probes].length
+    assert_includes CompactionEval::Report.markdown(rows),
+                    "| scripted | account_research | S | tail |"
+  end
+
+  def test_transient_probe_errors_are_retried_and_judge_failures_are_recorded
+    flaky = Scripted.new(errors_before_answer: 1)
+    broken_judge = Mistri::Providers::Fake.new
+    broken_judge.define_singleton_method(:stream) { |**| raise IOError, "judge unreachable" }
+    providers = { "scripted" => flaky, "gpt-6-astra" => broken_judge }
+    runner = CompactionEval::Runner.new(models: ["scripted"], scenarios: ["ledger_export"],
+                                        sizes: ["S"], provider_for: ->(m) { providers.fetch(m) },
+                                        io: StringIO.new, pause: 0)
+
+    row = runner.run.first
+
+    assert_operator flaky.retried, :>, 0
+    assert_operator row[:probe_accuracy], :>, 0
+    assert_match(/error: IOError/, row.dig(:judge, :status))
+    assert_nil row.dig(:judge, :cost)
+    assert_operator row[:unpriced], :>=, 1
+  end
+
+  def test_the_command_line_lists_scenarios_and_rewrites_result_files
+    require_relative "../script/compaction_eval"
+    cli = CompactionEval::CLI.new
+    rows = [{ model: "m", scenario: "s", size: "S", mode: "compacted", rep: 0, probe_accuracy: 1.0,
+              probes: [{ key: :k, carrier: :user, segment: 0, changed: false, match: "contains",
+                         answer: "v", reply: "v", pass: true, stop_reason: "stop" }],
+              compactions: [{ accepted: true, summary: "text", summary_tokens: 3,
+                              tokens_before: 900, tokens_after: 300 }],
+              continuation: { success: true, called: true, matched: [], expected: {},
+                              actual: {} } }]
+
+    listed = capture_io { cli.start(["list"]) }.first
+    Dir.mktmpdir do |dir|
+      path = File.join(dir, "rows.jsonl")
+      CompactionEval::Report.write(rows, path)
+      out = File.join(dir, "baselines", "current.jsonl")
+      capture_io { cli.start(["distill", path, out]) }
+      regraded = File.join(dir, "regraded.jsonl")
+      capture_io { cli.start(["regrade", path, regraded]) }
+      reported = capture_io { cli.start(["report", path]) }.first
+      compared = capture_io { cli.start(["compare", path, regraded]) }.first
+
+      refute_includes File.read(out), "text"
+      assert_path_exists out.sub(".jsonl", ".md")
+      assert_includes File.read(regraded), '"pass":true'
+      assert_includes reported, "| m | s | S | compacted |"
+      assert_includes compared, "No model loses"
+    end
+
+    assert_includes listed, "ledger_export"
+    assert_raises(SystemExit) { capture_io { cli.start(["bogus"]) } }
+  end
+
+  def test_the_command_line_parses_every_option
+    require_relative "../script/compaction_eval"
+    cli = CompactionEval::CLI.new
+    parsed = {}
+    files = {}
+
+    cli.send(:parser, parsed, files).parse!(%w[--models a,b --scenarios ledger_export --sizes S,M
+                                               --repeat 2 --seed 9 --folds --baselines --reader r
+                                               --judge j --no-judge --out o.jsonl])
+
+    assert_equal %w[a b], parsed[:models]
+    assert_equal ["ledger_export"], parsed[:scenarios]
+    assert_equal %w[S M], parsed[:sizes]
+    assert_equal 2, parsed[:repeat]
+    assert_equal 9, parsed[:seed]
+    assert parsed[:folds]
+    assert parsed[:baselines]
+    assert_equal "r", parsed[:reader]
+    assert_nil parsed[:judge]
+    assert_equal "o.jsonl", files[:out]
+  end
+
+  # Knows the identifiers, answers everything else with "unknown", and can be
+  # asked to fail with a transient error before its first real answer.
+  class Scripted
+    attr_reader :requests, :retried
+
+    def initialize(errors_before_answer: 0)
+      @requests = []
+      @errors = errors_before_answer
+      @retried = 0
+    end
+
+    def model = "scripted"
+
+    def stream(messages:, system: nil, tools: [], **)
+      @requests << { messages: messages, system: system }
+      return Mistri::Message.assistant(content: SUMMARY, stop_reason: :stop, usage: usage(4_000)) if
+        system == Mistri::Compactor::SUMMARIZER_SYSTEM
+      return tool_call(tools.first) if tools.any?
+
+      if @errors.positive?
+        @errors -= 1
+        @retried += 1
+        return Mistri::Message.assistant(content: nil, stop_reason: :error,
+                                         error_message: "rate limit exceeded", usage: usage(1))
+      end
+
+      question = messages.last.text
+      answer = %w[FIN-2831 INC-4471 CMP-8842].find do |id|
+        question =~ /(ticket|incident|campaign) id/ && id
+      end
+      Mistri::Message.assistant(content: answer || "unknown", stop_reason: :stop, usage: usage(100))
+    end
+
+    private
+
+    # Arguments that satisfy whatever schema the scenario declares, so the
+    # continuation ends after one call instead of a correction loop.
+    def tool_call(tool)
+      name = tool[:name] || tool["name"]
+      schema = tool[:input_schema] || tool["input_schema"] || {}
+      properties = schema[:properties] || schema["properties"] || {}
+      arguments = properties.keys.to_h { |key| [key.to_s, "x"] }
+      call = Mistri::ToolCall.new(id: "c_#{@requests.length}", name: name, arguments: arguments)
+      Mistri::Message.assistant(content: [call], stop_reason: :tool_use, usage: usage(50))
+    end
+
+    def usage(input)
+      Mistri::Usage.new(input: input, output: 10).with_cost(input: 1.0, output: 5.0)
     end
   end
 end

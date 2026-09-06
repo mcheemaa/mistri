@@ -144,6 +144,6 @@ CompactionEval::Scenario.define("incident_debugging",
                },
                expected: lambda { |latest|
                  { "incident_id" => latest[:incident], "on_call" => latest[:on_call],
-                   "error_rate" => latest[:error_rate] }
+                   "error_rate" => latest[:error_rate], "root_cause" => "PO box" }
                }
 end

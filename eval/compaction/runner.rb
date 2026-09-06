@@ -33,7 +33,7 @@ module CompactionEval
                                            properties: { "claim" => { type: "string" },
                                                          "reason" => { type: "string" } },
                                            required: %w[claim reason] } },
-        "resumability" => { type: "integer" },
+        "resumability" => { type: "integer", enum: [1, 2, 3, 4, 5] },
         "rationale" => { type: "string" }
       },
       required: %w[unsupported_claims resumability rationale]
@@ -42,6 +42,9 @@ module CompactionEval
     # Sol judges Astra.
     DEFAULT_JUDGE = "gpt-6-astra"
     JUDGE_FOR_ASTRA = "gpt-5.6-sol"
+    # One call and a correction or two; a model that keeps sending invalid
+    # arguments must not loop on a paid run.
+    CONTINUATION_TURNS = 4
 
     # Keeps what a summarizer was shown, so the judge audits the summary
     # against the transcript it was written from and nothing else.
@@ -71,8 +74,9 @@ module CompactionEval
     # a model id, :auto for the cross-family default, or nil for no judge.
     def initialize(models:, scenarios:, sizes:, repeat: 1, seed: 1, folds: false, baselines: false,
                    provider_for: ->(model) { Mistri.provider(model) }, settings: {}, io: $stderr,
-                   on_row: nil, reader: nil, judge: :auto)
+                   on_row: nil, reader: nil, judge: :auto, pause: 3)
       @models = models
+      @pause = pause
       @scenarios = scenarios.map { |name| name.is_a?(Scenario) ? name : Scenario[name] }
       @sizes = sizes
       @repeat = repeat
@@ -143,8 +147,12 @@ module CompactionEval
       row[:compactions] = compactions
       return row.merge(skipped: "compaction rejected") unless compactions.all? { |c| c[:accepted] }
 
-      row.merge(measure(model, scenario, session, last_segment))
-         .merge(judge: judge(model, recording, session))
+      measured = row.merge(measure(model, scenario, session, last_segment))
+      verdict = judge(model, recording, session)
+      return measured unless verdict
+
+      measured.merge(judge: verdict,
+                     unpriced: measured[:unpriced] + (verdict[:cost].nil? ? 1 : 0))
     end
 
     def baseline_row(model, scenario, size, mode)
@@ -240,7 +248,8 @@ module CompactionEval
         "recorded"
       end
       agent = Mistri::Agent.new(provider: reader(model), session: session, tools: [tool],
-                                system: CONTINUE_SYSTEM, compaction: false)
+                                system: CONTINUE_SYSTEM, compaction: false,
+                                budget: Mistri::Budget.new(turns: CONTINUATION_TURNS))
       result = agent.run(spec.prompt)
       expected = spec.expected.call(latest)
       matched = expected.select { |key, value| recorded && Grader.same?(recorded[key], value) }.keys
@@ -259,7 +268,7 @@ module CompactionEval
         break unless reply.stop_reason == :error && reply.error_message.to_s.match?(TRANSIENT)
         break if attempt == attempts - 1
 
-        sleep(3 * (attempt + 1))
+        sleep(@pause * (attempt + 1))
       end
       reply
     end

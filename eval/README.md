@@ -131,11 +131,14 @@ cells: two runs of the same prompt differed by up to six points in one cell
 but by under two points per model in aggregate (about 250 probes each), while
 changed-fact accuracy and continuation, with a few dozen and a dozen samples
 per model, moved by up to eight points. So: no model loses more than three
-points of aggregate probe accuracy, changed facts and continuation stay
-within their noise, the judge's unsupported-claim count does not rise, the misses
-list reads as improvements rather than trades, and summary size stays within
-the compactor's limit with room to spare. A scenario edited since the
-baseline is left out of the comparison until the baseline is rerun.
+points of aggregate probe accuracy, no model rejects more compactions than
+before, changed facts and continuation stay within their noise, the judge's
+unsupported-claim count does not rise, the misses list reads as improvements
+rather than trades, and summary size stays within the compactor's limit with
+room to spare. A scenario edited since the baseline, including a change to
+its continuation tool, is left out of the comparison until the baseline is
+rerun. The compare job in CI runs the base branch's harness against the base
+branch's baseline, so a pull request cannot grade itself.
 
 `--prompts FILE` loads a Ruby file that redefines the `Mistri::Compactor`
 prompt constants for local iteration; the prompt digest in every row keeps

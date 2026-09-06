@@ -35,7 +35,11 @@ module CompactionEval
   # arguments are graded against the latest values of the facts.
   Continuation = Data.define(:prompt, :tool, :description, :schema, :expected)
 
+  # A scenario: one team's work as facts, filler, and the task that proves the
+  # agent can still finish it.
   class Scenario
+    # Collects the facts of one stretch of the session; later segments arrive
+    # after a checkpoint already exists.
     class Segment
       attr_reader :facts
 
@@ -105,8 +109,10 @@ module CompactionEval
     # Changes to a scenario's facts, probes, or continuation invalidate every
     # baseline built on it; rows carry this so compare can tell.
     def digest
-      source = { facts: facts.map(&:to_h), continuation: [continuation.prompt, continuation.tool,
-                                                          continuation.expected.call(latest)] }
+      source = { facts: facts.map(&:to_h),
+                 continuation: [continuation.prompt, continuation.tool,
+                                Mistri::Schema.build(&continuation.schema),
+                                continuation.expected.call(latest)] }
       Digest::SHA256.hexdigest(JSON.generate(source))[0, 12]
     end
 

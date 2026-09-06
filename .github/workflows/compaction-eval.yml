@@ -31,9 +31,11 @@ on:
         type: boolean
         default: false
 
+# The eval jobs run code from the pull request head, so they get a read-only
+# token and no persisted credentials; only the compare job, which runs the base
+# branch's code, may comment.
 permissions:
   contents: read
-  pull-requests: write
 
 concurrency:
   group: compaction-eval-${{ github.event.pull_request.number || github.run_id }}
@@ -53,6 +55,8 @@ jobs:
   eval:
     needs: plan
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
     # The environment holds the keys and requires a maintainer's approval, so
     # a pull request from a fork runs only after someone has read its diff.
     environment: eval
@@ -69,6 +73,7 @@ jobs:
       - uses: actions/checkout@v7.0.1
         with:
           ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          persist-credentials: false
       - uses: ruby/setup-ruby@v1
         with:
           ruby-version: "3.4"
@@ -91,12 +96,18 @@ jobs:
   compare:
     needs: eval
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pull-requests: write
     env:
       BUNDLE_WITHOUT: lint:mysql_test:postgres_test:rails_test
     steps:
+      # The base branch's harness and baseline judge the candidate's rows, so a
+      # pull request cannot grade itself with a baseline or a report it edited.
       - uses: actions/checkout@v7.0.1
         with:
-          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          ref: ${{ github.event.pull_request.base.sha || github.sha }}
+          persist-credentials: false
       - uses: ruby/setup-ruby@v1
         with:
           ruby-version: "3.4"

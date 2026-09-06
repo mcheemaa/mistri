@@ -24,8 +24,17 @@ module CompactionEval
       case match
       when :yes_no then answers.include?(body[/\A(yes|no)\b/, 1])
       when :exact then answers.include?(body.sub(/[[:punct:]]+\z/, ""))
-      else answers.any? { |candidate| body.include?(candidate) }
+      else answers.any? { |candidate| carries?(body, candidate) }
       end
+    end
+
+    # A value that starts or ends with a digit must stand on its own: "10.3%"
+    # does not carry "0.3%" and "54331" does not carry "5433", while a word
+    # may still be carried by its longer form ("double counting").
+    def carries?(body, candidate)
+      head = candidate.match?(/\A\d/) ? "(?<![\\d.])" : ""
+      tail = candidate.match?(/[\d%]\z/) ? "(?![\\d.]\\d|\\d)" : ""
+      body.match?(/#{head}#{Regexp.escape(candidate)}#{tail}/)
     end
 
     # Tool arguments compare as values. Numbers compare as numbers, so "$60",

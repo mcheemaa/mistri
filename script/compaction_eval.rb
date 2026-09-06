@@ -20,6 +20,8 @@ $LOAD_PATH.unshift(File.join(ROOT, "lib"))
 require File.join(ROOT, "eval", "compaction")
 
 module CompactionEval
+  # The command: runs a matrix, renders or compares results, and rewrites
+  # stored rows through the current grader or into a committable baseline.
   class CLI
     DEFAULT_MODELS = %w[claude-sonnet-5 gpt-5.6-sol gemini-2.5-flash].freeze
     ENV_FILE = File.join(ROOT, ".env.development.local")
@@ -114,6 +116,7 @@ module CompactionEval
     # is the form a baseline is committed in.
     def rewrite(path, out, &)
       rows = Report.read(path).map(&)
+      FileUtils.mkdir_p(File.dirname(out))
       Report.write(rows, out)
       File.write(out.sub(/\.jsonl\z/, ".md"), Report.markdown(rows))
       puts Report.markdown(rows)
