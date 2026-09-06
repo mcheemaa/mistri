@@ -16,7 +16,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   small scenarios, so a compaction takes proportionally longer to generate.
 - The eval comparison tracks scenario digests per size, so a baseline that
   holds several sizes no longer reads a smaller candidate run as a changed
-  scenario.
+  scenario, and a changed workload is named as scenario/size.
 - `Compaction.new(fallback:)` names a second summarizer, a provider or a
   model id, that gets one try when the session's provider cannot write a
   usable summary, a refusal included; a fallback naming the primary's own
