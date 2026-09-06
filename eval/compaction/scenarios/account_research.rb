@@ -44,7 +44,7 @@ CompactionEval::Scenario.define("account_research",
         done: "The last touches were routine check-ins from the account team; no gift has " \
               "gone out this quarter, so the send is not a repeat." }
     ]
-    CompactionEval::Filler.turn(turn, rng, shapes)
+    CompactionEval::Filler.shape(turn, shapes)
   end
 
   segment do

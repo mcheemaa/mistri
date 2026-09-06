@@ -7,7 +7,8 @@ module CompactionEval
   # markdown report for a results file, and a comparison between two files
   # (a baseline and a candidate prompt, usually).
   module Report
-    KEY = %i[model scenario size mode].freeze
+    # A cell is everything that must agree before two rows are comparable.
+    KEY = %i[model scenario size mode reader folds].freeze
     COLUMNS = ["model", "scenario", "size", "mode", "probes", "changed", "deep", "continuation",
                "literal", "unsupported", "resumability", "summary tok", "before -> after",
                "compaction $", "total $"].freeze
@@ -15,6 +16,11 @@ module CompactionEval
     # by under two points in a model's aggregate over all cells, so the
     # verdict reads the aggregate and the cell table stays informational.
     REGRESSION = 0.03
+
+    # What a comparison concluded, and the text that says why.
+    Comparison = Data.define(:markdown, :passed) do
+      def to_s = markdown
+    end
 
     module_function
 
@@ -42,21 +48,52 @@ module CompactionEval
       [*lines, "", *misses(rows)].join("\n")
     end
 
+    # Only cells present on both sides count, graded by the same rules, on
+    # the same scenarios; everything else is named, never silently passed.
     def compare(base, candidate)
+      problems = incomparable(base, candidate)
+      if problems.any?
+        return Comparison.new(markdown: refusal(base, candidate, problems), passed: false)
+      end
+
       changed = changed_scenarios(base, candidate)
-      base = base.reject { |row| changed.include?(row[:scenario].to_s) }
-      candidate = candidate.reject { |row| changed.include?(row[:scenario].to_s) }
+      base_cells = grouped(base).reject { |key, _| changed.include?(key[1]) }
+      candidate_cells = grouped(candidate).reject { |key, _| changed.include?(key[1]) }
+      matched = base_cells.keys & candidate_cells.keys
       regressions = []
-      ["# Compaction eval comparison", "", versions(base, candidate), *changed_note(changed), "",
-       "## Per model, compacted rows", "",
-       table(%w[model probes changed continuation unsupported resumability rejected]),
-       *per_model(base, candidate, regressions), "", "## Per cell", "",
-       *per_cell(base, candidate), "", verdict(regressions)].join("\n")
+      per_model = per_model(base_cells.slice(*matched), candidate_cells.slice(*matched),
+                            regressions)
+      regressions << "no comparable compacted cells" if per_model.empty?
+      markdown = ["# Compaction eval comparison", "", versions(base, candidate),
+                  *coverage(base_cells.keys, candidate_cells.keys, changed), "",
+                  "## Per model, matched compacted cells", "",
+                  table(%w[model probes changed continuation unsupported resumability rejected]),
+                  *per_model, "", "## Per cell", "",
+                  *per_cell(base_cells, candidate_cells, matched), "",
+                  verdict(regressions)].join("\n")
+      Comparison.new(markdown: markdown, passed: regressions.empty?)
     end
 
-    def per_model(base, candidate, regressions)
-      aggregates(candidate).filter_map do |model, after|
-        before = aggregates(base)[model]
+    def incomparable(base, candidate)
+      problems = []
+      problems << "the candidate has no rows" if candidate.empty?
+      problems << "the baseline has no rows" if base.empty?
+      graders = (base + candidate).map { |row| row[:grader_version] }.uniq
+      if graders.length > 1
+        problems << "grader versions differ (#{graders.join(", ")}): regrade or regenerate"
+      end
+      problems
+    end
+
+    def refusal(base, candidate, problems)
+      ["# Compaction eval comparison", "", versions(base, candidate), "",
+       "Not comparable: #{problems.join("; ")}."].join("\n")
+    end
+
+    def per_model(base_cells, candidate_cells, regressions)
+      before_by_model = aggregates(base_cells.values.flatten)
+      aggregates(candidate_cells.values.flatten).filter_map do |model, after|
+        before = before_by_model[model]
         next unless before
 
         delta = after[:probes] - before[:probes]
@@ -67,8 +104,39 @@ module CompactionEval
                "#{pct(before[:continuation])} -> #{pct(after[:continuation])}",
                "#{number(before[:unsupported])} -> #{number(after[:unsupported])}",
                "#{number(before[:resumability])} -> #{number(after[:resumability])}",
-               "#{before[:rejected]} -> #{after[:rejected]}"])
+               "#{pct(before[:rejected])} -> #{pct(after[:rejected])}"])
       end
+    end
+
+    def per_cell(base_cells, candidate_cells, matched)
+      rows = matched.map do |key|
+        before = base_cells.fetch(key)
+        group = candidate_cells.fetch(key)
+        table([*key.first(4), signed(delta_for(before, group, :probe_accuracy)),
+               signed(delta_for(before, group, :changed_accuracy)),
+               signed(delta_for(before, group) { |row| continued(row) }),
+               "#{summary_tokens(before)} -> #{summary_tokens(group)}"])
+      end
+      [table(%w[model scenario size mode probes changed continuation] + ["summary tok"]), *rows]
+    end
+
+    def coverage(base_keys, candidate_keys, changed)
+      notes = []
+      unless changed.empty?
+        notes << "Scenarios changed since the baseline and left out: #{changed.join(", ")}. " \
+                 "Rerun the baseline to compare them."
+      end
+      missing = base_keys - candidate_keys
+      extra = candidate_keys - base_keys
+      unless missing.empty?
+        notes << "Baseline cells the candidate did not run (not compared): " \
+                 "#{missing.map { |key| key.first(4).join("/") }.join(", ")}."
+      end
+      unless extra.empty?
+        notes << "Candidate cells with no baseline (not compared): " \
+                 "#{extra.map { |key| key.first(4).join("/") }.join(", ")}."
+      end
+      notes.empty? ? [] : ["", *notes]
     end
 
     # A scenario edited since the baseline has no comparable rows; say so
@@ -81,30 +149,12 @@ module CompactionEval
       end
     end
 
-    def changed_note(changed)
-      return [] if changed.empty?
-
-      ["", "Scenarios changed since the baseline and left out of this comparison: " \
-           "#{changed.join(", ")}. Rerun the baseline to compare them."]
+    def grouped(rows)
+      rows.group_by { |row| KEY.map { |key| row[key].to_s } }
     end
 
-    def per_cell(base, candidate)
-      rows = grouped(candidate).filter_map do |key, group|
-        before = grouped(base)[key]
-        next unless before
-
-        table([*key, signed(delta_for(before, group, :probe_accuracy)),
-               signed(delta_for(before, group, :changed_accuracy)),
-               signed(delta_for(before, group) { |row| continued(row) }),
-               "#{summary_tokens(before)} -> #{summary_tokens(group)}"])
-      end
-      [table(%w[model scenario size mode probes changed continuation] + ["summary tok"]), *rows]
-    end
-
-    # One number per model across every compacted cell, weighted by probes,
-    # so a model with more scenarios does not count more per scenario.
     # A rejected compaction is the worst outcome a prompt can produce, so it
-    # counts here rather than vanishing with the row.
+    # counts here as a rate rather than vanishing with the row.
     def aggregates(rows)
       compacted = rows.select { |row| row[:mode] == "compacted" }
       compacted.group_by { |row| row[:model].to_s }.to_h do |model, group|
@@ -116,7 +166,7 @@ module CompactionEval
                                         .fdiv([measured.length, 1].max),
                   unsupported: mean(measured) { |row| row.dig(:judge, :unsupported) },
                   resumability: mean(measured) { |row| row.dig(:judge, :resumability) },
-                  rejected: group.count { |row| row[:skipped] } }]
+                  rejected: group.count { |row| row[:skipped] }.fdiv(group.length) }]
       end
     end
 
@@ -124,13 +174,10 @@ module CompactionEval
       probes.empty? ? 0.0 : probes.count { |probe| probe[:pass] }.fdiv(probes.length)
     end
 
-    def grouped(rows)
-      rows.reject { |row| row[:skipped] }.group_by { |row| KEY.map { |key| row[key].to_s } }
-    end
-
     def header(rows)
       "#{rows.length} rows, git #{rows.map { |row| row[:git_sha] }.uniq.join("/")}, prompt " \
-        "#{rows.map { |row| row[:prompt_digest] }.uniq.join("/")}, " \
+        "#{rows.map { |row| row[:prompt_digest] }.uniq.join("/")}, grader " \
+        "#{rows.map { |row| row[:grader_version] }.uniq.join("/")}, " \
         "total #{money(rows.sum { |row| total_cost(row) })}"
     end
 
@@ -170,6 +217,21 @@ module CompactionEval
       failed.empty? ? ["All probes passed."] : ["## Misses", "", *failed]
     end
 
+    # Reads the distilled shape too: field names survive distilling, values
+    # do not.
+    def continuation_miss(row)
+      continuation = row[:continuation]
+      return [] if continuation.nil? || continuation[:success]
+
+      wrong = Array(continuation[:wrong]).map(&:to_s)
+      detail = if continuation[:called].to_i == 1 && wrong.any?
+                 "wrong #{wrong.join(", ")}"
+               else
+                 continuation[:status].to_s
+               end
+      ["- #{row[:model]} #{row[:scenario]} #{row[:size]}: continuation #{detail}"]
+    end
+
     # Judge claims arrive with string keys from the model and symbol keys
     # after a file round trip; both read the same here.
     def judge_flags(row)
@@ -186,24 +248,15 @@ module CompactionEval
       carriers[:tool_deep] || carriers["tool_deep"]
     end
 
-    def continuation_miss(row)
-      continuation = row[:continuation]
-      return [] if continuation.nil? || continuation[:success]
-
-      wrong = continuation[:expected].keys.map(&:to_s) - continuation[:matched].map(&:to_s)
-      detail = continuation[:called] ? "wrong #{wrong.join(", ")}" : continuation[:status].to_s
-      ["- #{row[:model]} #{row[:scenario]} #{row[:size]}: continuation #{detail}"]
-    end
-
     def verdict(regressions)
       points = (REGRESSION * 100).round
       if regressions.empty?
-        return "No model loses more than #{points} points of aggregate probe accuracy or " \
-               "rejects more compactions."
+        return "Passed: no model loses more than #{points} points of aggregate probe accuracy " \
+               "or rejects more compactions, over matched cells."
       end
 
-      "Regressions: #{regressions.join(", ")} (more than #{points} points of aggregate probe " \
-        "accuracy lost, or more rejected compactions)."
+      "Failed: #{regressions.join(", ")} (more than #{points} points of aggregate probe " \
+        "accuracy lost, more rejected compactions, or nothing comparable)."
     end
 
     def mean(group, key = nil, &)
@@ -234,8 +287,6 @@ module CompactionEval
       sizes.empty? ? "-" : sizes.max
     end
 
-    # The main compaction's numbers: a fold compacts a checkpoint plus a few
-    # turns, which says little about the size the summary had to cover.
     def compression(rows)
       firsts = Array(rows).filter_map { |row| row[:compactions]&.first }
                           .select { |c| c[:tokens_before] && c[:tokens_after] }

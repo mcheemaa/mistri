@@ -46,7 +46,7 @@ CompactionEval::Scenario.define("ledger_export",
         done: "Step #{turn + 1}: replication lag is under a second, safe to read the next " \
               "slice from the replica." }
     ]
-    CompactionEval::Filler.turn(turn, rng, shapes)
+    CompactionEval::Filler.shape(turn, shapes)
   end
 
   segment do

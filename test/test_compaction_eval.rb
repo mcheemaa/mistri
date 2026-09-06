@@ -89,10 +89,22 @@ class TestCompactionEval < Minitest::Test
     refute grader.pass?("port 54331", "5433", :contains)
     assert grader.pass?("The rate is 0.3% now.", "0.3%", :contains)
     assert grader.pass?("Port 5433.", "5433", :contains)
+  end
+
+  def test_tool_arguments_compare_as_values_with_digit_boundaries
+    grader = CompactionEval::Grader
+
     assert grader.same?("3948820.57", "$3,948,820.57")
     assert grader.same?("60.00", "$60")
     refute grader.same?("54331", "5433")
     assert grader.same?("October 9, 2026", "October 9")
+    refute grader.same?("10.3%", "0.3%")
+    refute grader.same?("54331/tcp", "5433")
+    refute grader.same?("13948820.57 USD", "$3,948,820.57")
+    assert grader.same?("3,948,820.57 USD", "$3,948,820.57")
+    assert grader.pass?("Root cause: PO box addresses arrive with a nil street line.",
+                        ["PO box", "nil street"], :contains)
+    refute grader.pass?("connection pooling exhausted", ["PO box", "nil street"], :contains)
     assert grader.same?("Notebook bundle", "notebook bundle")
     refute grader.same?("October 19", "October 9, 2026")
     assert grader.literal?("## Goal\nShip FIN-2831", "FIN-2831")
@@ -201,31 +213,48 @@ class TestCompactionEval < Minitest::Test
     assert regraded.dig(:continuation, :success)
   end
 
-  def test_compare_reads_per_model_aggregates_flags_real_drops_and_skips_changed_scenarios
+  def test_compare_matches_cells_refuses_the_incomparable_and_flags_real_drops
     probes = ->(passes) { passes.map { |pass| { pass: pass, changed: false } } }
-    row = { model: "m", scenario: "s", size: "S", mode: "compacted", changed_accuracy: 1.0,
-            continuation: { success: true }, compactions: [{ summary_tokens: 700 }],
-            git_sha: "a", prompt_digest: "p1", scenario_digest: "d1" }
+    row = { model: "m", scenario: "s", size: "S", mode: "compacted", reader: nil, folds: 2,
+            changed_accuracy: 1.0, continuation: { success: true },
+            compactions: [{ summary_tokens: 700 }], git_sha: "a", prompt_digest: "p1",
+            scenario_digest: "d1", grader_version: CompactionEval::Grader::VERSION }
+    base_s = row.merge(probe_accuracy: 0.9, probes: probes.call(([true] * 9) + [false]))
+    base_m = row.merge(size: "M", probe_accuracy: 0.5, probes: probes.call([true, false]))
+    worse_s = row.merge(probe_accuracy: 0.8, probes: probes.call(([true] * 8) + ([false] * 2)),
+                        git_sha: "b", prompt_digest: "p2")
+
+    against_mixed = CompactionEval::Report.compare([base_s, base_m], [worse_s])
+
+    refute_predicate against_mixed, :passed, "an S-only candidate must be judged on the S cell"
+    assert_includes against_mixed.markdown, "| m | 90% -> 80% (-10 pts) |"
+    assert_includes against_mixed.markdown, "Baseline cells the candidate did not run"
+    assert_includes CompactionEval::Report.compare([base_s], [base_s, base_m]).markdown,
+                    "Candidate cells with no baseline"
+    refute_predicate CompactionEval::Report.compare([base_s], []), :passed
+    assert_includes CompactionEval::Report.compare([base_s], []).markdown, "no rows"
+    old_grader = [base_s.merge(grader_version: "old")]
+
+    refute_predicate CompactionEval::Report.compare([base_s], old_grader), :passed
+    assert_includes CompactionEval::Report.compare([base_s], [base_s.merge(scenario_digest: "d2")])
+                                          .markdown, "changed since the baseline"
+  end
+
+  def test_compare_counts_rejections_and_lets_noise_through
+    probes = ->(passes) { passes.map { |pass| { pass: pass, changed: false } } }
+    row = { model: "m", scenario: "s", size: "S", mode: "compacted", reader: nil, folds: 2,
+            changed_accuracy: 1.0, continuation: { success: true },
+            compactions: [{ summary_tokens: 700 }], git_sha: "a", prompt_digest: "p1",
+            scenario_digest: "d1", grader_version: CompactionEval::Grader::VERSION }
     base = [row.merge(probe_accuracy: 0.9, probes: probes.call(([true] * 9) + [false]))]
-    candidate = [row.merge(probe_accuracy: 0.8, probes: probes.call(([true] * 8) + ([false] * 2)),
-                           git_sha: "b", prompt_digest: "p2")]
+    rejected = [row.merge(skipped: "compaction rejected")]
     noise = [row.merge(probe_accuracy: 0.88, probes: probes.call(([true] * 88) + ([false] * 12)))]
     steady = [row.merge(probe_accuracy: 0.9, probes: probes.call(([true] * 90) + ([false] * 10)))]
-    edited = [candidate.first.merge(scenario_digest: "d2")]
 
-    report = CompactionEval::Report.compare(base, candidate)
-
-    rejected = [candidate.first.merge(probe_accuracy: nil, probes: nil,
-                                      skipped: "compaction rejected")]
-
-    assert_includes report, "| m | 90% -> 80% (-10 pts) |"
-    assert_includes report, "| m | s | S | compacted | -10 pts |"
-    assert_includes report, "Regressions: m ("
-    assert_includes CompactionEval::Report.compare(steady, noise),
-                    "No model loses more than 3 points"
-    assert_includes CompactionEval::Report.compare(base, rejected), "m (rejected compactions)"
-    assert_includes CompactionEval::Report.compare(base, edited), "changed since the baseline"
-    refute_includes CompactionEval::Report.compare(base, edited), "-10 pts"
+    assert_includes CompactionEval::Report.compare(base, rejected).markdown,
+                    "m (rejected compactions)"
+    refute_predicate CompactionEval::Report.compare(base, rejected), :passed
+    assert_predicate CompactionEval::Report.compare(steady, noise), :passed
   end
 
   # A model that knows some facts and nothing else: its summary lists the
@@ -234,9 +263,10 @@ class TestCompactionEval < Minitest::Test
   class ScriptedModel
     attr_reader :requests
 
-    def initialize(known:, continuation:)
+    def initialize(known:, continuation:, calls: 1)
       @known = known
       @continuation = continuation
+      @calls = calls
       @requests = []
     end
 
@@ -263,8 +293,10 @@ class TestCompactionEval < Minitest::Test
     # Tools reach a provider as specs, hashes with a name, not Tool objects.
     def tool_call(tool)
       name = tool[:name] || tool["name"]
-      call = Mistri::ToolCall.new(id: "continue_1", name: name, arguments: @continuation)
-      Mistri::Message.assistant(content: [call], stop_reason: :tool_use, usage: priced(100, 20))
+      calls = Array.new(@calls) do |index|
+        Mistri::ToolCall.new(id: "continue_#{index + 1}", name: name, arguments: @continuation)
+      end
+      Mistri::Message.assistant(content: calls, stop_reason: :tool_use, usage: priced(100, 20))
     end
 
     def priced(input, output)
@@ -294,7 +326,7 @@ class TestCompactionEvalPaths < Minitest::Test
                        .map { |m| m.text.to_s.gsub(/\d+/, "N") }.uniq
 
       assert_operator shapes.length, :>=, 4, "#{name} rotates its shapes"
-      assert_operator tools.count { |result| result.text.start_with?("error:") }, :>=, 7
+      assert_operator tools.count { |result| result.text.start_with?("error:") }, :>=, 5
       assert_operator tools.reject { |result| result.text.start_with?("error:") }
                            .map { |result| result.text.length }.min, :>, 1_000
     end
@@ -318,7 +350,7 @@ class TestCompactionEvalPaths < Minitest::Test
 
   def test_scenario_definitions_are_validated
     define = lambda do |&block|
-      CompactionEval::Scenario.define("invalid-#{rand(1_000_000)}", summary: "x", &block)
+      CompactionEval::Scenario.build("invalid", summary: "x", &block)
     end
     filler = ->(_turn, _rng) { {} }
     finish = lambda do |scenario|
@@ -401,6 +433,9 @@ class TestCompactionEvalPaths < Minitest::Test
 
     assert_operator flaky.retried, :>, 0
     assert_operator row[:probe_accuracy], :>, 0
+    retried_probe = row[:probes].first
+
+    assert_in_delta 0.000201, retried_probe[:cost], 0.000001, "both attempts are paid for"
     assert_match(/error: IOError/, row.dig(:judge, :status))
     assert_nil row.dig(:judge, :cost)
     assert_operator row[:unpriced], :>=, 1
@@ -410,12 +445,18 @@ class TestCompactionEvalPaths < Minitest::Test
     require_relative "../script/compaction_eval"
     cli = CompactionEval::CLI.new
     rows = [{ model: "m", scenario: "s", size: "S", mode: "compacted", rep: 0, probe_accuracy: 1.0,
+              grader_version: CompactionEval::Grader::VERSION,
               probes: [{ key: :k, carrier: :user, segment: 0, changed: false, match: "contains",
                          answer: "v", reply: "v", pass: true, stop_reason: "stop" }],
               compactions: [{ accepted: true, summary: "text", summary_tokens: 3,
                               tokens_before: 900, tokens_after: 300 }],
-              continuation: { success: true, called: true, matched: [], expected: {},
-                              actual: {} } }]
+              continuation: { success: false, called: 1, matched: [], wrong: ["a"],
+                              expected: { "a" => "x" }, actual: { "a" => "y" } } },
+            { model: "m", scenario: "s", size: "S", mode: "compacted", rep: 1, probe_accuracy: 1.0,
+              grader_version: CompactionEval::Grader::VERSION, probes: [],
+              compactions: [{ accepted: true, summary: "text", summary_tokens: 3 }],
+              continuation: { success: false, called: 0, matched: [], wrong: ["a"],
+                              expected: { "a" => "x" }, actual: nil, status: "no tool call" } }]
 
     listed = capture_io { cli.start(["list"]) }.first
     Dir.mktmpdir do |dir|
@@ -427,12 +468,15 @@ class TestCompactionEvalPaths < Minitest::Test
       capture_io { cli.start(["regrade", path, regraded]) }
       reported = capture_io { cli.start(["report", path]) }.first
       compared = capture_io { cli.start(["compare", path, regraded]) }.first
+      failing = File.join(dir, "failing.jsonl")
+      CompactionEval::Report.write([rows.first.merge(probe_accuracy: 0.0, probes: [])], failing)
 
       refute_includes File.read(out), "text"
       assert_path_exists out.sub(".jsonl", ".md")
       assert_includes File.read(regraded), '"pass":true'
       assert_includes reported, "| m | s | S | compacted |"
-      assert_includes compared, "No model loses"
+      assert_includes compared, "Passed"
+      assert_raises(SystemExit) { capture_io { cli.start(["compare", path, failing]) } }
     end
 
     assert_includes listed, "ledger_export"
@@ -562,5 +606,112 @@ class TestCompactionEvalPaths < Minitest::Test
     def usage(input)
       Mistri::Usage.new(input: input, output: 10).with_cost(input: 1.0, output: 5.0)
     end
+  end
+end
+
+# The measurement contracts the second review pinned down: one call, digit
+# boundaries in tool arguments, deep facts really out of the wire, the tail
+# control equal to the real cut, digests that see the whole experiment, and
+# regrading over the text that was graded.
+class TestCompactionEvalContracts < Minitest::Test
+  def test_a_continuation_must_be_called_exactly_once_with_the_agreed_values
+    twice = TestCompactionEval::ScriptedModel.new(known: %w[FIN-2831],
+                                                  continuation: TestCompactionEval::ARGUMENTS,
+                                                  calls: 2)
+    wrong = TestCompactionEval::ScriptedModel.new(
+      known: %w[FIN-2831],
+      continuation: TestCompactionEval::ARGUMENTS.merge("replica_port" => "54331/tcp")
+    )
+    runner = lambda do |model|
+      CompactionEval::Runner.new(models: ["m"], scenarios: ["ledger_export"], sizes: ["S"],
+                                 provider_for: ->(_) { model }, io: StringIO.new, judge: nil)
+    end
+
+    doubled = runner.call(twice).run.first[:continuation]
+    mistaken = runner.call(wrong).run.first[:continuation]
+
+    refute doubled[:success]
+    assert_equal 2, doubled[:called]
+    assert_equal "called 2 times", doubled[:status]
+    refute mistaken[:success]
+    assert_equal ["replica_port"], mistaken[:wrong]
+  end
+
+  def test_deep_facts_stay_out_of_the_summarizer_wire_in_every_scenario_and_size
+    CompactionEval::Scenario.names.product(%w[S M]).each do |name, size|
+      scenario = CompactionEval::Scenario[name]
+      builder = CompactionEval::Builder.new(scenario, size: size, seed: 5)
+      session = builder.build
+      provider = Mistri::Providers::Fake.new(turns: [{ text: "Checkpoint." }])
+      settings = Mistri::Compaction.new(keep_recent: CompactionEval::Builder::KEEP_RECENT)
+
+      Mistri::Compactor.call(session:, provider:, settings:)
+
+      prompt = provider.requests.first[:messages].first.text
+      scenario.facts(through: 0).each do |fact|
+        if fact.carrier == :tool_deep
+          refute_includes prompt, fact.value, "#{name}/#{size} #{fact.key} must be truncated away"
+        else
+          assert_includes prompt, Array(fact.value).first,
+                          "#{name}/#{size} #{fact.key} must be seen"
+        end
+      end
+
+      assert_empty builder.facts_kept(session.last_compaction.fetch("kept_from"))
+    end
+  end
+
+  def test_the_tail_control_is_exactly_what_the_cut_keeps
+    builder = CompactionEval::Builder.new(CompactionEval::Scenario["account_research"], size: "S",
+                                                                                        seed: 1)
+    session = builder.build
+    tail = builder.tail_session(session).messages
+    probe = Mistri::Session.new(store: Mistri::Stores::Memory.new)
+    session.entries.each { |entry| probe.append(entry["type"], entry.except("type", "at")) }
+    placeholder = Mistri::Providers::Fake.new(turns: [{ text: "x" }])
+    settings = Mistri::Compaction.new(keep_recent: CompactionEval::Builder::KEEP_RECENT)
+    Mistri::Compactor.call(session: probe, provider: placeholder, settings: settings)
+
+    assert_equal probe.messages.drop(1).map(&:text), tail.map(&:text)
+  end
+
+  def test_scenario_digests_see_segment_placement_and_filler_changes
+    build = lambda do |name, filler_word, &facts|
+      CompactionEval::Scenario.build(name, summary: "x") do
+        filler do |turn, _rng|
+          { ask: "#{filler_word} #{turn}", doing: "d", tool: "t", arguments: {},
+            log: ->(chars) { "l" * chars }, done: "done" }
+        end
+        instance_exec(&facts)
+        continuation(prompt: "p", tool: "t", description: "d", schema: -> {},
+                     expected: ->(_) { {} })
+      end
+    end
+    one = build.call("digest-a", "ask") do
+      segment { fact :a, "1", at: 0.1, text: "%<value>s", probe: "?" }
+      segment { fact :b, "2", at: 0.1, text: "%<value>s", probe: "?" }
+    end
+    moved = build.call("digest-b", "ask") do
+      segment do
+        fact :a, "1", at: 0.1, text: "%<value>s", probe: "?"
+        fact :b, "2", at: 0.8, text: "%<value>s", probe: "?"
+      end
+    end
+    refilled = build.call("digest-c", "step") do
+      segment { fact :a, "1", at: 0.1, text: "%<value>s", probe: "?" }
+      segment { fact :b, "2", at: 0.1, text: "%<value>s", probe: "?" }
+    end
+
+    refute_equal one.digest, moved.digest
+    refute_equal one.digest, refilled.digest
+  end
+
+  def test_a_long_reply_regrades_the_same_way_it_graded
+    row = { mode: "compacted", compactions: [{ summary: "s" }],
+            probes: [{ key: :k, carrier: :user, segment: 0, changed: false, match: "contains",
+                       answer: "FIN-2831", reply: "#{"x" * 2_500} FIN-2831", pass: true,
+                       stop_reason: "stop" }] }
+
+    assert CompactionEval::Runner.regrade(row)[:probes].first[:pass]
   end
 end

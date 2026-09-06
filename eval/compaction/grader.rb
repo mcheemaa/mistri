@@ -7,6 +7,9 @@ module CompactionEval
   # value after normalization, a yes/no probe when its first word is the
   # expected word. No judge model, so a run is reproducible and cheap.
   module Grader
+    # Bumped whenever a rule here changes: rows carry it and a comparison
+    # across versions is refused rather than mixing two graders' verdicts.
+    VERSION = "2026-09-06.2"
     NUMBER = /\A\d+(\.\d+)?\z/
 
     module_function
@@ -46,7 +49,7 @@ module CompactionEval
       right = normalize(expected)
       return BigDecimal(left) == BigDecimal(right) if [left, right].all? { |v| v.match?(NUMBER) }
 
-      left == right || left.include?(right)
+      left == right || carries?(left, right)
     end
 
     def literal?(summary, value)

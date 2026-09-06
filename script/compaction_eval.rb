@@ -43,8 +43,7 @@ module CompactionEval
       case argv.shift
       when "run" then run(argv)
       when "report" then puts Report.markdown(Report.read(argv.fetch(0)))
-      when "compare"
-        puts Report.compare(Report.read(argv.fetch(0)), Report.read(argv.fetch(1)))
+      when "compare" then compare(argv.fetch(0), argv.fetch(1))
       when "regrade" then rewrite(argv.fetch(0), argv.fetch(1)) { |row| Runner.regrade(row) }
       when "distill" then rewrite(argv.fetch(0), argv.fetch(1)) { |row| Runner.distill(row) }
       when "list" then list
@@ -57,7 +56,7 @@ module CompactionEval
     private
 
     def run(argv)
-      options = { models: DEFAULT_MODELS, scenarios: Scenario.names, sizes: %w[S M], repeat: 1,
+      options = { models: DEFAULT_MODELS, scenarios: Scenario.names, sizes: %w[S], repeat: 1,
                   seed: 1, folds: false, baselines: false, reader: nil, judge: :auto }
       files = { out: nil, prompts: nil }
       parser(options, files).parse!(argv)
@@ -117,6 +116,13 @@ module CompactionEval
       opts.on("--judge MODEL", "judge model; auto picks Astra, or Sol when Astra is under " \
                                "test") { |m| options[:judge] = m == "auto" ? :auto : m }
       opts.on("--no-judge", "skip the judge pass") { options[:judge] = nil }
+    end
+
+    # The verdict is the exit status, so a workflow or a script can act on it.
+    def compare(base, candidate)
+      comparison = Report.compare(Report.read(base), Report.read(candidate))
+      puts comparison.markdown
+      exit 1 unless comparison.passed
     end
 
     # regrade applies the current grader to stored rows, so a grading fix

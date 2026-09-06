@@ -42,7 +42,7 @@ CompactionEval::Scenario.define("incident_debugging",
         done: "Step #{turn + 1}: all three pods answer 200, so the failure is inside request " \
               "handling, not readiness." }
     ]
-    CompactionEval::Filler.turn(turn, rng, shapes)
+    CompactionEval::Filler.shape(turn, shapes)
   end
 
   segment do
@@ -93,7 +93,7 @@ CompactionEval::Scenario.define("incident_debugging",
          text: "rspec ./%<value>s # AddressType normalizes PO boxes",
          probe: "Which spec fails, file and line? Reply with file:line only."
     fact :root_cause, "PO box addresses arrive with a nil street line",
-         at: 0.5, carrier: :assistant, answer: %w[nil PO],
+         at: 0.5, carrier: :assistant, answer: ["PO box", "nil street"],
          text: "Root cause: %<value>s, and normalize.rb calls zip on it.",
          probe: "What is the root cause? Answer briefly."
     fact :timeout_env, "SHIPPING_RATES_TIMEOUT_MS=2500",

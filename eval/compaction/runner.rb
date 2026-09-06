@@ -143,16 +143,14 @@ module CompactionEval
         end
       end
       row = base_row(model, scenario, size, rep, :compacted)
-      row[:folds] = compactions.length
       row[:compactions] = compactions
       return row.merge(skipped: "compaction rejected") unless compactions.all? { |c| c[:accepted] }
 
       measured = row.merge(measure(model, scenario, session, last_segment))
       verdict = judge(model, recording, session)
-      return measured unless verdict
-
-      measured.merge(judge: verdict,
-                     unpriced: measured[:unpriced] + (verdict[:cost].nil? ? 1 : 0))
+      unpriced = measured[:unpriced] + compactions.count { |c| c[:cost].nil? }
+      unpriced += 1 if verdict && verdict[:cost].nil?
+      measured.merge(judge: verdict, unpriced: unpriced).compact
     end
 
     def baseline_row(model, scenario, size, mode)
@@ -164,8 +162,9 @@ module CompactionEval
 
     def base_row(model, scenario, size, rep, mode)
       { model: model, scenario: scenario.name, size: size, rep: rep, mode: mode.to_s,
-        seed: @seed + rep, reader: @reader, git_sha: self.class.git_sha,
-        prompt_digest: self.class.prompt_digest, scenario_digest: scenario.digest,
+        seed: @seed + rep, reader: @reader, folds: @folds ? scenario.segments.length : 1,
+        git_sha: self.class.git_sha, prompt_digest: self.class.prompt_digest,
+        scenario_digest: scenario.digest, grader_version: Grader::VERSION,
         at: Time.now.utc.iso8601 }
     end
 
@@ -188,7 +187,7 @@ module CompactionEval
 
     def measure(model, scenario, session, last_segment)
       probes = scenario.probes(through: last_segment).map do |probe|
-        grade(probe, ask(model, session.messages, probe.question))
+        grade(probe, *ask(model, session.messages, probe.question))
       end
       summary = session.last_compaction&.fetch("summary", "")
       if summary
@@ -201,12 +200,14 @@ module CompactionEval
         .merge(self.class.scores(probes, summary))
     end
 
-    def grade(probe, reply)
+    # The whole reply is kept, so a later regrade grades what the first pass
+    # graded; previews are cut only when rendered.
+    def grade(probe, reply, usage)
       text = reply.text.to_s
       { key: probe.key, carrier: probe.carrier, segment: probe.segment, changed: probe.changed,
-        question: probe.question, answer: probe.answer, match: probe.match, reply: text[0, 2_000],
+        question: probe.question, answer: probe.answer, match: probe.match, reply: text,
         pass: reply.stop_reason != :error && Grader.pass?(text, probe.answer, probe.match),
-        stop_reason: reply.stop_reason, error: reply.error_message, cost: cost_of(reply.usage) }
+        stop_reason: reply.stop_reason, error: reply.error_message, cost: cost_of(usage) }
     end
 
     def ask(model, messages, question)
@@ -230,21 +231,25 @@ module CompactionEval
       agent = Mistri::Agent.new(provider: provider(judge_model), system: JUDGE_SYSTEM,
                                 compaction: false)
       result = agent.task(prompt, schema: JUDGE_SCHEMA)
-      claims = Array(result.output&.fetch("unsupported_claims", nil))
+      return { model: judge_model, status: result.status.to_s, cost: cost_of(result.usage) } unless
+        result.completed? && result.output
+
+      claims = Array(result.output["unsupported_claims"])
       { model: judge_model, claims: claims, unsupported: claims.length,
-        resumability: result.output&.fetch("resumability", nil),
-        rationale: result.output&.fetch("rationale", nil), status: result.status.to_s,
-        cost: cost_of(result.usage) }
+        resumability: result.output["resumability"], rationale: result.output["rationale"],
+        status: result.status.to_s, cost: cost_of(result.usage) }
     rescue StandardError => e
       { model: judge_model, status: "error: #{e.class}: #{e.message[0, 200]}", cost: nil }
     end
 
+    # Exactly one call with the agreed values: a second call is a duplicate
+    # side effect, not a pass.
     def continue(model, session, scenario, latest)
       spec = scenario.continuation
-      recorded = nil
+      calls = []
       tool = Mistri::Tool.define(spec.tool, spec.description, schema: spec.schema,
                                                               ends_turn: true) do |args|
-        recorded = args
+        calls << args
         "recorded"
       end
       agent = Mistri::Agent.new(provider: reader(model), session: session, tools: [tool],
@@ -252,25 +257,38 @@ module CompactionEval
                                 budget: Mistri::Budget.new(turns: CONTINUATION_TURNS))
       result = agent.run(spec.prompt)
       expected = spec.expected.call(latest)
+      recorded = calls.first
       matched = expected.select { |key, value| recorded && Grader.same?(recorded[key], value) }.keys
-      { success: matched.length == expected.length, called: !recorded.nil?, matched: matched,
-        expected: expected, actual: recorded, status: recorded ? result.status : "no tool call",
-        cost: cost_of(result.usage) }
+      { success: calls.length == 1 && matched.length == expected.length, called: calls.length,
+        matched: matched, wrong: expected.keys - matched, expected: expected, actual: recorded,
+        status: continuation_status(calls, result), cost: cost_of(result.usage) }
     rescue StandardError => e
-      { success: false, called: false, matched: [], expected: spec.expected.call(latest),
+      expected = spec.expected.call(latest)
+      { success: false, called: 0, matched: [], wrong: expected.keys, expected: expected,
         actual: nil, status: "error: #{e.class}: #{e.message[0, 200]}", cost: nil }
     end
 
+    def continuation_status(calls, result)
+      return "no tool call" if calls.empty?
+      return "called #{calls.length} times" if calls.length > 1
+
+      result.status.to_s
+    end
+
+    # Every attempt is paid for, so the usage of every attempt comes back
+    # with the reply that finally counted.
     def with_retry(attempts: 3)
       reply = nil
+      usage = nil
       attempts.times do |attempt|
         reply = yield
+        usage = [usage, reply.usage].compact.reduce(:+)
         break unless reply.stop_reason == :error && reply.error_message.to_s.match?(TRANSIENT)
         break if attempt == attempts - 1
 
         sleep(@pause * (attempt + 1))
       end
-      reply
+      [reply, usage]
     end
 
     def cost_of(usage)
@@ -292,7 +310,7 @@ module CompactionEval
       end
 
       def regrade(row)
-        return row if row[:skipped] || row[:probes].nil?
+        return row.merge(grader_version: Grader::VERSION) if row[:skipped] || row[:probes].nil?
 
         summary = row[:compactions]&.last&.dig(:summary)
         probes = row[:probes].map do |probe|
@@ -301,7 +319,8 @@ module CompactionEval
           literal = summary ? Grader.literal?(summary, probe[:answer]) : nil
           probe.merge(pass: pass, literal: literal)
         end
-        row.merge(probes: probes, continuation: regrade_continuation(row[:continuation]))
+        row.merge(probes: probes, continuation: regrade_continuation(row[:continuation]),
+                  grader_version: Grader::VERSION)
            .merge(scores(probes, summary))
       end
 
@@ -313,19 +332,22 @@ module CompactionEval
           probes: Array(row[:probes]).map do |probe|
             probe.slice(:key, :carrier, :segment, :changed, :match, :pass, :literal, :stop_reason)
           end,
-          continuation: row[:continuation]&.slice(:success, :called, :matched, :status, :cost),
+          continuation: row[:continuation]&.slice(:success, :called, :matched, :wrong, :status,
+                                                  :cost),
           judge: row[:judge]&.slice(:model, :unsupported, :resumability, :status, :cost)
         ).compact
       end
 
       def regrade_continuation(continuation)
-        return continuation unless continuation && continuation[:actual]
+        return continuation unless continuation && continuation[:actual] && continuation[:expected]
 
         expected = continuation[:expected]
         matched = expected.select do |key, value|
           Grader.same?(continuation[:actual][key.to_s] || continuation[:actual][key.to_sym], value)
         end.keys
-        continuation.merge(matched: matched, success: matched.length == expected.length)
+        once = continuation[:called].is_a?(Integer) ? continuation[:called] == 1 : true
+        continuation.merge(matched: matched, wrong: expected.keys - matched,
+                           success: once && matched.length == expected.length)
       end
 
       def share(items, key)

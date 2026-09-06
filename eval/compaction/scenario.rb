@@ -62,10 +62,15 @@ module CompactionEval
 
     class << self
       def define(name, summary:, &)
+        registry[name] = build(name, summary: summary, &)
+      end
+
+      # A scenario that is validated but not registered, for one-off use.
+      def build(name, summary:, &)
         scenario = new(name, summary)
         scenario.instance_eval(&)
         scenario.validate!
-        registry[name] = scenario
+        scenario
       end
 
       def [](name) = registry.fetch(name) { raise ArgumentError, "unknown scenario #{name}" }
@@ -106,13 +111,18 @@ module CompactionEval
 
     def facts(through: segments.length - 1) = segments[0..through].flatten
 
-    # Changes to a scenario's facts, probes, or continuation invalidate every
-    # baseline built on it; rows carry this so compare can tell.
+    # Anything that changes the experiment invalidates every baseline built on
+    # it: the facts and where they sit by segment, the continuation contract,
+    # and the fixture itself, fingerprinted from one built session so a
+    # filler or builder change shows up too. Rows carry this so compare can
+    # tell.
     def digest
-      source = { facts: facts.map(&:to_h),
+      fixture = Builder.new(self, size: "S", seed: 1).build.messages.map(&:text)
+      source = { segments: segments.map { |facts| facts.map(&:to_h) },
                  continuation: [continuation.prompt, continuation.tool,
                                 Mistri::Schema.build(&continuation.schema),
-                                continuation.expected.call(latest)] }
+                                continuation.expected.call(latest)],
+                 fixture: fixture }
       Digest::SHA256.hexdigest(JSON.generate(source))[0, 12]
     end
 

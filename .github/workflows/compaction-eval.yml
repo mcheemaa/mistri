@@ -84,8 +84,8 @@ jobs:
             --models "${{ matrix.model }}" \
             --sizes "${{ inputs.sizes || 'S' }}" \
             --repeat "${{ inputs.repeat || '1' }}" \
-            ${{ (inputs.folds == '' || inputs.folds == 'true' || inputs.folds == true) && '--folds' || '' }} \
-            ${{ (inputs.baselines == 'true' || inputs.baselines == true) && '--baselines' || '' }} \
+            ${{ (github.event_name == 'pull_request_target' || inputs.folds) && '--folds' || '' }} \
+            ${{ (github.event_name == 'workflow_dispatch' && inputs.baselines) && '--baselines' || '' }} \
             --out "tmp/compaction-eval/${{ matrix.model }}.jsonl"
       - uses: actions/upload-artifact@v4
         with:
@@ -117,18 +117,24 @@ jobs:
           pattern: compaction-eval-*
           path: artifacts
           merge-multiple: true
-      - name: Report and compare against the committed baseline
+      # The base branch's grader re-scores the candidate's raw replies, so the
+      # verdict never rests on pass flags the candidate computed itself.
+      - name: Regrade, report, and compare against the committed baseline
+        id: compare
         run: |
           mkdir -p tmp/compaction-eval
-          cat artifacts/*.jsonl > tmp/compaction-eval/candidate.jsonl
+          cat artifacts/*.jsonl > tmp/compaction-eval/raw.jsonl
+          bundle exec ruby script/compaction_eval.rb regrade tmp/compaction-eval/raw.jsonl tmp/compaction-eval/candidate.jsonl > /dev/null
           bundle exec ruby script/compaction_eval.rb report tmp/compaction-eval/candidate.jsonl > tmp/compaction-eval/report.md
           bundle exec ruby script/compaction_eval.rb distill tmp/compaction-eval/candidate.jsonl tmp/compaction-eval/candidate-distilled.jsonl > /dev/null
+          status=0
           if [ -f eval/baselines/current.jsonl ]; then
-            bundle exec ruby script/compaction_eval.rb compare eval/baselines/current.jsonl tmp/compaction-eval/candidate.jsonl > tmp/compaction-eval/compare.md
+            bundle exec ruby script/compaction_eval.rb compare eval/baselines/current.jsonl tmp/compaction-eval/candidate.jsonl > tmp/compaction-eval/compare.md || status=$?
           else
             echo "No committed baseline yet; this run can become one." > tmp/compaction-eval/compare.md
           fi
           { cat tmp/compaction-eval/compare.md; echo; cat tmp/compaction-eval/report.md; } >> "$GITHUB_STEP_SUMMARY"
+          echo "status=$status" >> "$GITHUB_OUTPUT"
       - uses: actions/upload-artifact@v4
         with:
           name: compaction-eval-merged
@@ -143,3 +149,6 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: gh pr comment "${{ github.event.pull_request.number }}" --body-file tmp/compaction-eval/compare.md
+      - name: Fail when the comparison failed
+        if: steps.compare.outputs.status != '0'
+        run: exit 1

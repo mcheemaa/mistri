@@ -41,12 +41,17 @@ module CompactionEval
       session
     end
 
-    # A session holding only what the cut would keep: the floor a summary
-    # must beat.
+    # A session holding exactly what the real cut keeps: the floor a summary
+    # must beat. A throwaway compaction with a placeholder summary finds the
+    # boundary the same way the measured run does.
     def tail_session(session)
+      probe = Mistri::Session.new(store: Mistri::Stores::Memory.new)
+      session.entries.each { |entry| probe.append(entry["type"], entry.except("type", "at")) }
+      placeholder = Mistri::Providers::Fake.new(turns: [{ text: "placeholder summary" }])
+      Mistri::Compactor.call(session: probe, provider: placeholder,
+                             settings: Mistri::Compaction.new(keep_recent: KEEP_RECENT))
       tail = Mistri::Session.new(store: Mistri::Stores::Memory.new)
-      messages = session.messages
-      messages.last(TAIL_TURNS * 4).each { |message| tail.append_message(message) }
+      probe.messages.drop(1).each { |message| tail.append_message(message) }
       tail
     end
 
@@ -72,6 +77,8 @@ module CompactionEval
 
     def append_turn(session, segment, turn, facts)
       filler = scenario.filler.call(@turn_index, @rng)
+      tool_borne = facts.any? { |fact| %i[tool tool_deep].include?(fact.carrier) }
+      filler = Filler.fail(filler, @rng) if Filler.fails?(@turn_index) && !tool_borne
       @turn_index += 1
       first_entry = session.entries.length
       call = Mistri::ToolCall.new(id: "call_#{segment}_#{turn}", name: filler.fetch(:tool),

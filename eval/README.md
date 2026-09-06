@@ -33,9 +33,10 @@ may be a fuller rendering such as a date with its year). An empty reply is a
 miss: some models answer nothing when they do not know.
 
 Baselines bound the result: `full` probes the uncompacted history, the ceiling
-a summary can reach; `tail` probes the kept tail alone, the floor it must beat.
-`--folds` compacts again after each later segment, so retention across
-checkpoints shows up by segment.
+a summary can reach; `tail` probes exactly the tail the real cut keeps, found
+with a throwaway compaction, the floor a summary must beat. Both controls
+measure the first segment only. `--folds` compacts again after each later
+segment, so retention across checkpoints shows up by segment.
 
 ## The judge
 
@@ -72,12 +73,16 @@ bundle exec ruby script/compaction_eval.rb distill <file>.jsonl <distilled>.json
 
 Rows land in `tmp/compaction-eval/` as JSONL, one row per finished cell,
 with a markdown report beside them. Every row is tagged with the git SHA, a
-digest of the compactor prompts, and a digest of its scenario, and keeps the
-summary, every probe reply, and every tool argument in full, so a miss can be
-read rather than guessed. `regrade` applies the current grading rules to a
-stored run, so a grading fix never needs another paid run. `distill` drops
-every generated word and keeps the scores, which is the only form a baseline
-is committed in.
+digest of the compactor prompts, a digest of its scenario (facts by segment,
+the continuation contract, and a fingerprint of one built session, so filler
+and builder changes count), and the grader's version, and keeps the summary,
+every probe reply, and every tool argument in full, so a miss can be read
+rather than guessed and a regrade grades the same text. `regrade` applies the
+current grading rules to a stored run, so a grading fix never needs another
+paid run. `distill` drops every generated word and keeps the scores and the
+names of any wrong continuation fields, which is the only form a baseline is
+committed in. Probe costs include every retried attempt; a judge that failed
+reports no counts rather than a clean zero.
 
 Keys come from the environment; `.env.development.local` wins over the shell,
 as in the tests. The `full` baseline sends the whole history with every probe,
@@ -86,11 +91,13 @@ baselines at S.
 
 ## Tiers
 
-| tier | models | sizes | when | about |
-|---|---|---|---|---|
-| CI | Sonnet 5, GPT-5.6 Sol, Gemini 2.5 Flash | S, one repetition, folds, judge | every eligible pull request | $5, 20 minutes |
-| baseline | the same three | S with baselines, then M; two repetitions; folds; judge | before and after a prompt change | $25, one hour |
-| sweep | the whole catalog | S and M, one repetition | quarterly, or when a model joins | $100; Opus 5 and Fable 5.1 may refuse a cell, which shows as skipped |
+The default run is the CI tier: Sonnet 5, GPT-5.6 Sol, and Gemini 2.5 Flash,
+all scenarios, size S, one repetition, the judge on, about five dollars. Size
+L runs near 150k input tokens per compaction; `--models all` is the whole
+catalog. The `full` baseline sends the whole history with every probe, so at
+size M it costs several dollars per cell on the larger models; run baselines
+at S. Keys come from the environment; `.env.development.local` wins over the
+shell, as in the tests.
 
 Sol stays in every tier because it is the production default for the hosts we
 know.
@@ -108,10 +115,11 @@ the approval exists. Read the diff before approving. The keys are dedicated
 to the eval and spend-capped at each provider, so the worst a bad change can
 do is spend the cap.
 
-One job per model uploads its rows as an artifact; a final job concatenates
-them, distills them, compares them against `eval/baselines/current.jsonl`,
-writes both to the job summary, and comments the comparison on the pull
-request.
+One job per model uploads its rows as an artifact; a final job, running the
+base branch's code, regrades the candidate's raw rows with the base branch's
+grader, compares them against the base branch's `eval/baselines/current.jsonl`,
+writes report and comparison to the job summary, comments the comparison on
+the pull request, and fails when the comparison failed.
 
 ## Changing the compactor prompt
 
@@ -126,19 +134,26 @@ cat tmp/compaction-eval/candidate-S.jsonl tmp/compaction-eval/candidate-M.jsonl 
 bundle exec ruby script/compaction_eval.rb compare eval/baselines/current.jsonl tmp/compaction-eval/candidate.jsonl
 ```
 
-The bar reads per-model aggregates over all compacted cells, not single
-cells: two runs of the same prompt differed by up to six points in one cell
-but by under two points per model in aggregate (about 250 probes each), while
-changed-fact accuracy and continuation, with a few dozen and a dozen samples
-per model, moved by up to eight points. So: no model loses more than three
-points of aggregate probe accuracy, no model rejects more compactions than
-before, changed facts and continuation stay within their noise, the judge's
+`compare` first refuses anything not comparable: different grader versions,
+or an empty side. Then it matches cells, a cell being model, scenario, size,
+mode, reader, and fold count, leaves out scenarios whose digest changed, names
+every baseline cell the candidate did not run and every candidate cell without
+a baseline, and aggregates per model over the matched cells only. The
+comparison passes when no model loses more than three points of aggregate
+probe accuracy and no model's rejected-compaction rate rises; it exits
+nonzero otherwise, and the CI job fails with it. The rest is read, not
+computed: changed facts and continuation stay within their noise, the judge's
 unsupported-claim count does not rise, the misses list reads as improvements
 rather than trades, and summary size stays within the compactor's limit with
-room to spare. A scenario edited since the baseline, including a change to
-its continuation tool, is left out of the comparison until the baseline is
-rerun. The compare job in CI runs the base branch's harness against the base
-branch's baseline, so a pull request cannot grade itself.
+room to spare.
+
+The three-point bar comes from measurement: two runs of the same prompt
+differed by up to six points in one cell but by under two points per model in
+aggregate (about 250 probes each), while changed-fact accuracy and
+continuation, with a few dozen and a dozen samples per model, moved by up to
+eight points. A CI-tier run (size S) therefore compares against the size S
+cells of the baseline, never against the baseline's aggregate over sizes it
+did not run.
 
 `--prompts FILE` loads a Ruby file that redefines the `Mistri::Compactor`
 prompt constants for local iteration; the prompt digest in every row keeps

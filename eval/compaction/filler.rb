@@ -12,12 +12,14 @@ module CompactionEval
 
     module_function
 
-    # Picks the shape for a turn and, on a failing turn, swaps the result for
-    # an error and the closing line for a retry note.
-    def turn(index, rng, shapes)
-      shape = shapes.fetch(index % shapes.length)
-      return shape unless (index % FAILURE_EVERY) == FAILURE_EVERY - 1
+    def shape(index, shapes) = shapes.fetch(index % shapes.length)
 
+    def fails?(index) = (index % FAILURE_EVERY) == FAILURE_EVERY - 1
+
+    # Swaps the result for an error and the closing line for a retry note. The
+    # builder applies it only to turns that carry no tool-borne fact, so a
+    # fact meant to sit inside a long result never lands in a short error.
+    def fail(shape, rng)
       failure = FAILURES.fetch(rng.rand(FAILURES.length))
       shape.merge(log: ->(_chars) { failure },
                   done: "That call failed (#{failure}). I will retry it on the next pass " \
