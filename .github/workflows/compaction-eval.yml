@@ -1,0 +1,134 @@
+name: Compaction eval
+
+# Paid: every run calls real providers with the keys in the "eval" environment.
+# A pull request that touches the compactor or the eval runs the CI tier once a
+# maintainer approves the environment; a manual dispatch runs any tier.
+on:
+  pull_request_target:
+    paths:
+      - lib/mistri/compactor.rb
+      - lib/mistri/compaction.rb
+      - eval/**
+      - script/compaction_eval.rb
+      - .github/workflows/compaction-eval.yml
+  workflow_dispatch:
+    inputs:
+      models:
+        description: comma-separated model ids
+        default: claude-sonnet-5,gpt-5.6-sol,gemini-2.5-flash
+      sizes:
+        description: comma-separated sizes among S, M, L
+        default: S
+      repeat:
+        description: runs per cell
+        default: "1"
+      folds:
+        description: compact again after each later segment
+        type: boolean
+        default: true
+      baselines:
+        description: also probe the full history and the kept tail
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+  pull-requests: write
+
+concurrency:
+  group: compaction-eval-${{ github.event.pull_request.number || github.run_id }}
+  cancel-in-progress: true
+
+jobs:
+  plan:
+    runs-on: ubuntu-latest
+    outputs:
+      models: ${{ steps.plan.outputs.models }}
+    steps:
+      - id: plan
+        env:
+          MODELS: ${{ inputs.models || 'claude-sonnet-5,gpt-5.6-sol,gemini-2.5-flash' }}
+        run: echo "models=$(jq -cn --arg m "$MODELS" '$m | split(",")')" >> "$GITHUB_OUTPUT"
+
+  eval:
+    needs: plan
+    runs-on: ubuntu-latest
+    # The environment holds the keys and requires a maintainer's approval, so
+    # a pull request from a fork runs only after someone has read its diff.
+    environment: eval
+    strategy:
+      fail-fast: false
+      matrix:
+        model: ${{ fromJSON(needs.plan.outputs.models) }}
+    env:
+      BUNDLE_WITHOUT: lint:mysql_test:postgres_test:rails_test
+      ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+      OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+      GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+    steps:
+      - uses: actions/checkout@v7.0.1
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+      - uses: ruby/setup-ruby@v1
+        with:
+          ruby-version: "3.4"
+          bundler-cache: true
+      - name: Run the eval for one model
+        run: |
+          bundle exec ruby script/compaction_eval.rb run \
+            --models "${{ matrix.model }}" \
+            --sizes "${{ inputs.sizes || 'S' }}" \
+            --repeat "${{ inputs.repeat || '1' }}" \
+            ${{ (inputs.folds == '' || inputs.folds == 'true' || inputs.folds == true) && '--folds' || '' }} \
+            ${{ (inputs.baselines == 'true' || inputs.baselines == true) && '--baselines' || '' }} \
+            --out "tmp/compaction-eval/${{ matrix.model }}.jsonl"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: compaction-eval-${{ matrix.model }}
+          path: tmp/compaction-eval/*.jsonl
+          retention-days: 30
+
+  compare:
+    needs: eval
+    runs-on: ubuntu-latest
+    env:
+      BUNDLE_WITHOUT: lint:mysql_test:postgres_test:rails_test
+    steps:
+      - uses: actions/checkout@v7.0.1
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+      - uses: ruby/setup-ruby@v1
+        with:
+          ruby-version: "3.4"
+          bundler-cache: true
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: compaction-eval-*
+          path: artifacts
+          merge-multiple: true
+      - name: Report and compare against the committed baseline
+        run: |
+          mkdir -p tmp/compaction-eval
+          cat artifacts/*.jsonl > tmp/compaction-eval/candidate.jsonl
+          bundle exec ruby script/compaction_eval.rb report tmp/compaction-eval/candidate.jsonl > tmp/compaction-eval/report.md
+          bundle exec ruby script/compaction_eval.rb distill tmp/compaction-eval/candidate.jsonl tmp/compaction-eval/candidate-distilled.jsonl > /dev/null
+          if [ -f eval/baselines/current.jsonl ]; then
+            bundle exec ruby script/compaction_eval.rb compare eval/baselines/current.jsonl tmp/compaction-eval/candidate.jsonl > tmp/compaction-eval/compare.md
+          else
+            echo "No committed baseline yet; this run can become one." > tmp/compaction-eval/compare.md
+          fi
+          { cat tmp/compaction-eval/compare.md; echo; cat tmp/compaction-eval/report.md; } >> "$GITHUB_STEP_SUMMARY"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: compaction-eval-merged
+          path: |
+            tmp/compaction-eval/candidate.jsonl
+            tmp/compaction-eval/candidate-distilled.jsonl
+            tmp/compaction-eval/report.md
+            tmp/compaction-eval/compare.md
+          retention-days: 90
+      - name: Comment on the pull request
+        if: github.event_name == 'pull_request_target'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh pr comment "${{ github.event.pull_request.number }}" --body-file tmp/compaction-eval/compare.md

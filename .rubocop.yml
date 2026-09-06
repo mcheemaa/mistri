@@ -53,6 +53,7 @@ Metrics/ParameterLists:
 Metrics/BlockLength:
   Exclude:
     - "test/**/*"
+    - "eval/compaction/scenarios/*.rb"
 
 Naming/MethodParameterName:
   # The defaults plus ui, the tool result side-channel; as domain-real as id.
