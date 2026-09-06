@@ -439,6 +439,58 @@ class TestCompactionEvalPaths < Minitest::Test
     assert_raises(SystemExit) { capture_io { cli.start(["bogus"]) } }
   end
 
+  def test_the_command_line_runs_a_matrix_end_to_end_and_loads_keys_from_the_env_file
+    require_relative "../script/compaction_eval"
+    scripted = TestCompactionEval::ScriptedModel.new(known: %w[FIN-2831], continuation: TestCompactionEval::ARGUMENTS)
+    Dir.mktmpdir do |dir|
+      env_file = File.join(dir, "env")
+      File.write(env_file, "# keys\n\nexport EVAL_TEST_KEY=\"from-file\"\n")
+      prompts = File.join(dir, "prompts.rb")
+      File.write(prompts, "# a local prompt override would live here\n")
+      out = File.join(dir, "run", "rows.jsonl")
+      cli = CompactionEval::CLI.new(env_file: env_file, provider_for: ->(_) { scripted })
+
+      printed = capture_io do
+        cli.start(["run", "--models", "scripted", "--scenarios", "ledger_export", "--sizes", "S",
+                   "--no-judge", "--prompts", prompts, "--out", out])
+      end.first
+
+      assert_equal "from-file", ENV.fetch("EVAL_TEST_KEY")
+      assert_equal 1, File.readlines(out).length
+      assert_path_exists out.sub(".jsonl", ".md")
+      assert_includes printed, "| scripted | ledger_export | S | compacted |"
+      assert_match(%r{tmp/compaction-eval/\d{8}T\d{6}Z-\h+\.jsonl\z}, cli.send(:default_out))
+    ensure
+      ENV.delete("EVAL_TEST_KEY")
+    end
+    listed = capture_io { CompactionEval::CLI.start(["list"]) }.first
+
+    assert_includes listed, "incident_debugging"
+  end
+
+  def test_an_unknown_model_fails_before_any_request_and_a_broken_reader_is_recorded
+    runner = CompactionEval::Runner.new(models: ["no-such-model"], scenarios: ["ledger_export"],
+                                        sizes: ["S"], io: StringIO.new, judge: nil)
+
+    assert_raises(Mistri::ConfigurationError) { runner.run }
+
+    summarizer = TestCompactionEval::ScriptedModel.new(known: %w[FIN-2831], continuation: TestCompactionEval::ARGUMENTS)
+    broken = TestCompactionEval::ScriptedModel.new(known: [], continuation: TestCompactionEval::ARGUMENTS)
+    broken.define_singleton_method(:stream) do |tools: [], **|
+      raise IOError, "reader unreachable" if tools.any?
+
+      Mistri::Message.assistant(content: "unknown", stop_reason: :stop)
+    end
+    providers = { "summarizer" => summarizer, "broken" => broken }
+    row = CompactionEval::Runner.new(models: ["summarizer"], scenarios: ["ledger_export"],
+                                     sizes: ["S"], provider_for: ->(m) { providers.fetch(m) },
+                                     io: StringIO.new, judge: nil, reader: "broken").run.first
+
+    refute row.dig(:continuation, :success)
+    assert_match(/error: IOError/, row.dig(:continuation, :status))
+    assert_nil row.dig(:continuation, :cost)
+  end
+
   def test_the_command_line_parses_every_option
     require_relative "../script/compaction_eval"
     cli = CompactionEval::CLI.new

@@ -32,6 +32,13 @@ module CompactionEval
       new.start(argv)
     end
 
+    # The two seams a test needs: where keys come from and how a model id
+    # becomes a provider.
+    def initialize(env_file: ENV_FILE, provider_for: ->(model) { Mistri.provider(model) })
+      @env_file = env_file
+      @provider_for = provider_for
+    end
+
     def start(argv)
       case argv.shift
       when "run" then run(argv)
@@ -60,7 +67,8 @@ module CompactionEval
       FileUtils.mkdir_p(File.dirname(out))
       rows = File.open(out, "w") do |file|
         file.sync = true
-        Runner.new(**options, on_row: ->(row) { file.puts(JSON.generate(row)) }).run
+        Runner.new(**options, provider_for: @provider_for,
+                              on_row: ->(row) { file.puts(JSON.generate(row)) }).run
       end
       File.write(out.sub(/\.jsonl\z/, ".md"), Report.markdown(rows))
       puts Report.markdown(rows)
@@ -141,9 +149,9 @@ module CompactionEval
     # The env file wins over the shell, as the test helper does, so a stale
     # exported key cannot shadow the working one.
     def load_env
-      return unless File.exist?(ENV_FILE)
+      return unless File.exist?(@env_file)
 
-      File.readlines(ENV_FILE, chomp: true).each do |line|
+      File.readlines(@env_file, chomp: true).each do |line|
         next if line.strip.empty? || line.start_with?("#")
 
         key, value = line.sub(/\Aexport\s+/, "").split("=", 2)
