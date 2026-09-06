@@ -415,8 +415,10 @@ end
 Disable compaction explicitly only when a custom provider cannot describe a
 model context window.
 
-It returns an assistant `Mistri::Message`. A completed tool call must be a
-`Mistri::ToolCall` with:
+It returns an assistant `Mistri::Message` with an explicit `stop_reason` from
+`Mistri::StopReason`. In particular, compaction accepts only `:stop` with
+nonblank text and no tool calls; missing completion metadata is not success.
+A completed tool call must be a `Mistri::ToolCall` with:
 
 - a non-empty UTF-8 String ID unique for new calls in the Session;
 - a non-empty UTF-8 String name;

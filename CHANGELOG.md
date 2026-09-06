@@ -5,6 +5,11 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+- Compaction rejects incomplete summaries instead of replacing replay with
+  partial context. Manual compaction raises `CompactionError`; automatic
+  compaction retains the previous context and counts the failed attempt's
+  usage. Custom providers must return `stop_reason: :stop`, nonblank text,
+  and no tool calls for a successful summary.
 - `gpt-6-astra` and `claude-fable-5-1` join the model catalog with published
   context limits and pricing. Provider defaults are unchanged. Compacted
   replay drops Fable 5.1 thinking bound to the old prefix, preserving tool

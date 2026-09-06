@@ -239,6 +239,15 @@ Manual `compact` returns nil when there is no useful cut. During a compaction,
 `:compacting` announces that work began. The later `:compaction` event carries
 the visible summary in `event.content`.
 
+Only a normally completed summary with nonblank text and no tool calls can
+become a checkpoint. A truncated or otherwise incomplete response leaves the
+previous summary and retained context unchanged, and emits no `:compaction`
+event. Manual `compact` raises `Mistri::CompactionError` with the attempt's
+usage in `error.usage`. Automatic compaction counts that usage toward the run
+and its budget, then continues with the existing context if the budget permits.
+If that context no longer fits, the next request can still fail with a provider
+context-limit error. A later tool turn may attempt compaction again.
+
 The summary and kept-tail boundary append to the session. Provider replay then
 uses the visible summary plus the retained tail, while the full original log
 remains available through `entries` and `transcript`. Compaction cannot hide an
