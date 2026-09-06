@@ -15,9 +15,9 @@ module Mistri
     DEFAULT_RESERVE = 16_384
     DEFAULT_KEEP_RECENT = 20_000
     DEFAULT_MAX_TOKENS = 16_384
-    # Automatic compaction stops retrying after this many failures in a row: a
-    # failure the configuration makes predictable must not bill a full-context
-    # request every turn.
+    # Automatic compaction stops retrying after this many automatic failures
+    # in a row: a failure the configuration makes predictable must not bill a
+    # full-context request every turn.
     AUTOMATIC_ATTEMPTS = 3
     OUTPUT_SAFETY = 4_096
     IMAGE_CHARS = 4_800
@@ -34,6 +34,10 @@ module Mistri
     # and never inherits the limit a host set for its chat replies.
     def initialize(reserve: nil, keep_recent: DEFAULT_KEEP_RECENT,
                    window: nil, instructions: nil, max_tokens: DEFAULT_MAX_TOKENS)
+      unless max_tokens.is_a?(Integer) && max_tokens.positive?
+        raise ArgumentError, "max_tokens must be a positive Integer"
+      end
+
       @automatic_reserve = reserve.nil?
       @reserve = reserve || DEFAULT_RESERVE
       @keep_recent = keep_recent

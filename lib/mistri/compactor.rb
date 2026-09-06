@@ -73,7 +73,7 @@ module Mistri
       # Summarize and cut. Returns {summary:, tokens_before:, tokens_after:,
       # usage:}, or nil when there is nothing worth compacting. Emits
       # :compacting and :compaction when a block is given.
-      def call(session:, provider:, settings: Compaction.new, &emit)
+      def call(session:, provider:, settings: Compaction.new, trigger: :manual, &emit)
         replay = session.replay
         cut = cut_index(replay, session, settings)
         return nil unless cut
@@ -87,7 +87,7 @@ module Mistri
         tokens_before = session.context_tokens
         reply = summarize(provider, head, previous, settings)
         failure = summary_failure(reply)
-        reject(session, failure, tokens_before, reply.usage, &emit) if failure
+        reject(session, failure, trigger, tokens_before, reply.usage, &emit) if failure
 
         session.append("compaction", "summary" => reply.text,
                                      "kept_from" => cut, "tokens_before" => tokens_before)
@@ -161,12 +161,12 @@ module Mistri
 
       # The summary is the compactor's own request. Its output limit comes
       # from the settings, never from the limit a host set for chat replies,
-      # and thinking is the provider's default so a host thinking budget
-      # cannot outsize that limit. Providers without a request cap run at
-      # their published ceiling.
+      # and it runs with the API's default thinking and reasoning, so a host
+      # thinking budget or reasoning effort cannot shape or outsize it.
+      # Commercial settings (keys, origin, service tier) stay the host's.
       def request_overrides(provider, settings)
         ceiling = Models.max_output(provider.model)
-        { max_tokens: [settings.max_tokens, ceiling].compact.min, thinking: nil }
+        { max_tokens: [settings.max_tokens, ceiling].compact.min, thinking: nil, reasoning: nil }
       end
 
       def summary_failure(reply)
@@ -180,10 +180,11 @@ module Mistri
       end
 
       # A failed summary is part of the session's story: the entry keeps the
-      # failure visible across processes so automatic compaction can stop
-      # retrying it, and the event tells a subscriber that :compacting ended.
-      def reject(session, failure, tokens_before, usage, &emit)
-        session.append("compaction_failed", "reason" => failure,
+      # failure and its trigger visible across processes so automatic
+      # compaction can stop retrying its own failures, and the event tells a
+      # subscriber that :compacting ended.
+      def reject(session, failure, trigger, tokens_before, usage, &emit)
+        session.append("compaction_failed", "reason" => failure, "trigger" => trigger.to_s,
                                             "tokens_before" => tokens_before)
         emit&.call(Event.new(type: :compaction_failed, error_message: failure))
         raise CompactionError.new("summarization failed: #{failure}", usage: usage)

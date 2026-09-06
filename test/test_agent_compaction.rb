@@ -164,6 +164,37 @@ class TestAgentCompaction < Minitest::Test
     assert_equal output, Mistri::Message.from_h(stored["message"]).text
   end
 
+  # Counts store reads so a test can price what a turn costs in history loads.
+  class CountingStore < Mistri::Stores::Memory
+    attr_reader :loads
+
+    def initialize
+      super
+      @loads = 0
+    end
+
+    def load(id)
+      @loads += 1
+      super
+    end
+  end
+
+  def test_an_ordinary_turn_reads_history_once_for_the_compaction_check
+    loads = [false, Mistri::Compaction.new].map do |compaction|
+      store = CountingStore.new
+      session = Mistri::Session.new(store:)
+      session.append_message(Mistri::Message.user("small context"))
+      session.append_message(Mistri::Message.assistant(content: "noted", stop_reason: :stop))
+      provider = Mistri::Providers::Fake.new(turns: [{ text: "done" }])
+
+      Mistri::Agent.new(provider:, session:, compaction:).run("Continue.")
+
+      store.loads
+    end
+
+    assert_equal loads.first + 1, loads.last
+  end
+
   def test_a_failed_summary_does_not_move_the_replay_boundary
     session = Mistri::Session.new(store: Mistri::Stores::Memory.new)
     session.append_message(Mistri::Message.user("old context " * 80))

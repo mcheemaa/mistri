@@ -270,23 +270,30 @@ module Mistri
 
     # Compact when the context has grown into the reserve. A failed
     # summarization is recorded on the session and skipped here; after
-    # AUTOMATIC_ATTEMPTS failures in a row the loop stops paying for a
-    # full-context request every turn, and if the context genuinely no
-    # longer fits, the next turn surfaces the real provider error.
+    # AUTOMATIC_ATTEMPTS automatic failures in a row the loop stops paying
+    # for a full-context request every turn, and if the context genuinely
+    # no longer fits, the next turn surfaces the real provider error. The
+    # failure count is read only once the threshold says compaction is due,
+    # so an ordinary turn costs one history read, not two.
     def auto_compact(&)
       return nil unless @compaction
-      return nil if @session.compaction_failures >= Compaction::AUTOMATIC_ATTEMPTS
 
       tokens = @session.context_tokens
       return nil unless @compaction.needed?(tokens, context_window,
                                             max_output: Models.shared_output(@provider.model))
+      return nil if automatic_compaction_exhausted?
 
       compact_automatically(&)
     end
 
+    def automatic_compaction_exhausted?
+      @session.compaction_failures(trigger: :automatic) >= Compaction::AUTOMATIC_ATTEMPTS
+    end
+
     def compact_automatically(&emit)
       delivery = EventDelivery.wrap(emit)
-      Compactor.call(session: @session, provider: @provider, settings: @compaction, &delivery)
+      Compactor.call(session: @session, provider: @provider, settings: @compaction,
+                     trigger: :automatic, &delivery)
     rescue EventDelivery::Failure => e
       raise EventDelivery.unwrap(e, delivery)
     rescue CompactionError => e

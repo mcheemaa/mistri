@@ -110,32 +110,6 @@ class TestCompactionFailure < Minitest::Test
     end
   end
 
-  def test_the_summary_request_uses_its_own_output_limit_and_default_thinking
-    provider = Mistri::Providers::Fake.new(turns: [{ text: "Summary." }])
-
-    Mistri::Compactor.call(session: history, provider:, settings: SETTINGS)
-
-    options = provider.requests.first[:options]
-
-    assert_equal Mistri::Compaction::DEFAULT_MAX_TOKENS, options[:max_tokens]
-    assert options.key?(:thinking)
-    assert_nil options[:thinking]
-    assert_equal Mistri::Compactor::SUMMARIZER_SYSTEM, options[:system]
-  end
-
-  def test_the_summary_output_limit_is_host_policy_capped_at_the_model_ceiling
-    provider = Mistri::Providers::Fake.new(turns: [{ text: "Summary." }, { text: "Summary." }])
-    provider.define_singleton_method(:model) { "claude-haiku-4-5" }
-    ceiling = Mistri::Models.max_output("claude-haiku-4-5")
-
-    Mistri::Compactor.call(session: history, provider:, settings: settings(max_tokens: 2_000))
-    Mistri::Compactor.call(session: history, provider:, settings: settings(max_tokens: ceiling * 2))
-
-    limits = provider.requests.map { |request| request[:options][:max_tokens] }
-
-    assert_equal [2_000, ceiling], limits
-  end
-
   def test_automatic_compaction_stops_after_repeated_failures_until_one_succeeds
     Dir.mktmpdir do |directory|
       store = Mistri::Stores::JSONL.new(directory)
@@ -152,7 +126,8 @@ class TestCompactionFailure < Minitest::Test
       end
 
       assert_equal attempts, compacting
-      assert_equal attempts, session.compaction_failures
+      assert_equal attempts, session.compaction_failures(trigger: :automatic)
+      assert_equal 0, session.compaction_failures(trigger: :manual)
       assert_equal (attempts * 2) + 1, provider.requests.length
       assert_equal Mistri::Message.user("Continue."), provider.requests.last[:messages].last
 
@@ -167,6 +142,30 @@ class TestCompactionFailure < Minitest::Test
       assert_equal 0, session.compaction_failures
       assert_equal "Checkpoint again.", session.last_compaction.fetch("summary")
     end
+  end
+
+  def test_manual_failures_are_recorded_but_do_not_spend_the_automatic_quota
+    session = history
+    attempts = Mistri::Compaction::AUTOMATIC_ATTEMPTS
+    manual = Mistri::Providers::Fake.new(turns: Array.new(attempts) { incomplete_turn })
+
+    attempts.times do
+      assert_raises(Mistri::CompactionError) do
+        Mistri::Agent.new(provider: manual, session:, compaction: settings(max_tokens: 1)).compact
+      end
+    end
+    provider = Mistri::Providers::Fake.new(turns: [{ text: "Checkpoint." }, { text: "done" }])
+
+    Mistri::Agent.new(provider:, session:, compaction: SETTINGS).run("Continue.")
+
+    triggers = session.entries.filter_map do |entry|
+      entry["trigger"] if entry["type"] == "compaction_failed"
+    end
+
+    assert_equal %w[manual manual manual], triggers
+    assert_equal 0, session.compaction_failures(trigger: :automatic)
+    assert_equal "Checkpoint.", session.last_compaction.fetch("summary")
+    assert_equal 2, provider.requests.length
   end
 
   def test_incomplete_summary_cost_can_stop_before_another_provider_call
@@ -255,8 +254,8 @@ class TestCompactionFailure < Minitest::Test
     refute_includes error.message, "private unfinished summary"
     assert_same reply.usage, error.usage
     assert_equal before, session.entries.take(before.length)
-    assert_equal({ "type" => "compaction_failed", "reason" => diagnostic },
-                 session.entries.last.slice("type", "reason"))
+    assert_equal({ "type" => "compaction_failed", "reason" => diagnostic, "trigger" => "manual" },
+                 session.entries.last.slice("type", "reason", "trigger"))
     assert_equal 1, session.compaction_failures
     assert_equal replay, session.messages
     assert_nil session.last_compaction

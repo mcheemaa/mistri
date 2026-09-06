@@ -10,8 +10,8 @@ module Mistri
     # Thinking is deliberately unconstrained: no budget, no level, only
     # includeThoughts so summaries stream for the UI. The model's own defaults
     # decide how much to think, and a host override passes through verbatim.
-    # maxOutputTokens is omitted for the same reason: the API defaults to the
-    # model's ceiling.
+    # maxOutputTokens is sent only when a stream call passes max_tokens;
+    # otherwise the API defaults to the model's ceiling.
     class Gemini
       DEFAULT_ORIGIN = "https://generativelanguage.googleapis.com"
       DEFAULT_THINKING = { includeThoughts: true }.freeze
@@ -77,6 +77,7 @@ module Mistri
         config = {}
         thinking = overrides.fetch(:thinking, @thinking)
         config[:thinkingConfig] = thinking if thinking
+        config[:maxOutputTokens] = overrides[:max_tokens] if overrides[:max_tokens]
         # Constrained decoding combines with tools only on 3-series models
         # (preview); with tools present the task loop's validate-and-fix
         # pass carries the guarantee instead.

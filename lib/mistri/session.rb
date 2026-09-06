@@ -92,12 +92,15 @@ module Mistri
       entries.reverse_each.find { |entry| entry["type"] == "compaction" }
     end
 
-    # Failed summaries since the last checkpoint. Automatic compaction reads
-    # this to stop retrying a failure that has proven persistent.
-    def compaction_failures
+    # Failed summaries since the last checkpoint, all of them or only those
+    # of one trigger (:manual or :automatic). Automatic compaction counts its
+    # own failures to stop retrying one that has proven persistent.
+    def compaction_failures(trigger: nil)
       log = entries
       since = (log.rindex { |entry| entry["type"] == "compaction" } || -1) + 1
-      log.drop(since).count { |entry| entry["type"] == "compaction_failed" }
+      log.drop(since).count do |entry|
+        entry["type"] == "compaction_failed" && (trigger.nil? || entry["trigger"] == trigger.to_s)
+      end
     end
 
     # The inbox: entry types queued for the loop's next turn boundary, each

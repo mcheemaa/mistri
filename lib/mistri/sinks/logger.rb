@@ -39,7 +39,8 @@ module Mistri
                 tool_started: :tool_line, tool_result: :tool_result_line,
                 done: :turn_line, error: :error_line, retry: :retry_line,
                 approval_needed: :approval_line, compacting: :compacting_line,
-                compaction: :compaction_line, subagent_report: :report_line }.freeze
+                compaction: :compaction_line, compaction_failed: :compaction_failed_line,
+                subagent_report: :report_line }.freeze
       QUIET = %i[text_end thinking_end tool_started done approval_needed
                  compacting compaction subagent_report].to_h { |type| [type, true] }.freeze
       COLORS = { bold: "1", dim: "2", red: "31", green: "32", yellow: "33" }.freeze
@@ -182,15 +183,12 @@ module Mistri
       # failures alarm. A budget stop is synthetic (no provider call), so
       # it alone does not count as a turn.
       def error_line(event)
-        case event.reason
-        when StopReason::BUDGET then ["stopped on budget", :warn]
-        when StopReason::ABORTED
-          @turns += 1
-          "aborted"
-        else
-          @turns += 1
-          ["#{paint("error", :red)} #{event.reason}#{note(event.error_message)}", :error]
-        end
+        return ["stopped on budget", :warn] if event.reason == StopReason::BUDGET
+
+        @turns += 1
+        return "aborted" if event.reason == StopReason::ABORTED
+
+        ["#{paint("error", :red)} #{event.reason}#{note(event.error_message)}", :error]
       end
 
       def retry_line(event)
@@ -211,6 +209,10 @@ module Mistri
       def compacting_line(_event) = "compacting"
 
       def compaction_line(event) = "compacted #{body_of(event.content)}"
+
+      def compaction_failed_line(event)
+        ["#{paint("compaction failed", :yellow)}#{note(event.error_message)}", :warn]
+      end
 
       def report_line(event)
         "worker #{field(event.agent)} (#{field(event.session_id.to_s[0, 8], limit: 16)}) " \
