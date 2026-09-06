@@ -66,8 +66,8 @@ module CompactionEval
       end
 
       changed = changed_scenarios(base, candidate)
-      base_cells = grouped(base).reject { |key, _| changed.include?(key[1]) }
-      candidate_cells = grouped(candidate).reject { |key, _| changed.include?(key[1]) }
+      base_cells = grouped(base).reject { |key, _| changed.include?(key[1..2]) }
+      candidate_cells = grouped(candidate).reject { |key, _| changed.include?(key[1..2]) }
       matched = base_cells.keys & candidate_cells.keys
       regressions = []
       per_model = per_model(base_cells.slice(*matched), candidate_cells.slice(*matched),
@@ -171,7 +171,8 @@ module CompactionEval
     def coverage(base_keys, candidate_keys, changed)
       notes = []
       unless changed.empty?
-        notes << "Scenarios changed since the baseline and left out: #{changed.join(", ")}. " \
+        names = changed.map { |scenario, size| "#{scenario}/#{size}" }
+        notes << "Scenarios changed since the baseline and left out: #{names.join(", ")}. " \
                  "Rerun the baseline to compare them."
       end
       missing = base_keys - candidate_keys
@@ -188,12 +189,15 @@ module CompactionEval
     end
 
     # A scenario edited since the baseline has no comparable rows; say so
-    # instead of comparing different questions.
+    # instead of comparing different questions. Each size builds its own
+    # workload, so a scenario is tracked per size.
     def changed_scenarios(base, candidate)
-      digests = ->(rows) { rows.to_h { |row| [row[:scenario].to_s, row[:scenario_digest]] } }
+      digests = lambda do |rows|
+        rows.to_h { |row| [[row[:scenario].to_s, row[:size].to_s], row[:scenario_digest]] }
+      end
       before = digests.call(base)
-      digests.call(candidate).filter_map do |scenario, digest|
-        scenario if before.key?(scenario) && before[scenario] != digest
+      digests.call(candidate).filter_map do |workload, digest|
+        workload if before.key?(workload) && before[workload] != digest
       end
     end
 

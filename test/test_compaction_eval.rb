@@ -237,7 +237,12 @@ class TestCompactionEval < Minitest::Test
 
     refute_predicate CompactionEval::Report.compare([base_s], old_grader), :passed
     assert_includes CompactionEval::Report.compare([base_s], [base_s.merge(scenario_digest: "d2")])
-                                          .markdown, "changed since the baseline"
+                                          .markdown, "changed since the baseline and left out: s/S."
+    per_size = CompactionEval::Report.compare([base_s, base_m.merge(scenario_digest: "dm")],
+                                              [base_s])
+
+    assert_predicate per_size, :passed, "digests are per size: M cannot change the S workload"
+    refute_includes per_size.markdown, "changed since the baseline"
   end
 
   def test_compare_weighs_matched_cells_equally_whatever_their_repetitions
