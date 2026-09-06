@@ -6,7 +6,9 @@ require_relative "support/stub_server"
 
 class TestModels < Minitest::Test
   def test_known_models_carry_their_output_ceiling
+    assert_equal 128_000, Mistri::Models.max_output("claude-fable-5-1")
     assert_equal 128_000, Mistri::Models.max_output("claude-opus-4-8")
+    assert_equal 128_000, Mistri::Models.max_output("gpt-6-astra")
     assert_equal 128_000, Mistri::Models.max_output("gpt-5.6")
     assert_equal 64_000, Mistri::Models.max_output("claude-haiku-4-5")
     assert_equal %i[id provider max_output context_window thinking],
@@ -14,13 +16,13 @@ class TestModels < Minitest::Test
   end
 
   def test_catalogued_models_carry_their_published_context_windows
-    million = %w[claude-fable-5 claude-opus-4-8 claude-opus-4-7 claude-opus-4-6
+    million = %w[claude-fable-5-1 claude-fable-5 claude-opus-4-8 claude-opus-4-7 claude-opus-4-6
                  claude-sonnet-5 claude-sonnet-4-6]
 
     million.each { |model| assert_equal 1_000_000, Mistri::Models.find(model).context_window }
 
     assert_equal 200_000, Mistri::Models.find("claude-haiku-4-5").context_window
-    %w[gpt-5.6 gpt-5.6-sol gpt-5.6-terra gpt-5.6-luna gpt-5.5 gpt-5.4].each do |model|
+    %w[gpt-6-astra gpt-5.6 gpt-5.6-sol gpt-5.6-terra gpt-5.6-luna gpt-5.5 gpt-5.4].each do |model|
       assert_equal 1_050_000, Mistri::Models.find(model).context_window
     end
     assert_equal 400_000, Mistri::Models.find("gpt-5-nano").context_window
@@ -32,9 +34,11 @@ class TestModels < Minitest::Test
   end
 
   def test_only_shared_context_windows_reserve_output_capacity
+    assert_equal 128_000, Mistri::Models.shared_output("gpt-6-astra")
     assert_equal 128_000, Mistri::Models.shared_output("gpt-5.6")
     assert_equal 128_000, Mistri::Models.shared_output("gpt-5.5")
     assert_equal 128_000, Mistri::Models.shared_output("claude-opus-4-8")
+    assert_equal 128_000, Mistri::Models.shared_output("claude-fable-5-1")
     assert_nil Mistri::Models.shared_output("gemini-3.1-pro-preview")
     assert_nil Mistri::Models.shared_output("future-model")
   end
@@ -69,6 +73,62 @@ class TestModels < Minitest::Test
     assert_nil Mistri::Models.rates("claude-next-9000"), "unknown models carry no rates"
     assert(Mistri::Models::CATALOG.each_value.all?(&:priced?),
            "every catalogued model carries verified rates")
+  end
+
+  def test_astra_and_fable_5_1_dated_ids_preserve_their_capabilities
+    { "gpt-6-astra" => %i[openai effort],
+      "claude-fable-5-1" => %i[anthropic adaptive] }.each do |id, (provider, thinking)|
+      model = Mistri::Models.find(id)
+
+      assert_equal provider, model.provider
+      assert_equal thinking, Mistri::Models.thinking(id)
+      assert_equal model, Mistri::Models.find("#{id}-20260901")
+      assert_equal model, Mistri::Models.find("#{id}-2026-09-01")
+    end
+  end
+
+  def test_astra_and_fable_5_1_enable_native_schemas_and_standard_tier_cost_budgets
+    schema = Mistri::Schema.task_plan(Mistri::Schema.build do
+      string :answer, required: true
+    end).schema
+    providers = [
+      Mistri::Providers::OpenAI.new(api_key: "test", model: "gpt-6-astra",
+                                    service_tier: "default"),
+      Mistri::Providers::Anthropic.new(api_key: "test", model: "claude-fable-5-1",
+                                       service_tier: "standard_only")
+    ]
+
+    providers.each do |provider|
+      assert_equal schema, provider.native_output_schema(schema)
+      assert_predicate provider, :prices_usage?
+    end
+  ensure
+    providers&.each(&:close)
+  end
+
+  def test_astra_pricing_includes_cache_writes_on_both_context_tiers
+    boundary = Mistri::Usage.new(input: 100_000, cache_read: 100_000, cache_write: 72_000)
+    over = boundary.with(cache_write: 72_001)
+    standard = { input: 10.0, output: 50.0, cache_read: 1.0, cache_write: 12.5 }
+    higher = { input: 20.0, output: 75.0, cache_read: 2.0, cache_write: 25.0 }
+
+    assert_equal standard, Mistri::Models.rates("gpt-6-astra")
+    assert_equal standard, Mistri::Models.rates("gpt-6-astra", usage: boundary)
+    assert_equal higher, Mistri::Models.rates("gpt-6-astra", usage: over)
+  end
+
+  def test_fable_5_1_pricing_covers_both_cache_retention_windows
+    rates = Mistri::Models.rates("claude-fable-5-1")
+    usage = Mistri::Usage.new(input: 300_000, output: 100_000, cache_read: 200_000,
+                              cache_write: 300_000, cache_write_1h: 100_000)
+    priced = usage.with_cost(rates)
+
+    assert_equal({ input: 10.0, output: 50.0, cache_read: 0.25, cache_write: 12.5 }, rates)
+    assert_equal rates, Mistri::Models.rates("claude-fable-5-1", usage:)
+    assert_in_delta 0.05, priced.cost.cache_read
+    assert_in_delta 4.5, priced.cost.cache_write
+    assert_in_delta 12.55, priced.cost.total
+    assert_predicate priced.cost, :known?
   end
 
   def test_openai_long_context_pricing_uses_each_requests_prompt_size

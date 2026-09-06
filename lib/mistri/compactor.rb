@@ -6,8 +6,8 @@ module Mistri
   # Compacts a session in place: everything before a cut point is summarized
   # by the provider, and a compaction entry redirects replay to the summary
   # plus the kept tail. Append-only: the full history stays in the store for
-  # transcript UIs; only what the model sees shrinks. Callable from any
-  # process (a UI button, a job), with or without a running agent.
+  # transcript UIs; only what the model sees shrinks. Manual callers share
+  # the session runner's serialization and compact between provider turns.
   #
   # Cuts land on user messages or assistant tool-call turns, never results,
   # so every call/result set stays on one side. A parked approval's turn is

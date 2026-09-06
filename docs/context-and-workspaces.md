@@ -139,6 +139,11 @@ This seam supports host redaction, retrieval, and deliberate windowing, but it
 is low-level. Preserve message order and every tool-call/result pair. A
 provider will reject a history whose correlation facts were removed.
 
+Fable 5.1 also binds thinking to the preceding prefix. A transform that changes
+between turns, including the periodic reminder below, can invalidate retained
+thinking. See [provider constraints](reliability.md#gpt-6-astra-and-fable-51)
+before using these transforms with it.
+
 For periodic instruction reinforcement, use the built-in Reminder:
 
 ```ruby

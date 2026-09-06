@@ -565,15 +565,32 @@ module Mistri
     end
 
     def replay_from(log)
-      compaction = log.reverse_each.find { |entry| entry["type"] == "compaction" }
+      compacted_at = log.rindex { |entry| entry["type"] == "compaction" }
+      compaction = log[compacted_at] if compacted_at
       from = compaction ? compaction["kept_from"] : 0
       pairs = log.each_with_index.filter_map do |entry, index|
         next unless index >= from && entry["type"] == "message"
 
-        [Message.from_h(entry["message"]), index]
+        message = replay_message(entry, before_compaction: compacted_at && index < compacted_at)
+        [message, index] if message
       end
       pairs = heal(pairs, replay_call_states(log, from:))
       compaction ? [[summary_message(compaction["summary"]), nil], *pairs] : pairs
+    end
+
+    # A new summary invalidates prefix-bound thinking in the kept tail. Only
+    # replay drops it: the transcript and thoughts from the new prefix survive.
+    def replay_message(entry, before_compaction:)
+      message = Message.from_h(entry["message"])
+      return message unless before_compaction && message.assistant? &&
+                            message.provider == :anthropic &&
+                            Models.prefix_bound_thinking?(message.model)
+
+      content = message.content.grep_v(Content::Thinking)
+      return message if content.length == message.content.length
+      return if content.all? { |block| block.is_a?(Content::Text) && block.text.empty? }
+
+      message.with(content:)
     end
 
     # Replay only needs occurrence pairing, not the authorization audit. Keep

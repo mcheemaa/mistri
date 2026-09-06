@@ -244,6 +244,14 @@ uses the visible summary plus the retained tail, while the full original log
 remains available through `entries` and `transcript`. Compaction cannot hide an
 open approval or split a completed tool call from its result.
 
+Fable 5.1 binds thinking to the conversation prefix. After compaction, replay
+omits its pre-compaction thinking from the kept tail; new thinking and the
+durable transcript stay intact. Other models' thinking is unchanged. Manual
+compaction must use the same per-session serialization as `run` and `resume`,
+between provider turns, not inside an event callback or alongside an in-flight
+request. An answer generated against the old prefix cannot safely join the
+new one.
+
 Very large tool results may be shortened only in the request sent to the
 summarizer. The durable result and ordinary replay remain unchanged until a
 successful compaction intentionally replaces earlier context with the summary.

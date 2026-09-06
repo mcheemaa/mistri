@@ -5,6 +5,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+- `gpt-6-astra` and `claude-fable-5-1` join the model catalog with published
+  context limits and pricing. Provider defaults are unchanged. Compacted
+  replay drops Fable 5.1 thinking bound to the old prefix, preserving tool
+  calls, results, the durable transcript, and new post-compaction thinking.
 - `claude-opus-5` joins the model catalog with its published pricing and
   context window, verified against the live API.
 - Fuzzy edits preserve the final LF or CRLF separator when the search text
