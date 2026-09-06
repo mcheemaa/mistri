@@ -10,7 +10,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   references, decisions, progress, open failures, and current work with the
   next step, with fold rules for later checkpoints. The summarizer records
   what each party said as theirs and keeps current values only. The replay
-  preface presents the summary as a handoff from another model.
+  preface presents the summary as a handoff from another model. The request
+  carries about 340 more words of instructions, negligible next to the
+  transcript, and summaries come out 40 to 90 percent longer on the eval's
+  small scenarios, so a compaction takes proportionally longer to generate.
 - The eval comparison tracks scenario digests per size, so a baseline that
   holds several sizes no longer reads a smaller candidate run as a changed
   scenario.

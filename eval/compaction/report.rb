@@ -171,7 +171,8 @@ module CompactionEval
     def coverage(base_keys, candidate_keys, changed)
       notes = []
       unless changed.empty?
-        notes << "Scenarios changed since the baseline and left out: #{changed.join(", ")}. " \
+        names = changed.map { |scenario, size| "#{scenario}/#{size}" }
+        notes << "Scenarios changed since the baseline and left out: #{names.join(", ")}. " \
                  "Rerun the baseline to compare them."
       end
       missing = base_keys - candidate_keys

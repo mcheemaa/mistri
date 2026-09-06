@@ -274,7 +274,7 @@ work with the next step. The summarizer records what each party said as
 theirs, keeps current values only, and stays under a thousand words; later
 checkpoints fold new messages into the previous summary under the same
 headings. Replay introduces the result as a handoff written by another model
-from the full transcript, followed by the kept recent turns.
+from the compacted messages, followed by the kept recent turns.
 
 Only a normally completed summary with nonblank text and no tool calls can
 become a checkpoint. A truncated or otherwise incomplete response leaves the

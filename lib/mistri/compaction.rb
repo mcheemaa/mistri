@@ -23,7 +23,7 @@ module Mistri
     IMAGE_CHARS = 4_800
 
     SUMMARY_PREFACE = "The earlier part of this conversation was compacted. Another model " \
-                      "wrote the handoff summary below from the full transcript; the " \
+                      "wrote the handoff summary below from those earlier messages; the " \
                       "messages after it are the most recent turns, kept intact. Build on the " \
                       "work already done, do not repeat it, and treat the user's most recent " \
                       "request as the current instruction."

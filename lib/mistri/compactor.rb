@@ -76,6 +76,8 @@ module Mistri
       Add nothing the transcript does not contain.
     RULE
 
+    HEADINGS = SECTIONS.lines.grep(/\A\d\. /).join.freeze
+
     CHECKPOINT_PROMPT = <<~PROMPT.freeze
       #{TRANSCRIPT_NOTE}
       Write the handoff summary for another model that will resume this work with only your
@@ -85,8 +87,6 @@ module Mistri
       #{SECTIONS}
       #{LENGTH_RULE}
     PROMPT
-
-    HEADINGS = SECTIONS.lines.grep(/\A\d\. /).join.freeze
 
     UPDATE_PROMPT = <<~PROMPT.freeze
       #{TRANSCRIPT_NOTE}
