@@ -5,6 +5,11 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+- `Compaction.new(fallback:)` names a second summarizer, a provider or a
+  model id, that gets one try when the session's provider cannot write a
+  usable summary, a refusal included. The compaction entry records which
+  model wrote the summary, the `:compaction` event carries that reply in
+  `message`, and a failure reason now names the model.
 - The summary request has its own output limit, `Compaction.new(max_tokens:)`
   (16,384 by default, capped at the model's published output limit, sent as
   Anthropic `max_tokens`, OpenAI `max_output_tokens`, and Gemini

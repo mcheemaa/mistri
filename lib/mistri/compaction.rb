@@ -24,16 +24,19 @@ module Mistri
 
     SUMMARY_PREFACE = "The earlier conversation was compacted. This summary replaces it:"
 
-    attr_reader :reserve, :keep_recent, :window, :instructions, :max_tokens
+    attr_reader :reserve, :keep_recent, :window, :instructions, :max_tokens, :fallback
 
     # window overrides the model catalog's context window (required for
     # models the catalog does not know). A nil reserve selects automatic
     # headroom; a number is explicit host policy. instructions add a
     # host-specific focus to the summary prompt. max_tokens bounds the
     # summary request's output: the summary is the compactor's own request
-    # and never inherits the limit a host set for its chat replies.
-    def initialize(reserve: nil, keep_recent: DEFAULT_KEEP_RECENT,
-                   window: nil, instructions: nil, max_tokens: DEFAULT_MAX_TOKENS)
+    # and never inherits the limit a host set for its chat replies. fallback
+    # names a second summarizer, a provider or a model id, that gets one try
+    # when the session's provider cannot write a usable summary; the host
+    # chooses it, so a refusal never changes models silently.
+    def initialize(reserve: nil, keep_recent: DEFAULT_KEEP_RECENT, window: nil,
+                   instructions: nil, max_tokens: DEFAULT_MAX_TOKENS, fallback: nil)
       unless max_tokens.is_a?(Integer) && max_tokens.positive?
         raise ArgumentError, "max_tokens must be a positive Integer"
       end
@@ -44,6 +47,7 @@ module Mistri
       @window = window
       @instructions = instructions
       @max_tokens = max_tokens
+      @fallback = summarizer(fallback)
     end
 
     def automatic_reserve? = @automatic_reserve
@@ -56,6 +60,16 @@ module Mistri
     end
 
     private
+
+    # A model id resolves at construction, so a missing key fails where the
+    # setting is written rather than in the middle of a run.
+    def summarizer(fallback)
+      return fallback if fallback.nil?
+      return fallback if fallback.respond_to?(:stream) && fallback.respond_to?(:model)
+      return Mistri.provider(fallback) if fallback.is_a?(String)
+
+      raise ArgumentError, "fallback must be a provider or a model id"
+    end
 
     def effective_reserve(max_output)
       return reserve unless automatic_reserve?
