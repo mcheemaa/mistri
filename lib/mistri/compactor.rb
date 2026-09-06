@@ -73,7 +73,7 @@ module Mistri
       # Summarize and cut. Returns {summary:, tokens_before:, tokens_after:,
       # usage:}, or nil when there is nothing worth compacting. Emits
       # :compacting and :compaction when a block is given.
-      def call(session:, provider:, settings: Compaction.new, trigger: :manual, &emit)
+      def call(session:, provider:, settings: Compaction.new, trigger: :manual, budget: nil, &emit)
         replay = session.replay
         cut = cut_index(replay, session, settings)
         return nil unless cut
@@ -85,13 +85,13 @@ module Mistri
 
         emit&.call(Event.new(type: :compacting))
         tokens_before = session.context_tokens
-        reply = summarize(provider, head, previous, settings)
-        failure = summary_failure(reply)
-        reject(session, failure, trigger, tokens_before, reply.usage, &emit) if failure
+        prompt = prompt_for(head, previous, settings)
+        reply, usage, failures = attempt(prompt, summarizers(provider, settings), settings, budget)
+        reject(session, failures.join("; "), trigger, tokens_before, usage, &emit) unless reply
 
-        session.append("compaction", "summary" => reply.text,
+        session.append("compaction", "summary" => reply.text, "model" => reply.model,
                                      "kept_from" => cut, "tokens_before" => tokens_before)
-        finish(session, reply, tokens_before, &emit)
+        finish(session, reply, usage, tokens_before, &emit)
       end
 
       private
@@ -150,11 +150,45 @@ module Mistri
         end
       end
 
-      def summarize(provider, messages, previous, settings)
+      def prompt_for(messages, previous, settings)
         prompt = "<conversation>\n#{serialize(messages)}\n</conversation>\n\n"
         prompt << "<previous-summary>\n#{previous}\n</previous-summary>\n\n" if previous
         prompt << (previous ? UPDATE_PROMPT : CHECKPOINT_PROMPT)
         prompt << "\nAdditional focus: #{settings.instructions}\n" if settings.instructions
+        prompt
+      end
+
+      # The fallback is a different model or nothing: the same model behind a
+      # second provider is skipped, so the model that failed is never asked
+      # again within one compaction.
+      def summarizers(provider, settings)
+        [provider, settings.fallback].compact.uniq(&:model)
+      end
+
+      # The session's provider writes the summary; a configured fallback gets
+      # one try when that reply is unusable for any reason, a refusal
+      # included. An attempt that reports no usage counts as unknown cost, not
+      # as nothing, and under a cost budget an unpriced attempt ends the loop
+      # before another model can spend. Returns the usable reply or nil, the
+      # usage of every attempt, and each failure named by its model.
+      def attempt(prompt, summarizers, settings, budget)
+        usage = nil
+        failures = []
+        summarizers.each do |summarizer|
+          reply = summarize(summarizer, prompt, settings)
+          reply = reply.with(model: summarizer.model) unless reply.model
+          measured = reply.usage || Usage.new
+          usage = usage ? usage + measured : measured
+          failure = summary_failure(reply)
+          return [reply, usage, failures] unless failure
+
+          failures << "#{summarizer.model}: #{failure}"
+          break if budget&.cost? && !usage.cost.known?
+        end
+        [nil, usage, failures]
+      end
+
+      def summarize(provider, prompt, settings)
         provider.stream(messages: [Message.user(prompt)], system: SUMMARIZER_SYSTEM,
                         **request_overrides(provider, settings))
       end
@@ -190,11 +224,11 @@ module Mistri
         raise CompactionError.new("summarization failed: #{failure}", usage: usage)
       end
 
-      def finish(session, reply, tokens_before, &emit)
+      def finish(session, reply, usage, tokens_before, &emit)
         tokens_after = session.context_tokens
-        emit&.call(Event.new(type: :compaction, content: reply.text))
+        emit&.call(Event.new(type: :compaction, content: reply.text, message: reply))
         { summary: reply.text, tokens_before: tokens_before,
-          tokens_after: tokens_after, usage: reply.usage }
+          tokens_after: tokens_after, usage: usage }
       end
 
       # The summarizer reads a plain-text rendering: tool calls by name and

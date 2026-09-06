@@ -60,6 +60,7 @@ module Mistri
       @max_concurrency = max_concurrency
       @transform_context = Array(transform_context)
       @compaction = compaction || nil
+      @budget.validate_provider!(@compaction.fallback) if @compaction&.fallback
       @retries = retries || nil
       @before_tool = before_tool
       @after_tool = after_tool
@@ -159,7 +160,7 @@ module Mistri
     # the Compactor result, or nil when there is nothing worth compacting.
     def compact(&)
       Compactor.call(session: @session, provider: @provider,
-                     settings: @compaction || Compaction.new, &)
+                     settings: @compaction || Compaction.new, budget: @budget, &)
     end
 
     private
@@ -293,7 +294,7 @@ module Mistri
     def compact_automatically(&emit)
       delivery = EventDelivery.wrap(emit)
       Compactor.call(session: @session, provider: @provider, settings: @compaction,
-                     trigger: :automatic, &delivery)
+                     trigger: :automatic, budget: @budget, &delivery)
     rescue EventDelivery::Failure => e
       raise EventDelivery.unwrap(e, delivery)
     rescue CompactionError => e

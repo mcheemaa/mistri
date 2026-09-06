@@ -89,6 +89,9 @@ class TestLoggerSink < Minitest::Test # rubocop:disable Metrics/ClassLength -- o
                                 tool_call: tool_call("send_gift", { "to" => "sarah" })))
     sink.call(Mistri::Event.new(type: :compacting))
     sink.call(Mistri::Event.new(type: :compaction, content: "The story so far"))
+    sink.call(Mistri::Event.new(type: :compaction, content: "The story again",
+                                message: Mistri::Message.assistant(content: "The story again",
+                                                                   model: "claude-sonnet-5")))
     sink.call(Mistri::Event.new(type: :compaction_failed,
                                 error_message: "unexpected stop reason: :length"))
     sink.call(Mistri::Event.new(type: :subagent_report, agent: "Corgi",
@@ -99,6 +102,7 @@ class TestLoggerSink < Minitest::Test # rubocop:disable Metrics/ClassLength -- o
     assert_match(/INFO \[mistri\] approval needed send_gift#c1 \{"to":"sarah"\}/, io.string)
     assert_match(/INFO \[mistri\] compacting/, io.string)
     assert_match(/INFO \[mistri\] compacted "The story so far"/, io.string)
+    assert_match(/INFO \[mistri\] compacted \(claude-sonnet-5\) "The story again"/, io.string)
     assert_match(/WARN \[mistri\] compaction failed: unexpected stop reason: :length/, io.string)
     assert_match(/INFO \[mistri\] worker Corgi \(ef56ab12\) done "found it"/, io.string)
   end

@@ -208,7 +208,9 @@ module Mistri
 
       def compacting_line(_event) = "compacting"
 
-      def compaction_line(event) = "compacted #{body_of(event.content)}"
+      def compaction_line(event) = "compacted#{summarizer(event.message)} #{body_of(event.content)}"
+
+      def summarizer(message) = message&.model ? " (#{field(message.model)})" : ""
 
       def compaction_failed_line(event)
         ["#{paint("compaction failed", :yellow)}#{note(event.error_message)}", :warn]

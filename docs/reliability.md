@@ -148,8 +148,8 @@ Loop-level events are:
 - `:tool_result` after settlement, with a required `tool_error` boolean;
 - `:approval_needed` when a prepared call parks;
 - `:compacting` before summary work, then `:compaction` with the committed
-  summary in `content` or `:compaction_failed` with the reason in
-  `error_message`;
+  summary in `content` and the summarizing reply in `message`, or
+  `:compaction_failed` with the reason in `error_message`;
 - `:retry` before provider backoff;
 - `:subagent_report` when a running background child reaches a terminal state;
   an inactive `Child#stop` persists the report without this callback because it

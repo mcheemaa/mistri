@@ -250,16 +250,18 @@ class TestCompactionFailure < Minitest::Test
       Mistri::Compactor.call(session:, provider:, settings: SETTINGS) { |event| events << event }
     end
 
-    assert_equal "summarization failed: #{diagnostic}", error.message
+    reason = "fake-1: #{diagnostic}"
+
+    assert_equal "summarization failed: #{reason}", error.message
     refute_includes error.message, "private unfinished summary"
     assert_same reply.usage, error.usage
     assert_equal before, session.entries.take(before.length)
-    assert_equal({ "type" => "compaction_failed", "reason" => diagnostic, "trigger" => "manual" },
+    assert_equal({ "type" => "compaction_failed", "reason" => reason, "trigger" => "manual" },
                  session.entries.last.slice("type", "reason", "trigger"))
     assert_equal 1, session.compaction_failures
     assert_equal replay, session.messages
     assert_nil session.last_compaction
     assert_equal %i[compacting compaction_failed], events.map(&:type)
-    assert_equal diagnostic, events.last.error_message
+    assert_equal reason, events.last.error_message
   end
 end

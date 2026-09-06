@@ -128,7 +128,7 @@ module Mistri
       end
 
       def assemble(blocks, **meta)
-        Message.assistant(content: blocks, model: MODEL, provider: :fake, **meta)
+        Message.assistant(content: blocks, model: model, provider: :fake, **meta)
       end
 
       def emit_event(emit, type, blocks, **fields)
