@@ -1,5 +1,7 @@
 # frozen_string_literal: true
 
+require "bigdecimal"
+
 module CompactionEval
   # Deterministic grading: a probe passes when the reply carries the expected
   # value after normalization, a yes/no probe when its first word is the
@@ -28,7 +30,7 @@ module CompactionEval
     def same?(actual, expected)
       left = normalize(actual).delete("$,")
       right = normalize(expected).delete("$,")
-      return left.to_f == right.to_f if [left, right].all? { |value| value.match?(NUMBER) }
+      return BigDecimal(left) == BigDecimal(right) if [left, right].all? { |v| v.match?(NUMBER) }
 
       left == right || left.include?(right)
     end
