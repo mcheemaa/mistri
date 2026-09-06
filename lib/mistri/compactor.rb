@@ -73,7 +73,7 @@ module Mistri
       # Summarize and cut. Returns {summary:, tokens_before:, tokens_after:,
       # usage:}, or nil when there is nothing worth compacting. Emits
       # :compacting and :compaction when a block is given.
-      def call(session:, provider:, settings: Compaction.new, &emit)
+      def call(session:, provider:, settings: Compaction.new, trigger: :manual, &emit)
         replay = session.replay
         cut = cut_index(replay, session, settings)
         return nil unless cut
@@ -85,7 +85,10 @@ module Mistri
 
         emit&.call(Event.new(type: :compacting))
         tokens_before = session.context_tokens
-        reply = summarize(provider, head, previous, settings.instructions)
+        reply = summarize(provider, head, previous, settings)
+        failure = summary_failure(reply)
+        reject(session, failure, trigger, tokens_before, reply.usage, &emit) if failure
+
         session.append("compaction", "summary" => reply.text,
                                      "kept_from" => cut, "tokens_before" => tokens_before)
         finish(session, reply, tokens_before, &emit)
@@ -147,17 +150,23 @@ module Mistri
         end
       end
 
-      def summarize(provider, messages, previous, instructions)
+      def summarize(provider, messages, previous, settings)
         prompt = "<conversation>\n#{serialize(messages)}\n</conversation>\n\n"
         prompt << "<previous-summary>\n#{previous}\n</previous-summary>\n\n" if previous
         prompt << (previous ? UPDATE_PROMPT : CHECKPOINT_PROMPT)
-        prompt << "\nAdditional focus: #{instructions}\n" if instructions
-        reply = provider.stream(messages: [Message.user(prompt)], system: SUMMARIZER_SYSTEM)
-        if (failure = summary_failure(reply))
-          raise CompactionError.new("summarization failed: #{failure}", usage: reply.usage)
-        end
+        prompt << "\nAdditional focus: #{settings.instructions}\n" if settings.instructions
+        provider.stream(messages: [Message.user(prompt)], system: SUMMARIZER_SYSTEM,
+                        **request_overrides(provider, settings))
+      end
 
-        reply
+      # The summary is the compactor's own request. Its output limit comes
+      # from the settings, never from the limit a host set for chat replies,
+      # and it runs with the API's default thinking and reasoning, so a host
+      # thinking budget or reasoning effort cannot shape or outsize it.
+      # Commercial settings (keys, origin, service tier) stay the host's.
+      def request_overrides(provider, settings)
+        ceiling = Models.max_output(provider.model)
+        { max_tokens: [settings.max_tokens, ceiling].compact.min, thinking: nil, reasoning: nil }
       end
 
       def summary_failure(reply)
@@ -168,6 +177,17 @@ module Mistri
         return "unexpected tool calls" if reply.tool_calls?
 
         "empty summary" if reply.text.to_s.strip.empty?
+      end
+
+      # A failed summary is part of the session's story: the entry keeps the
+      # failure and its trigger visible across processes so automatic
+      # compaction can stop retrying its own failures, and the event tells a
+      # subscriber that :compacting ended.
+      def reject(session, failure, trigger, tokens_before, usage, &emit)
+        session.append("compaction_failed", "reason" => failure, "trigger" => trigger.to_s,
+                                            "tokens_before" => tokens_before)
+        emit&.call(Event.new(type: :compaction_failed, error_message: failure))
+        raise CompactionError.new("summarization failed: #{failure}", usage: usage)
       end
 
       def finish(session, reply, tokens_before, &emit)

@@ -11,15 +11,24 @@ class TestFableCompactionLive < Minitest::Test
 
   # Older accounts do not enforce binding by default; explicitly opt in so
   # this regression exercises the same rejection as newly created accounts.
+  # The compactor's summary request carries no thinking of its own, so the
+  # control attaches only where thinking rides; every body is kept so the
+  # test can check which requests bound and which did not.
   class BindingCheckedTransport
+    BINDING = { block_binding: { prefix_mismatch_behavior: "error" } }.freeze
+
+    attr_reader :bodies
+
     def initialize(transport)
       @transport = transport
+      @bodies = []
     end
 
     def stream_post(path, body:, headers:, **, &emit)
       headers = headers.merge("anthropic-beta" => "thinking-binding-controls-2026-08-01")
-      thinking = body.fetch(:thinking).merge(block_binding: { prefix_mismatch_behavior: "error" })
-      @transport.stream_post(path, body: body.merge(thinking:), headers:, **, &emit)
+      body = body.merge(thinking: body[:thinking].merge(BINDING)) if body[:thinking]
+      @bodies << body
+      @transport.stream_post(path, body:, headers:, **, &emit)
     end
 
     def close = @transport.close
@@ -32,8 +41,8 @@ class TestFableCompactionLive < Minitest::Test
     @provider = Mistri::Providers::Anthropic.new(
       api_key: ENV.fetch("ANTHROPIC_API_KEY"), model: "claude-fable-5-1", read_timeout: 120
     )
-    transport = BindingCheckedTransport.new(@provider.instance_variable_get(:@transport))
-    @provider.instance_variable_set(:@transport, transport)
+    @transport = BindingCheckedTransport.new(@provider.instance_variable_get(:@transport))
+    @provider.instance_variable_set(:@transport, @transport)
     @tools = [{ name: "lookup_checkpoint", description: "Returns the checkpoint value.",
                 input_schema: { type: "object", properties: { prime: { type: "integer" } },
                                 required: ["prime"] } }]
@@ -63,6 +72,7 @@ class TestFableCompactionLive < Minitest::Test
 
     refute_nil compaction, "the fixture must cross a real compaction boundary"
     assert_operator session.last_compaction.fetch("kept_from"), :>, 0
+    assert_summary_request_unbound(@transport.bodies)
     retained = session.messages.find { |message| message.tool_calls.include?(call) }
 
     refute_nil retained, "the signed tool-call turn must remain in the compacted tail"
@@ -82,6 +92,17 @@ class TestFableCompactionLive < Minitest::Test
   end
 
   private
+
+  # The summary request is the compactor's own: no thinking, so no binding
+  # control, while every signed-thinking turn before it stayed strictly bound.
+  def assert_summary_request_unbound(bodies)
+    summary_request = bodies.last
+
+    refute summary_request.key?(:thinking), "the summary request must not bind or think"
+    assert_equal Mistri::Compaction::DEFAULT_MAX_TOKENS, summary_request[:max_tokens]
+    assert(bodies[0...-1].all? { |body| body.dig(:thinking, :block_binding) },
+           "every signed-thinking turn must keep strict prefix binding")
+  end
 
   def checkpoint_session
     session = Mistri::Session.new(store: Mistri::Stores::Memory.new)

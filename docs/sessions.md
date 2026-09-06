@@ -217,6 +217,7 @@ crosses the published window minus safe output headroom. Disable it with
 settings = Mistri::Compaction.new(
   reserve: 64_000,
   keep_recent: 24_000,
+  max_tokens: 8_192,
   instructions: "Preserve decisions, identifiers, and unresolved risks.",
 )
 
@@ -227,6 +228,15 @@ An explicit `window:` enables compaction for an uncatalogued deployment. An
 explicit `reserve:` is host policy; the automatic default otherwise protects a
 catalogued model's shared output capacity plus framing slack. Gemini publishes
 an independent input limit, so its automatic reserve remains input-oriented.
+
+The summary is the compactor's own request. `max_tokens:` bounds its output
+on every built-in provider (16,384 by default, never more than the model's
+published output limit; sent as Anthropic `max_tokens`, OpenAI
+`max_output_tokens`, and Gemini `maxOutputTokens`, each of which counts
+thinking or reasoning toward the limit). The request runs with the API's
+default thinking and reasoning, so a short limit, a thinking budget, or a
+reasoning effort a host set for its own replies never shapes the summary.
+Ordinary turns keep the host's settings.
 
 ```ruby
 agent.context_usage
@@ -241,12 +251,18 @@ the visible summary in `event.content`.
 
 Only a normally completed summary with nonblank text and no tool calls can
 become a checkpoint. A truncated or otherwise incomplete response leaves the
-previous summary and retained context unchanged, and emits no `:compaction`
-event. Manual `compact` raises `Mistri::CompactionError` with the attempt's
-usage in `error.usage`. Automatic compaction counts that usage toward the run
-and its budget, then continues with the existing context if the budget permits.
-If that context no longer fits, the next request can still fail with a provider
-context-limit error. A later tool turn may attempt compaction again.
+previous summary and retained context unchanged, emits `:compaction_failed`
+with the reason in `event.error_message`, and appends a `compaction_failed`
+entry carrying the reason and its trigger (`manual` or `automatic`), so the
+failure shows in `entries` and `transcript` and survives an agent rebuilt in
+another process. Manual `compact` raises `Mistri::CompactionError` with the
+attempt's usage in `error.usage`. Automatic compaction counts that usage
+toward the run and its budget, then continues with the existing context if
+the budget permits. It tries again on a later turn while the context stays
+over the threshold, and stops after three failed automatic attempts in a row
+until a compaction succeeds; manual attempts are recorded but do not count.
+If the context no longer fits, the next request can still fail with a
+provider context-limit error.
 
 The summary and kept-tail boundary append to the session. Provider replay then
 uses the visible summary plus the retained tail, while the full original log

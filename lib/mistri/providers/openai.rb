@@ -7,8 +7,9 @@ module Mistri
     # The OpenAI Responses API, streamed and stateless: store is always false,
     # the full history replays every turn, and encrypted reasoning items round
     # trip through the signature slots so nothing depends on server-side
-    # state. Reasoning summaries stream as thinking. max_output_tokens is
-    # deliberately omitted: the API defaults to the model's own ceiling.
+    # state. Reasoning summaries stream as thinking. max_output_tokens is sent
+    # only when a stream call passes max_tokens; otherwise the API defaults to
+    # the model's own ceiling.
     #
     # Provider failures fold into the stream as an error turn rather than
     # raising, matching the Anthropic provider's contract.
@@ -78,6 +79,7 @@ module Mistri
         body[:service_tier] = service_tier if service_tier
         reasoning = overrides.fetch(:reasoning, @reasoning)
         body[:reasoning] = reasoning if reasoning
+        body[:max_output_tokens] = overrides[:max_tokens] if overrides[:max_tokens]
         if (schema = overrides[:output_schema])
           body[:text] = { format: { type: "json_schema", name: "output", strict: true,
                                     schema: Schema.strict(schema, all_required: true) } }

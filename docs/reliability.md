@@ -147,8 +147,9 @@ Loop-level events are:
 - `:tool_started` when a resolved call commits to handler invocation;
 - `:tool_result` after settlement, with a required `tool_error` boolean;
 - `:approval_needed` when a prepared call parks;
-- `:compacting` before summary work and `:compaction` with the committed
-  summary in `content`;
+- `:compacting` before summary work, then `:compaction` with the committed
+  summary in `content` or `:compaction_failed` with the reason in
+  `error_message`;
 - `:retry` before provider backoff;
 - `:subagent_report` when a running background child reaches a terminal state;
   an inactive `Child#stop` persists the report without this callback because it
@@ -368,7 +369,10 @@ Mistri.agent(
 
 Provider-specific per-turn overrides belong on a directly constructed
 provider's `stream` contract. The Agent intentionally exposes a stable common
-loop rather than mirroring every provider option as a top-level keyword.
+loop rather than mirroring every provider option as a top-level keyword. One
+override is common to every built-in provider: `max_tokens:` bounds that
+request's output (OpenAI `max_output_tokens`, Gemini `maxOutputTokens`); the
+compactor uses it for its summary request.
 
 ### GPT-6 Astra and Fable 5.1
 

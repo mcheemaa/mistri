@@ -89,6 +89,8 @@ class TestLoggerSink < Minitest::Test # rubocop:disable Metrics/ClassLength -- o
                                 tool_call: tool_call("send_gift", { "to" => "sarah" })))
     sink.call(Mistri::Event.new(type: :compacting))
     sink.call(Mistri::Event.new(type: :compaction, content: "The story so far"))
+    sink.call(Mistri::Event.new(type: :compaction_failed,
+                                error_message: "unexpected stop reason: :length"))
     sink.call(Mistri::Event.new(type: :subagent_report, agent: "Corgi",
                                 session_id: "ef56ab12-0000-4444-aaaa-000000000000",
                                 status: "done", content: "found it"))
@@ -97,6 +99,7 @@ class TestLoggerSink < Minitest::Test # rubocop:disable Metrics/ClassLength -- o
     assert_match(/INFO \[mistri\] approval needed send_gift#c1 \{"to":"sarah"\}/, io.string)
     assert_match(/INFO \[mistri\] compacting/, io.string)
     assert_match(/INFO \[mistri\] compacted "The story so far"/, io.string)
+    assert_match(/WARN \[mistri\] compaction failed: unexpected stop reason: :length/, io.string)
     assert_match(/INFO \[mistri\] worker Corgi \(ef56ab12\) done "found it"/, io.string)
   end
 
@@ -482,11 +485,14 @@ class TestLoggerSink < Minitest::Test # rubocop:disable Metrics/ClassLength -- o
                                 error_message: "token sk-secret rejected"))
     sink.call(Mistri::Event.new(type: :retry, content: "key sk-secret throttled",
                                 attempt: 1, max_attempts: 3, delay: 2.0))
+    sink.call(Mistri::Event.new(type: :compaction_failed,
+                                error_message: "summarizer rejected sk-secret"))
 
     refute_match(/hunter2|sk-secret/, io.string)
     assert_match(/crashed RuntimeError \(16B\)/, io.string)
     assert_match(/error error \(24B\)/, io.string)
     assert_match(%r{retry 1/3 in 2.0s \(23B\)}, io.string)
+    assert_match(/WARN \[mistri\] compaction failed \(29B\)/, io.string)
   end
 
   def test_argument_previews_bound_hash_keys_too
