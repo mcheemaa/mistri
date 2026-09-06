@@ -73,7 +73,7 @@ module Mistri
       # Summarize and cut. Returns {summary:, tokens_before:, tokens_after:,
       # usage:}, or nil when there is nothing worth compacting. Emits
       # :compacting and :compaction when a block is given.
-      def call(session:, provider:, settings: Compaction.new, trigger: :manual, &emit)
+      def call(session:, provider:, settings: Compaction.new, trigger: :manual, budget: nil, &emit)
         replay = session.replay
         cut = cut_index(replay, session, settings)
         return nil unless cut
@@ -86,7 +86,7 @@ module Mistri
         emit&.call(Event.new(type: :compacting))
         tokens_before = session.context_tokens
         prompt = prompt_for(head, previous, settings)
-        reply, usage, failures = attempt(prompt, [provider, settings.fallback].compact, settings)
+        reply, usage, failures = attempt(prompt, summarizers(provider, settings), settings, budget)
         reject(session, failures.join("; "), trigger, tokens_before, usage, &emit) unless reply
 
         session.append("compaction", "summary" => reply.text, "model" => reply.model,
@@ -158,21 +158,32 @@ module Mistri
         prompt
       end
 
+      # The fallback is a different model or nothing: the same model behind a
+      # second provider is skipped, so the model that failed is never asked
+      # again within one compaction.
+      def summarizers(provider, settings)
+        [provider, settings.fallback].compact.uniq(&:model)
+      end
+
       # The session's provider writes the summary; a configured fallback gets
       # one try when that reply is unusable for any reason, a refusal
-      # included, and the model that failed is never asked again. Returns the
-      # usable reply or nil, the usage of every attempt, and each failure
-      # named by its model.
-      def attempt(prompt, summarizers, settings)
+      # included. An attempt that reports no usage counts as unknown cost, not
+      # as nothing, and under a cost budget an unpriced attempt ends the loop
+      # before another model can spend. Returns the usable reply or nil, the
+      # usage of every attempt, and each failure named by its model.
+      def attempt(prompt, summarizers, settings, budget)
         usage = nil
         failures = []
         summarizers.each do |summarizer|
           reply = summarize(summarizer, prompt, settings)
-          usage = [usage, reply.usage].compact.reduce(:+)
+          reply = reply.with(model: summarizer.model) unless reply.model
+          measured = reply.usage || Usage.new
+          usage = usage ? usage + measured : measured
           failure = summary_failure(reply)
           return [reply, usage, failures] unless failure
 
           failures << "#{summarizer.model}: #{failure}"
+          break if budget&.cost? && !usage.cost.known?
         end
         [nil, usage, failures]
       end

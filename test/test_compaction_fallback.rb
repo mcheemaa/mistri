@@ -87,6 +87,84 @@ class TestCompactionFallback < Minitest::Test
     assert_equal 1, fallback.requests.length
   end
 
+  def test_an_attempt_without_usage_makes_the_combined_cost_unknown
+    [[nil, FALLBACK_USAGE], [PRIMARY_USAGE, nil]].each do |primary_usage, fallback_usage|
+      session = history
+      provider = scripted(model: "fake-1", replies: [incomplete_reply(usage: primary_usage)])
+      fallback = scripted(model: "fallback-1", replies: [checkpoint_reply(usage: fallback_usage)])
+
+      result = Mistri::Compactor.call(session:, provider:, settings: settings(fallback:))
+
+      assert_equal "Checkpoint.", result[:summary]
+      refute_predicate result[:usage].cost, :known?
+      assert_equal (primary_usage || fallback_usage).input, result[:usage].input
+    end
+  end
+
+  def test_a_cost_budget_stops_before_the_fallback_when_the_primary_is_unpriced
+    session = history
+    unpriced = incomplete_reply(usage: Mistri::Usage.new(input: 900))
+    provider = scripted(model: "fake-1", replies: [unpriced])
+    fallback = fake_fallback(turns: [{ text: "Checkpoint.", usage: FALLBACK_USAGE }])
+    compaction = Mistri::Compaction.new(**SETTINGS, fallback:)
+    budget = Mistri::Budget.new(cost_usd: 10.0)
+
+    error = assert_raises(Mistri::BudgetError) do
+      Mistri::Agent.new(provider:, session:, compaction:, budget:).run("Continue.")
+    end
+    unpriced_attempts = session.entries.count { |entry| entry["type"] == "unpriced_attempt" }
+
+    assert_includes error.message, "unpriced usage"
+    assert_empty fallback.requests
+    assert_equal 1, unpriced_attempts
+    assert_equal 1, session.compaction_failures(trigger: :automatic)
+    assert_equal "budget_cost_unknown", session.messages.last.error_message
+  end
+
+  def test_a_cost_budget_rejects_an_unpriced_fallback_at_construction
+    provider = Mistri::Providers::Fake.new(turns: [{ text: "done", usage: PRIMARY_USAGE }])
+    fallback = fake_fallback(turns: [{ text: "Checkpoint.", usage: Mistri::Usage.new(input: 1) }])
+    compaction = Mistri::Compaction.new(**SETTINGS, fallback:)
+
+    error = assert_raises(Mistri::ConfigurationError) do
+      Mistri::Agent.new(provider:, compaction:, budget: Mistri::Budget.new(cost_usd: 1.0))
+    end
+
+    assert_includes error.message, "fallback-1"
+    assert_kind_of Mistri::Agent, Mistri::Agent.new(provider:, compaction:)
+  end
+
+  def test_a_fallback_naming_the_primary_model_is_never_asked
+    twin = Mistri::Providers::Fake.new(turns: [{ text: "must not run" }])
+    provider = Mistri::Providers::Fake.new(turns: [incomplete_turn])
+
+    error = assert_raises(Mistri::CompactionError) do
+      Mistri::Compactor.call(session: history, provider:, settings: settings(fallback: twin))
+    end
+
+    assert_equal "summarization failed: fake-1: unexpected stop reason: :length", error.message
+    assert_empty twin.requests
+
+    provider = Mistri::Providers::Fake.new(turns: [incomplete_turn])
+
+    assert_raises(Mistri::CompactionError) do
+      Mistri::Compactor.call(session: history, provider:, settings: settings(fallback: provider))
+    end
+    assert_equal 1, provider.requests.length
+  end
+
+  def test_a_reply_without_a_model_is_attributed_to_the_provider_that_wrote_it
+    session = history
+    provider = Mistri::Providers::Fake.new(turns: [incomplete_turn])
+    fallback = scripted(model: "custom-1", replies: [checkpoint_reply(usage: FALLBACK_USAGE)])
+    events = []
+
+    Mistri::Compactor.call(session:, provider:, settings: settings(fallback:)) { |event| events << event }
+
+    assert_equal "custom-1", session.last_compaction.fetch("model")
+    assert_equal "custom-1", events.last.message.model
+  end
+
   def test_the_setting_takes_a_provider_or_a_model_id_and_rejects_the_rest
     provider = Mistri::Providers::Fake.new
 
@@ -134,6 +212,26 @@ class TestCompactionFallback < Minitest::Test
     fallback = Mistri::Providers::Fake.new(turns:)
     fallback.define_singleton_method(:model) { "fallback-1" }
     fallback
+  end
+
+  # The minimal custom-provider contract: stream and model, replies as given,
+  # with no model or usage metadata the provider did not put there.
+  def scripted(model:, replies:)
+    provider = Mistri::Providers::Fake.new
+    provider.define_singleton_method(:model) { model }
+    provider.define_singleton_method(:stream) do |**options|
+      requests << { options: }
+      replies.shift || raise("no scripted reply left")
+    end
+    provider
+  end
+
+  def incomplete_reply(usage:)
+    Mistri::Message.assistant(content: "private unfinished summary", stop_reason: :length, usage:)
+  end
+
+  def checkpoint_reply(usage:)
+    Mistri::Message.assistant(content: "Checkpoint.", stop_reason: :stop, usage:)
   end
 
   def with_env(values)

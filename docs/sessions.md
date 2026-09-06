@@ -241,13 +241,20 @@ Ordinary turns keep the host's settings.
 
 `fallback:` names a second summarizer, a provider or a model id, that gets one
 try when the session's provider cannot write a usable summary for any reason,
-a refusal included; the model that failed is never asked again. The host
-chooses it, so a refusal never changes models silently. Natural pairs are a
-smaller model of the same family: Sonnet 5 behind Fable 5.1 or Opus 5, Sol
-behind Astra, Flash behind Gemini Pro. The compaction entry records which
-model wrote the summary, and the `:compaction` event carries that reply in
-`event.message`. When both fail, the one `compaction_failed` entry names each
-model with its reason, and the usage of both attempts is counted.
+a refusal included. The model that failed is never asked again: a fallback
+naming the primary's own model is skipped, so a second deployment of the same
+model is not a fallback. The host chooses it, so a refusal never changes
+models silently. Natural pairs are a smaller model of the same family: Sonnet
+5 behind Fable 5.1 or Opus 5, Sol behind Astra, Flash behind Gemini Pro. The
+compaction entry records which model wrote the summary, and the `:compaction`
+event carries that reply in `event.message` (so a serialized event repeats the
+summary once). When both fail, the one `compaction_failed` entry names each
+model with its reason, and the usage of both attempts is counted. An attempt
+that reports no usage counts as unknown cost. Under a cost budget an unpriced
+attempt ends compaction before the fallback can spend, and the agent validates
+the fallback's pricing at construction, so give a cost-budgeted agent an
+explicitly configured provider with a deterministic service tier rather than
+a model id.
 
 ```ruby
 agent.context_usage
