@@ -38,7 +38,13 @@ bundle exec ruby script/compaction_eval.rb run
 bundle exec ruby script/compaction_eval.rb run --models all --sizes S,M,L --repeat 2 --folds --baselines
 bundle exec ruby script/compaction_eval.rb report tmp/compaction-eval/<file>.jsonl
 bundle exec ruby script/compaction_eval.rb compare eval/baselines/<base>.jsonl <candidate>.jsonl
+bundle exec ruby script/compaction_eval.rb regrade <file>.jsonl <regraded>.jsonl
 ```
+
+Rows keep every probe reply and every tool argument in full, so `regrade`
+applies the current grading rules to a stored run: a grading fix never needs
+another paid run, and a committed baseline can be brought up to date without
+new provider calls.
 
 The default matrix is one cheap model per provider (Haiku 4.5, GPT-5.6 Sol,
 Gemini 2.5 Flash), all scenarios, sizes S and M, one repetition: about ten

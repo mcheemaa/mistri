@@ -128,18 +128,16 @@ module CompactionEval
         probes.each { |result| result[:literal] = Grader.literal?(summary, result[:answer]) }
       end
       continuation = continue(model, session, scenario, scenario.latest(through: last_segment))
-      { probes: probes, probe_accuracy: share(probes, :pass),
-        accuracy_by_carrier: by(probes, :carrier), accuracy_by_segment: by(probes, :segment),
-        changed_accuracy: share(probes.select { |p| p[:changed] }, :pass),
-        literal_recall: (share(probes, :literal) if summary), continuation: continuation,
+      { probes: probes, continuation: continuation,
         cost: probes.sum { |p| p[:cost] || 0.0 } + (continuation[:cost] || 0.0),
         unpriced: probes.count { |p| p[:cost].nil? } + (continuation[:cost].nil? ? 1 : 0) }
+        .merge(self.class.scores(probes, summary))
     end
 
     def grade(probe, reply)
       text = reply.text.to_s
       { key: probe.key, carrier: probe.carrier, segment: probe.segment, changed: probe.changed,
-        question: probe.question, answer: probe.answer, reply: text[0, 300],
+        question: probe.question, answer: probe.answer, match: probe.match, reply: text[0, 2_000],
         pass: reply.stop_reason != :error && Grader.pass?(text, probe.answer, probe.match),
         stop_reason: reply.stop_reason, error: reply.error_message, cost: cost_of(reply.usage) }
     end
@@ -184,17 +182,6 @@ module CompactionEval
       reply
     end
 
-    def share(items, key)
-      return nil if items.empty?
-
-      (items.count { |item| item[key] }.to_f / items.length).round(3)
-    end
-
-    def by(probes, key)
-      probes.group_by { |probe| probe[key] }
-            .to_h { |group, items| [group.to_s, share(items, :pass)] }
-    end
-
     def cost_of(usage)
       return nil unless usage&.cost&.known?
 
@@ -204,6 +191,50 @@ module CompactionEval
     def clock = Process.clock_gettime(Process::CLOCK_MONOTONIC)
 
     class << self
+      # The scores a row carries, computed from its probes so a stored row can
+      # be graded again after a grader change without another paid run.
+      def scores(probes, summary)
+        { probe_accuracy: share(probes, :pass),
+          accuracy_by_carrier: by(probes, :carrier), accuracy_by_segment: by(probes, :segment),
+          changed_accuracy: share(probes.select { |p| p[:changed] }, :pass),
+          literal_recall: (share(probes, :literal) if summary) }
+      end
+
+      def regrade(row)
+        return row if row[:skipped] || row[:probes].nil?
+
+        summary = row[:compactions]&.last&.dig(:summary)
+        probes = row[:probes].map do |probe|
+          pass = probe[:stop_reason].to_s != "error" &&
+                 Grader.pass?(probe[:reply], probe[:answer], (probe[:match] || :contains).to_sym)
+          literal = summary ? Grader.literal?(summary, probe[:answer]) : nil
+          probe.merge(pass: pass, literal: literal)
+        end
+        row.merge(probes: probes, continuation: regrade_continuation(row[:continuation]))
+           .merge(scores(probes, summary))
+      end
+
+      def regrade_continuation(continuation)
+        return continuation unless continuation && continuation[:actual]
+
+        expected = continuation[:expected]
+        matched = expected.select do |key, value|
+          Grader.same?(continuation[:actual][key.to_s] || continuation[:actual][key.to_sym], value)
+        end.keys
+        continuation.merge(matched: matched, success: matched.length == expected.length)
+      end
+
+      def share(items, key)
+        return nil if items.empty?
+
+        (items.count { |item| item[key] }.to_f / items.length).round(3)
+      end
+
+      def by(probes, key)
+        probes.group_by { |probe| probe[key] }
+              .to_h { |group, items| [group.to_s, share(items, :pass)] }
+      end
+
       def git_sha
         sha = `git rev-parse --short HEAD 2>/dev/null`.strip
         sha.empty? ? "unknown" : sha

@@ -7,10 +7,15 @@ module CompactionEval
   # value after normalization, a yes/no probe when its first word is the
   # expected word. No judge model, so a run is reproducible and cheap.
   module Grader
+    NUMBER = /\A\d+(\.\d+)?\z/
+
     module_function
 
+    # Case, quoting, emphasis, currency marks, and thousands separators never
+    # make two renderings of one value differ; a hyphen reads as a space, so
+    # "double-counting" still carries "double count".
     def normalize(text)
-      text.to_s.downcase.gsub(/[`"'*_]/, "").gsub(/\s+/, " ").strip
+      text.to_s.downcase.gsub(/[`"'*_$,]/, "").tr("-", " ").gsub(/\s+/, " ").strip
     end
 
     def pass?(reply, answer, match)
@@ -28,14 +33,12 @@ module CompactionEval
     # agrees when the actual value carries the expected one, so "October 9,
     # 2026" still means "October 9".
     def same?(actual, expected)
-      left = normalize(actual).delete("$,")
-      right = normalize(expected).delete("$,")
+      left = normalize(actual)
+      right = normalize(expected)
       return BigDecimal(left) == BigDecimal(right) if [left, right].all? { |v| v.match?(NUMBER) }
 
       left == right || left.include?(right)
     end
-
-    NUMBER = /\A\d+(\.\d+)?\z/
 
     def literal?(summary, value)
       Array(value).any? { |candidate| normalize(summary).include?(normalize(candidate)) }

@@ -73,6 +73,9 @@ class TestCompactionEval < Minitest::Test
     refute grader.pass?("It should not appear in logs.", "no", :yes_no)
     assert grader.pass?("5433.", "5433", :exact)
     refute grader.pass?("54331", "5433", :exact)
+    assert grader.pass?("argMax was double-counting refunds.", "double count", :contains)
+    assert grader.pass?("184203 rows", "184,203", :contains)
+    assert grader.pass?("3,948,820.57", "$3,948,820.57", :contains)
     assert grader.same?("3948820.57", "$3,948,820.57")
     assert grader.same?("60.00", "$60")
     refute grader.same?("54331", "5433")
@@ -111,6 +114,24 @@ class TestCompactionEval < Minitest::Test
     assert_equal CompactionEval::Runner.prompt_digest, row[:prompt_digest]
     assert_includes CompactionEval::Report.markdown(rows),
                     "| scripted | ledger_export | S | compacted |"
+  end
+
+  def test_regrade_recomputes_scores_from_stored_replies
+    row = { mode: "compacted", compactions: [{ summary: "Ship SEND-2831 by Friday" }],
+            probes: [{ key: :ticket, carrier: :user, segment: 0, changed: false, match: "contains",
+                       answer: "SEND-2831", reply: "SEND-2831", pass: false, stop_reason: "stop" },
+                     { key: :day, carrier: :user, segment: 0, changed: true, match: "contains",
+                       answer: "Friday", reply: "Thursday", pass: true, stop_reason: "stop" }],
+            continuation: { expected: { "day" => "Friday" }, actual: { "day" => "friday" },
+                            matched: [], success: false, called: true } }
+
+    regraded = CompactionEval::Runner.regrade(row)
+
+    assert_equal([true, false], regraded[:probes].map { |probe| probe[:pass] })
+    assert_in_delta 0.5, regraded[:probe_accuracy]
+    assert_in_delta 0.0, regraded[:changed_accuracy]
+    assert_in_delta 1.0, regraded[:literal_recall], 0.001, "both answers sit in the summary text"
+    assert regraded.dig(:continuation, :success)
   end
 
   def test_compare_reports_deltas_and_flags_regressions

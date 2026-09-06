@@ -34,9 +34,11 @@ module CompactionEval
       when "report" then puts Report.markdown(Report.read(argv.fetch(0)))
       when "compare" then puts Report.compare(Report.read(argv.fetch(0)),
                                               Report.read(argv.fetch(1)))
+      when "regrade" then regrade(argv.fetch(0), argv.fetch(1))
       when "list" then list
       else
-        warn "usage: compaction_eval.rb run|report FILE|compare BASE CANDIDATE|list"
+        warn "usage: compaction_eval.rb run|report FILE|compare BASE CANDIDATE|" \
+             "regrade FILE OUT|list"
         exit 2
       end
     end
@@ -90,6 +92,15 @@ module CompactionEval
         opts.on("--prompts FILE", "Ruby file that redefines the compactor prompts, for local " \
                                   "iteration only") { |f| options[:prompts] = File.expand_path(f) }
       end
+    end
+
+    # Grades stored rows again with the current grader: a grading fix never
+    # needs another paid run.
+    def regrade(path, out)
+      rows = Report.read(path).map { |row| Runner.regrade(row) }
+      Report.write(rows, out)
+      File.write(out.sub(/\.jsonl\z/, ".md"), Report.markdown(rows))
+      puts Report.markdown(rows)
     end
 
     def list
