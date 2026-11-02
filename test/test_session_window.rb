@@ -79,16 +79,33 @@ class TestSessionWindow < Minitest::Test
     assert_equal 1, session.pending_steers.length
   end
 
+  def test_the_boundary_never_passes_an_unfolded_steer
+    store = RecordingStore.new
+    session = Mistri::Session.new(store:)
+    session.append_message(Mistri::Message.user("old"))
+    session.append("steer", "id" => "s1", "message" => Mistri::Message.user("missed").to_h)
+    session.append_message(Mistri::Message.assistant(content: "then", stop_reason: :stop))
+    session.append_message(Mistri::Message.user("recent"))
+    session.append("compaction", "summary" => "cut past the steer", "kept_from" => 3)
+    session.tool_call_ids
+
+    pending = session.pending_inbox
+
+    assert_equal(["s1"], pending.map { |entry| entry["id"] })
+    assert_equal [0, 1], store.loads
+  end
+
   def test_a_later_compaction_moves_the_boundary_forward
     @session.messages
+    @session.append("message", "message" => Mistri::Message.user("later").to_h, "steer_id" => "s2")
     @session.append_message(Mistri::Message.assistant(content: "more", stop_reason: :stop))
-    @session.append("compaction", "summary" => "later context", "kept_from" => 8)
+    @session.append("compaction", "summary" => "later context", "kept_from" => 9)
     @session.messages
     @store.loads.clear
 
     @session.messages
 
-    assert_equal [8], @store.loads
+    assert_equal [9], @store.loads
   end
 
   private

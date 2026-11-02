@@ -9,9 +9,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   accept the keyword. `Session` reads from its latest compaction boundary for
   replay, context accounting, the inbox and compaction failures, so a turn's
   cost follows the live context. `entries` and `transcript` still read the full
-  log. A compaction never cuts past an unfolded steer or report, and records
-  the legacy `call_N` ids approved before its cut so a bounded replay still
-  reads a reused id as ambiguous.
+  log. A compaction never cuts past an unfolded steer or report, a bounded read
+  never starts past one, and the compaction entry records the legacy `call_N`
+  ids approved before its cut so a bounded replay still reads a reused id as
+  ambiguous.
 - Compaction summaries are handoffs in seven fixed sections: the requests
   that shaped the work in the user's words, constraints, exact facts and
   references, decisions, progress, open failures, and current work with the

@@ -57,7 +57,11 @@ module Mistri
       nil
     end
 
-    def entries = note_boundary(@store.load(@id))
+    def entries
+      log = @store.load(@id)
+      note_boundary(Window.new(log, 0))
+      log
+    end
 
     # Every call ID is a session-wide correlation key. Read and validate the
     # append-only history once, returning an owned set the loop can extend as
@@ -178,9 +182,7 @@ module Mistri
     end
 
     # Index of the oldest queued entry, the furthest a compaction may cut.
-    def inbox_floor
-      queued(window).first&.last
-    end
+    def inbox_floor = inbox_floor_of(window)
 
     # The steer-only slice of the inbox, oldest first.
     def pending_steers
@@ -227,18 +229,21 @@ module Mistri
     # The log from the latest compaction boundary on, all a turn needs. A stale boundary
     # only widens the window, so no process coordinates it: the first read is full and teaches it.
     def window
-      # The offset is the boundary this read starts from; the read itself may move it.
-      from = @boundary
-      Window.new(note_boundary(@store.load(@id, from:)), from)
+      Window.new(@store.load(@id, from: @boundary), @boundary).tap { |log| note_boundary(log) }
     end
 
+    # The boundary stops short of an unfolded inbox entry, so a compaction that cut past
+    # one still lets it fold.
     def note_boundary(log)
       compaction = log.reverse_each.find { |entry| compaction?(entry) }
-      @boundary = compaction["kept_from"] if compaction
-      log
+      return unless compaction
+
+      @boundary = [compaction["kept_from"], inbox_floor_of(log)].compact.min
     end
 
     def compaction?(entry) = entry["type"] == "compaction"
+
+    def inbox_floor_of(log) = queued(log).first&.last
 
     def queued(log)
       folded = log.flat_map { |entry| entry.values_at(*INBOX.values) }.compact.to_set
