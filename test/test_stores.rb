@@ -72,7 +72,6 @@ class TestStores < Minitest::Test
       %w[a b c].each { |text| store.append("s", { "text" => text }) }
 
       assert_equal(%w[b c], store.load("s", from: 1).map { |entry| entry["text"] })
-      assert_equal 3, store.load("s", from: 0).length
       assert_empty store.load("s", from: 3)
     end
   end

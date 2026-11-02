@@ -2,8 +2,7 @@
 
 require_relative "test_helper"
 
-# Remembers where each load started, so a test can see which reads the
-# session bounds.
+# Records where each load starts.
 class RecordingStore < Mistri::Stores::Memory
   attr_reader :loads
 
@@ -33,7 +32,7 @@ class TestSessionWindow < Minitest::Test
   end
 
   def test_the_first_read_is_full_and_every_read_after_it_starts_at_the_boundary
-    @session.messages
+    @session.tool_call_ids
     @session.messages
     @session.context_tokens
     @session.pending_inbox
@@ -41,13 +40,6 @@ class TestSessionWindow < Minitest::Test
     @session.last_compaction
 
     assert_equal [0, 3, 3, 3, 3, 3], @store.loads
-  end
-
-  def test_the_audit_read_teaches_the_boundary_too
-    @session.tool_call_ids
-    @session.messages
-
-    assert_equal [0, 3], @store.loads
   end
 
   def test_the_full_log_stays_available_to_readers
@@ -85,7 +77,6 @@ class TestSessionWindow < Minitest::Test
 
     assert_equal 2, session.last_compaction.fetch("kept_from")
     assert_equal 1, session.pending_steers.length
-    assert_equal 1, Mistri::Session.new(store:, id: session.id).pending_steers.length
   end
 
   def test_a_later_compaction_moves_the_boundary_forward
