@@ -394,14 +394,13 @@ stable total order.
 
 ### Loading from an index
 
-`load(session_id)` is now `load(session_id, from: 0)`. A custom store must
-accept the keyword and return the entries at or after that zero-based index, in
-append order. Dropping the prefix after a full read is correct; filtering at the
-source is the point.
+`load(session_id)` is now `load(session_id, from: 0)`: return the entries at or
+after that zero-based index, in append order. Filter at the source where you
+can; dropping the prefix after a full read is correct.
 
 A compaction written before this release carries no `approval_ids`, so a legacy
-`call_N` approval reused across such a boundary is not read as ambiguous until
-the session compacts again.
+`call_N` approval reused across it reads as clean until the session compacts
+again.
 
 ### MySQL and Trilogy payload width
 

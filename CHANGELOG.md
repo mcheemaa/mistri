@@ -5,16 +5,13 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
-- `load(session_id, from: 0)` joins the store contract: a store returns the log
-  from a zero-based index, and the built-in stores skip the prefix at the source
-  (`position` in Active Record, lines in JSONL). A custom store must accept the
-  keyword. `Session` reads from its latest compaction boundary for everything a
-  turn needs (replay, context accounting, the inbox, compaction failures), so a
-  turn's cost follows the live context rather than the session's whole history.
-  `entries` and `transcript` still read the full log, and a compaction never
-  cuts past a steer or report that has not folded yet. The compaction entry
-  records the legacy `call_N` ids that reached approval before its cut, so a
-  bounded replay still treats a later approval on a reused id as ambiguous.
+- `load(session_id, from: 0)` joins the store contract; a custom store must
+  accept the keyword. `Session` reads from its latest compaction boundary for
+  replay, context accounting, the inbox and compaction failures, so a turn's
+  cost follows the live context. `entries` and `transcript` still read the full
+  log. A compaction never cuts past an unfolded steer or report, and records
+  the legacy `call_N` ids approved before its cut so a bounded replay still
+  reads a reused id as ambiguous.
 - Compaction summaries are handoffs in seven fixed sections: the requests
   that shaped the work in the user's words, constraints, exact facts and
   references, decisions, progress, open failures, and current work with the
