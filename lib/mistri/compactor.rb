@@ -11,7 +11,8 @@ module Mistri
   #
   # Cuts land on user messages or assistant tool-call turns, never results,
   # so every call/result set stays on one side. A parked approval's turn is
-  # never cut away from the resume that must answer it.
+  # never cut away from the resume that must answer it, and a queued steer or
+  # report is never cut behind the boundary a bounded read starts from.
   class Compactor
     TOOL_RESULT_MAX_CHARS = 2_000
 
@@ -152,6 +153,7 @@ module Mistri
         end
         cut = candidates.find { |index| index >= boundary } || candidates.last
         cut = clamp_to_open_approvals(cut, session)
+        cut = clamp_to_inbox(cut, candidates, session)
         return nil unless cut
 
         first = replay.find { |(_, index)| index }&.last
@@ -184,6 +186,16 @@ module Mistri
 
         turn_start = approval_turn_start(session.entries, open_ids)
         turn_start && turn_start < cut ? turn_start : cut
+      end
+
+      # A bounded read starts at the cut, so a steer or report still queued
+      # behind it would never fold: the cut backs up to the last safe turn
+      # before the oldest queued entry.
+      def clamp_to_inbox(cut, candidates, session)
+        floor = cut && session.inbox_floor
+        return cut unless floor && floor < cut
+
+        candidates.reverse.find { |index| index < floor }
       end
 
       def approval_turn_start(entries, open_ids)

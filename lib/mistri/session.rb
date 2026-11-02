@@ -170,9 +170,14 @@ module Mistri
     # every process. A host that wakes an idle session when a steer arrives
     # should watch this instead: a report deserves the same pickup.
     def pending_inbox
-      log = window
-      folded = log.flat_map { |entry| entry.values_at(*INBOX.values) }.compact.to_set
-      log.select { |entry| INBOX.key?(entry["type"]) && !folded.include?(entry["id"]) }
+      queued(window).map(&:first)
+    end
+
+    # Index of the oldest queued entry: the furthest a compaction may cut,
+    # because a bounded read starts at the cut and an entry behind it would
+    # never fold.
+    def inbox_floor
+      queued(window).first&.last
     end
 
     # The steer-only slice of the inbox, oldest first.
@@ -230,6 +235,13 @@ module Mistri
       compaction = log.reverse_each.find { |entry| entry["type"] == "compaction" }
       @boundary = compaction["kept_from"] if compaction
       log
+    end
+
+    def queued(log)
+      folded = log.flat_map { |entry| entry.values_at(*INBOX.values) }.compact.to_set
+      log.each_with_index.select do |entry, _index|
+        INBOX.key?(entry["type"]) && !folded.include?(entry["id"])
+      end
     end
 
     def tool_calls_from(entry)

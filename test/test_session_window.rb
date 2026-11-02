@@ -71,6 +71,23 @@ class TestSessionWindow < Minitest::Test
     assert_equal 3, @session.last_compaction["kept_from"]
   end
 
+  def test_a_compaction_never_cuts_past_a_queued_steer
+    store = Mistri::Stores::Memory.new
+    session = Mistri::Session.new(store:)
+    %w[first second].each { |text| exchange(session, text) }
+    session.steer("while idle")
+    exchange(session, "third")
+    session.append_message(Mistri::Message.user("fourth"))
+    provider = Mistri::Providers::Fake.new(turns: [{ text: "1. Goal and requests\nKeep going.\n" }])
+    settings = Mistri::Compaction.new(window: 600, reserve: 550, keep_recent: 1)
+
+    Mistri::Compactor.call(session:, provider:, settings:)
+
+    assert_equal 2, session.last_compaction.fetch("kept_from")
+    assert_equal 1, session.pending_steers.length
+    assert_equal 1, Mistri::Session.new(store:, id: session.id).pending_steers.length
+  end
+
   def test_a_later_compaction_moves_the_boundary_forward
     @session.messages
     @session.append_message(Mistri::Message.assistant(content: "more", stop_reason: :stop))
@@ -81,5 +98,12 @@ class TestSessionWindow < Minitest::Test
     @session.messages
 
     assert_equal [8], @store.loads
+  end
+
+  private
+
+  def exchange(session, text)
+    session.append_message(Mistri::Message.user(text))
+    session.append_message(Mistri::Message.assistant(content: text.upcase, stop_reason: :stop))
   end
 end

@@ -11,7 +11,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   keyword. `Session` reads from its latest compaction boundary for everything a
   turn needs (replay, context accounting, the inbox, compaction failures), so a
   turn's cost follows the live context rather than the session's whole history.
-  `entries` and `transcript` still read the full log.
+  `entries` and `transcript` still read the full log, and a compaction never
+  cuts past a steer or report that has not folded yet.
 - Compaction summaries are handoffs in seven fixed sections: the requests
   that shaped the work in the user's words, constraints, exact facts and
   references, decisions, progress, open failures, and current work with the
