@@ -103,7 +103,7 @@ module Mistri
     def context_tokens
       log = window
       replay = replay_from(log)
-      compacted_at = log.rindex { |entry| entry["type"] == "compaction" }
+      compacted_at = log.rindex { |entry| compaction?(entry) }
       usage_from = if compacted_at
                      replay.index { |(_, index)| index && index > compacted_at } || replay.length
                    else
@@ -113,7 +113,7 @@ module Mistri
     end
 
     def last_compaction
-      window.reverse_each.find { |entry| entry["type"] == "compaction" }
+      window.reverse_each.find { |entry| compaction?(entry) }
     end
 
     # Failed summaries since the last checkpoint, all of them or only those
@@ -121,7 +121,7 @@ module Mistri
     # own failures to stop retrying one that has proven persistent.
     def compaction_failures(trigger: nil)
       log = window
-      since = (log.rindex { |entry| entry["type"] == "compaction" } || -1) + 1
+      since = (log.rindex { |entry| compaction?(entry) } || -1) + 1
       log.each_with_index.count do |entry, index|
         index >= since && entry["type"] == "compaction_failed" &&
           (trigger.nil? || entry["trigger"] == trigger.to_s)
@@ -245,10 +245,12 @@ module Mistri
     end
 
     def note_boundary(log)
-      compaction = log.reverse_each.find { |entry| entry["type"] == "compaction" }
+      compaction = log.reverse_each.find { |entry| compaction?(entry) }
       @boundary = compaction["kept_from"] if compaction
       log
     end
+
+    def compaction?(entry) = entry["type"] == "compaction"
 
     def queued(log)
       folded = log.flat_map { |entry| entry.values_at(*INBOX.values) }.compact.to_set
@@ -641,7 +643,7 @@ module Mistri
     end
 
     def replay_from(log)
-      compacted_at = log.rindex { |entry| entry["type"] == "compaction" }
+      compacted_at = log.rindex { |entry| compaction?(entry) }
       compaction = log[compacted_at] if compacted_at
       from = compaction ? compaction["kept_from"] : 0
       pairs = log.each_with_index.filter_map do |entry, index|
