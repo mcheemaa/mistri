@@ -392,6 +392,13 @@ stable total order.
 
 ## Session stores
 
+### Loading from an index
+
+`load(session_id)` is now `load(session_id, from: 0)`. A custom store must
+accept the keyword and return the entries at or after that zero-based index, in
+append order. Dropping the prefix after a full read is correct; filtering at the
+source is the point.
+
 ### MySQL and Trilogy payload width
 
 The generated Active Record session table now uses LONGTEXT for `payload`. An

@@ -5,6 +5,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+- `load(session_id, from: 0)` joins the store contract: a store returns the log
+  from a zero-based index, and the built-in stores skip the prefix at the source
+  (`position` in Active Record, lines in JSONL). A custom store must accept the
+  keyword.
 - Compaction summaries are handoffs in seven fixed sections: the requests
   that shaped the work in the user's words, constraints, exact facts and
   references, decisions, progress, open failures, and current work with the

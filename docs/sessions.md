@@ -45,11 +45,14 @@ A store implements:
 
 ```ruby
 append(session_id, entry_hash) # append one JSON-shaped entry
-load(session_id)               # return entries in append order
+load(session_id, from: 0)      # return entries in append order, from an index
 ```
 
 The store must preserve each append as one entry, provide a stable total order
-per session, and make a successful append visible to subsequent loads. Values
+per session, and make a successful append visible to subsequent loads. `from`
+is a zero-based index into that order: the session passes its latest compaction
+boundary so a long transcript is not read in full on every turn. A store that
+cannot filter at the source may drop the prefix after reading. Values
 returned by `load` must not let caller mutation rewrite durable history: return
 fresh decoded copies or deeply immutable snapshots. Mistri does not rely on
 Ruby object identity. `Session#append` normalizes entries through JSON, so store

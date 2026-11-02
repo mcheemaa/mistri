@@ -20,12 +20,11 @@ module Mistri
         nil
       end
 
-      def load(id)
+      def load(id, from: 0)
         return [] unless File.exist?(path(id))
 
-        File.readlines(path(id)).filter_map do |line|
-          JSON.parse(line) unless line.strip.empty?
-        end
+        lines = File.readlines(path(id)).reject { |line| line.strip.empty? }
+        lines.drop(from).map { |line| JSON.parse(line) }
       end
 
       private

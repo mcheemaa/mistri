@@ -67,6 +67,16 @@ class TestStores < Minitest::Test
                  store.load("s")
   end
 
+  def test_load_from_an_index_returns_the_rest_of_the_log_through_each_store
+    each_store do |store|
+      %w[a b c].each { |text| store.append("s", { "text" => text }) }
+
+      assert_equal(%w[b c], store.load("s", from: 1).map { |entry| entry["text"] })
+      assert_equal 3, store.load("s", from: 0).length
+      assert_empty store.load("s", from: 3)
+    end
+  end
+
   private
 
   def each_store
@@ -82,12 +92,15 @@ if defined?(Mistri::Stores::ActiveRecord)
   class FakeEntryModel
     Row = Struct.new(:session_id, :position, :payload)
 
+    attr_reader :last_where
+
     def initialize
       @rows = []
       @mutex = Mutex.new
       @before_insert = nil
       @caching = false
       @cache = nil
+      @last_where = nil
     end
 
     # Simulates Rails' per-job query cache: while caching, identical reads
@@ -115,16 +128,17 @@ if defined?(Mistri::Stores::ActiveRecord)
       @before_insert = block
     end
 
-    def where(session_id:)
+    def where(session_id:, position: nil)
+      @last_where = position ? { session_id:, position: } : { session_id: }
       if @caching
         @cache ||= {}
         rows = @cache[session_id] ||=
           @mutex.synchronize { @rows.select { |row| row.session_id == session_id }.dup }
-        return Scope.new(rows)
+        return Scope.new(rows, position)
       end
 
       rows = @mutex.synchronize { @rows.select { |row| row.session_id == session_id }.dup }
-      Scope.new(rows)
+      Scope.new(rows, position)
     end
 
     def create!(session_id:, position:, payload:)
@@ -147,7 +161,9 @@ if defined?(Mistri::Stores::ActiveRecord)
     end
 
     class Scope
-      def initialize(rows) = @rows = rows
+      def initialize(rows, position = nil)
+        @rows = position ? rows.select { |row| position.cover?(row.position) } : rows
+      end
 
       def maximum(_column) = @rows.map(&:position).max
 
@@ -187,6 +203,15 @@ if defined?(Mistri::Stores::ActiveRecord)
       numbers = @store.load("s").map { |entry| entry["n"] }
 
       assert_equal [1, 2], numbers
+    end
+
+    def test_load_from_an_index_filters_rows_by_position_in_the_query
+      3.times { |n| @store.append("s", { "n" => n }) }
+
+      numbers = @store.load("s", from: 1).map { |entry| entry["n"] }
+
+      assert_equal [1, 2], numbers
+      assert_equal({ session_id: "s", position: 2.. }, @model.last_where)
     end
 
     def test_a_losing_writer_retries_at_the_next_position
