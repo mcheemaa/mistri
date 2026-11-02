@@ -8,7 +8,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - `load(session_id, from: 0)` joins the store contract: a store returns the log
   from a zero-based index, and the built-in stores skip the prefix at the source
   (`position` in Active Record, lines in JSONL). A custom store must accept the
-  keyword.
+  keyword. `Session` reads from its latest compaction boundary for everything a
+  turn needs (replay, context accounting, the inbox, compaction failures), so a
+  turn's cost follows the live context rather than the session's whole history.
+  `entries` and `transcript` still read the full log.
 - Compaction summaries are handoffs in seven fixed sections: the requests
   that shaped the work in the user's words, constraints, exact facts and
   references, decisions, progress, open failures, and current work with the

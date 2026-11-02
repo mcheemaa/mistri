@@ -72,7 +72,7 @@ class TestBackgroundRuntime < Minitest::Test # rubocop:disable Metrics/ClassLeng
         @store.append(id, entry)
       end
 
-      def load(id) = @store.load(id)
+      def load(id, from: 0) = @store.load(id, from:)
     end.new
   end
 
@@ -98,7 +98,7 @@ class TestBackgroundRuntime < Minitest::Test # rubocop:disable Metrics/ClassLeng
         @store.append(id, entry)
       end
 
-      def load(id) = @store.load(id)
+      def load(id, from: 0) = @store.load(id, from:)
     end.new
   end
 
@@ -117,7 +117,7 @@ class TestBackgroundRuntime < Minitest::Test # rubocop:disable Metrics/ClassLeng
         @store.append(id, entry)
       end
 
-      def load(id) = @store.load(id)
+      def load(id, from: 0) = @store.load(id, from:)
     end.new
   end
 
@@ -136,7 +136,7 @@ class TestBackgroundRuntime < Minitest::Test # rubocop:disable Metrics/ClassLeng
         @store.append(id, entry)
       end
 
-      def load(id) = @store.load(id)
+      def load(id, from: 0) = @store.load(id, from:)
     end.new
   end
 

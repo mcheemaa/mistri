@@ -15,9 +15,33 @@ module Mistri
   class Session # rubocop:disable Metrics/ClassLength -- append-only ordering is the class contract
     attr_reader :id, :store
 
+    # A suffix of the log that answers index questions in absolute terms,
+    # so the positions replay and compaction record stay valid for a read
+    # that started past zero.
+    class Window
+      include Enumerable
+
+      def initialize(entries, offset)
+        @entries = entries
+        @offset = offset
+      end
+
+      def each(&) = @entries.each(&)
+
+      def each_with_index(&) = @entries.each.with_index(@offset, &)
+
+      def rindex(&)
+        relative = @entries.rindex(&)
+        relative && (relative + @offset)
+      end
+
+      def [](index) = @entries[index - @offset]
+    end
+
     def initialize(store:, id: nil)
       @store = store
       @id = id || SecureRandom.uuid
+      @boundary = 0
     end
 
     def append_message(message)
@@ -35,7 +59,7 @@ module Mistri
       nil
     end
 
-    def entries = @store.load(@id)
+    def entries = note_boundary(@store.load(@id))
 
     # Every call ID is a session-wide correlation key. Read and validate the
     # append-only history once, returning an owned set the loop can extend as
@@ -70,14 +94,14 @@ module Mistri
     # brick every later turn with a provider rejection, so unsettled calls
     # get a synthesized interrupted result. Calls parked for human approval
     # stay open; resume owns those.
-    def replay = replay_from(entries)
+    def replay = replay_from(window)
 
     # Context accounting ignores provider usage reported before the latest
     # compaction: those prompt counts describe the larger, pre-summary replay.
     # Until a post-compaction assistant turn reports fresh usage, the compacted
     # replay is estimated directly.
     def context_tokens
-      log = entries
+      log = window
       replay = replay_from(log)
       compacted_at = log.rindex { |entry| entry["type"] == "compaction" }
       usage_from = if compacted_at
@@ -89,17 +113,18 @@ module Mistri
     end
 
     def last_compaction
-      entries.reverse_each.find { |entry| entry["type"] == "compaction" }
+      window.reverse_each.find { |entry| entry["type"] == "compaction" }
     end
 
     # Failed summaries since the last checkpoint, all of them or only those
     # of one trigger (:manual or :automatic). Automatic compaction counts its
     # own failures to stop retrying one that has proven persistent.
     def compaction_failures(trigger: nil)
-      log = entries
+      log = window
       since = (log.rindex { |entry| entry["type"] == "compaction" } || -1) + 1
-      log.drop(since).count do |entry|
-        entry["type"] == "compaction_failed" && (trigger.nil? || entry["trigger"] == trigger.to_s)
+      log.each_with_index.count do |entry, index|
+        index >= since && entry["type"] == "compaction_failed" &&
+          (trigger.nil? || entry["trigger"] == trigger.to_s)
       end
     end
 
@@ -145,7 +170,7 @@ module Mistri
     # every process. A host that wakes an idle session when a steer arrives
     # should watch this instead: a report deserves the same pickup.
     def pending_inbox
-      log = entries
+      log = window
       folded = log.flat_map { |entry| entry.values_at(*INBOX.values) }.compact.to_set
       log.select { |entry| INBOX.key?(entry["type"]) && !folded.include?(entry["id"]) }
     end
@@ -191,6 +216,21 @@ module Mistri
     def open_approvals = tool_control_state.fetch(:approvals)
 
     private
+
+    # The log from the latest compaction boundary on, which is all a turn
+    # needs. The boundary only moves forward and a stale one just widens the
+    # window, so no process coordinates it: a session's first read is full
+    # and teaches it, and every read after a compaction starts at kept_from.
+    def window
+      from = @boundary
+      Window.new(note_boundary(@store.load(@id, from:)), from)
+    end
+
+    def note_boundary(log)
+      compaction = log.reverse_each.find { |entry| entry["type"] == "compaction" }
+      @boundary = compaction["kept_from"] if compaction
+      log
+    end
 
     def tool_calls_from(entry)
       Array(entry.dig("message", "content")).select do |block|
