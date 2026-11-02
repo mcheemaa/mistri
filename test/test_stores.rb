@@ -161,7 +161,7 @@ if defined?(Mistri::Stores::ActiveRecord)
     end
 
     class Scope
-      def initialize(rows, position = nil)
+      def initialize(rows, position)
         @rows = position ? rows.select { |row| position.cover?(row.position) } : rows
       end
 
