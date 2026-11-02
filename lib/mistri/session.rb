@@ -120,11 +120,8 @@ module Mistri
     # of one trigger (:manual or :automatic). Automatic compaction counts its
     # own failures to stop retrying one that has proven persistent.
     def compaction_failures(trigger: nil)
-      log = window
-      since = (log.rindex { |entry| compaction?(entry) } || -1) + 1
-      log.each_with_index.count do |entry, index|
-        index >= since && entry["type"] == "compaction_failed" &&
-          (trigger.nil? || entry["trigger"] == trigger.to_s)
+      window.reverse_each.take_while { |entry| !compaction?(entry) }.count do |entry|
+        entry["type"] == "compaction_failed" && (trigger.nil? || entry["trigger"] == trigger.to_s)
       end
     end
 
