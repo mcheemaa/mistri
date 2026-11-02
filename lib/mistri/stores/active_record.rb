@@ -57,9 +57,7 @@ module Mistri
       # a cached read would never see a child's report land. Read past it.
       # Only past Rails' cache: an open REPEATABLE READ transaction still
       # pins its snapshot, so never poll from inside one.
-      # from is an index into the log. Positions are 1-based and contiguous
-      # because append always takes max + 1, so index i is position i + 1 and
-      # the database skips the prefix instead of shipping it.
+      # Positions are 1-based and contiguous (append takes max + 1), so index i is position i + 1.
       def load(id, from: 0)
         @model.uncached do
           @model.where(session_id: id, position: (from + 1)..).pluck(:position, :payload)

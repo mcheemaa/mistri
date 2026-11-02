@@ -11,8 +11,7 @@ module Mistri
   #
   # Cuts land on user messages or assistant tool-call turns, never results,
   # so every call/result set stays on one side. A parked approval's turn is
-  # never cut away from the resume that must answer it, and a queued steer or
-  # report is never cut behind the boundary a bounded read starts from.
+  # never cut away from the resume that must answer it.
   class Compactor
     TOOL_RESULT_MAX_CHARS = 2_000
 
@@ -189,9 +188,7 @@ module Mistri
         turn_start && turn_start < cut ? turn_start : cut
       end
 
-      # A bounded read starts at the cut, so a steer or report still queued
-      # behind it would never fold: the cut backs up to the last safe turn
-      # before the oldest queued entry.
+      # A bounded read starts at the cut, so a steer or report queued behind it would never fold.
       def clamp_to_inbox(cut, candidates, session)
         floor = cut && session.inbox_floor
         return cut unless floor && floor < cut

@@ -15,9 +15,7 @@ module Mistri
   class Session # rubocop:disable Metrics/ClassLength -- append-only ordering is the class contract
     attr_reader :id, :store
 
-    # A suffix of the log that answers index questions in absolute terms,
-    # so the positions replay and compaction record stay valid for a read
-    # that started past zero.
+    # A log suffix with absolute indexes, so positions recorded by replay and compaction hold.
     class Window
       include Enumerable
 
@@ -125,11 +123,8 @@ module Mistri
       end
     end
 
-    # Legacy call_N ids that reached approval before an index. Only that
-    # shape may repeat, and a bounded read starts past the earlier
-    # occurrence, so the compaction entry carries these to keep a later
-    # approval on the same id apart from a delayed decision meant for the
-    # earlier one.
+    # Legacy call_N ids approved before an index. Only that shape repeats, and a bounded
+    # read cannot see the earlier occurrence, so the compaction entry carries them.
     def repeatable_approval_ids(before:)
       entries.first(before).filter_map do |entry|
         id = entry.dig("call", "id") if entry["type"] == "approval_request"
@@ -182,9 +177,7 @@ module Mistri
       queued(window).map(&:first)
     end
 
-    # Index of the oldest queued entry: the furthest a compaction may cut,
-    # because a bounded read starts at the cut and an entry behind it would
-    # never fold.
+    # Index of the oldest queued entry, the furthest a compaction may cut.
     def inbox_floor
       queued(window).first&.last
     end
@@ -231,10 +224,8 @@ module Mistri
 
     private
 
-    # The log from the latest compaction boundary on, which is all a turn
-    # needs. The boundary only moves forward and a stale one just widens the
-    # window, so no process coordinates it: a session's first read is full
-    # and teaches it, and every read after a compaction starts at kept_from.
+    # The log from the latest compaction boundary on, all a turn needs. A stale boundary
+    # only widens the window, so no process coordinates it: the first read is full and teaches it.
     def window
       # The offset is the boundary this read starts from; the read itself may move it.
       from = @boundary
