@@ -138,7 +138,8 @@ module Mistri
 
         summary = reply.text.strip
         session.append("compaction", "summary" => summary, "model" => reply.model,
-                                     "kept_from" => cut, "tokens_before" => tokens_before)
+                                     "kept_from" => cut, "tokens_before" => tokens_before,
+                                     "approval_ids" => session.repeatable_approval_ids(before: cut))
         finish(session, reply, summary, usage, tokens_before, &emit)
       end
 

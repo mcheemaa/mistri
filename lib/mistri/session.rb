@@ -128,6 +128,18 @@ module Mistri
       end
     end
 
+    # Legacy call_N ids that reached approval before an index. Only that
+    # shape may repeat, and a bounded read starts past the earlier
+    # occurrence, so the compaction entry carries these to keep a later
+    # approval on the same id apart from a delayed decision meant for the
+    # earlier one.
+    def repeatable_approval_ids(before:)
+      entries.first(before).filter_map do |entry|
+        id = entry.dig("call", "id") if entry["type"] == "approval_request"
+        id if id && LEGACY_CALL_ID.match?(id)
+      end.uniq
+    end
+
     # The inbox: entry types queued for the loop's next turn boundary, each
     # mapped to the marker key its fold leaves on the consuming message
     # entry.
@@ -637,7 +649,8 @@ module Mistri
         message = replay_message(entry, before_compaction: compacted_at && index < compacted_at)
         [message, index] if message
       end
-      pairs = heal(pairs, replay_call_states(log, from:))
+      approval_ids = compaction ? compaction.fetch("approval_ids", []) : []
+      pairs = heal(pairs, replay_call_states(log, from:, approval_ids:))
       compaction ? [[summary_message(compaction["summary"]), nil], *pairs] : pairs
     end
 
@@ -659,8 +672,10 @@ module Mistri
     # Replay only needs occurrence pairing, not the authorization audit. Keep
     # it tolerant enough to render a rejected history while still ensuring a
     # reused call_N cannot borrow an earlier result or approval.
-    def replay_call_states(log, from:)
-      replay = { active: {}, seen: Set.new, approval_ids: Set.new, states: [], from: }
+    def replay_call_states(log, from:, approval_ids:)
+      # A carried id is an earlier occurrence, so a later one on it is a reuse.
+      replay = { active: {}, seen: Set.new(approval_ids), approval_ids: Set.new(approval_ids),
+                 states: [], from: }
       log.each_with_index do |entry, index|
         if entry["type"] == "message"
           track_replay_message(entry, index, replay)

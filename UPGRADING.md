@@ -399,6 +399,10 @@ accept the keyword and return the entries at or after that zero-based index, in
 append order. Dropping the prefix after a full read is correct; filtering at the
 source is the point.
 
+A compaction written before this release carries no `approval_ids`, so a legacy
+`call_N` approval reused across such a boundary is not read as ambiguous until
+the session compacts again.
+
 ### MySQL and Trilogy payload width
 
 The generated Active Record session table now uses LONGTEXT for `payload`. An

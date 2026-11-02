@@ -137,6 +137,38 @@ class TestLegacyToolCallIdentity < Minitest::Test
     assert_predicate agent.run("continue"), :completed?
   end
 
+  def test_a_compaction_records_the_legacy_ids_that_reached_approval_before_its_cut
+    session = new_session
+    session.append_message(Mistri::Message.user("start"))
+    append_settled_approval(session, "call_1")
+    append_settled_approval(session, "toolu_1", provider: :anthropic)
+    session.append_message(Mistri::Message.user("later"))
+    session.append_message(Mistri::Message.user("latest"))
+    provider = Mistri::Providers::Fake.new(turns: [{ text: "1. Goal and requests\nGo on.\n" }])
+    settings = Mistri::Compaction.new(window: 600, reserve: 550, keep_recent: 1)
+
+    Mistri::Compactor.call(session:, provider:, settings:)
+
+    assert_equal ["call_1"], session.last_compaction.fetch("approval_ids")
+  end
+
+  def test_a_bounded_replay_still_interrupts_an_ambiguous_approval_after_compaction
+    session = new_session
+    session.append_message(Mistri::Message.user("start"))
+    append_settled_approval(session, "call_1")
+    session.append_message(Mistri::Message.user("later"))
+    session.append("compaction", "summary" => "s", "kept_from" => 5, "approval_ids" => ["call_1"])
+    second = append_legacy_call(session, "call_1")
+    session.append("approval_request", "call" => second.to_h)
+    session.append("approval_decision", "call_id" => second.id, "approved" => true)
+    full = session.messages
+
+    bounded = session.messages
+
+    assert_equal Mistri::Session::INTERRUPTED_RESULT, full.select(&:tool?).last.text
+    assert_equal full.map(&:to_h), bounded.map(&:to_h)
+  end
+
   def test_same_turn_duplicate_ids_still_fail_closed
     session = new_session
     calls = Array.new(2) { Mistri::ToolCall.new(id: "call_1", name: "write", arguments: {}) }
@@ -172,6 +204,13 @@ class TestLegacyToolCallIdentity < Minitest::Test
                                                      provider:))
     append_result(session, call, result)
     call
+  end
+
+  def append_settled_approval(session, id, provider: :gemini)
+    call = append_legacy_call(session, id, provider:)
+    session.append("approval_request", "call" => call.to_h)
+    session.append("approval_decision", "call_id" => call.id, "approved" => true)
+    append_result(session, call, "done")
   end
 
   def append_legacy_call(session, id, provider: :gemini)
