@@ -239,6 +239,7 @@ module Mistri
     # window, so no process coordinates it: a session's first read is full
     # and teaches it, and every read after a compaction starts at kept_from.
     def window
+      # The offset is the boundary this read starts from; the read itself may move it.
       from = @boundary
       Window.new(note_boundary(@store.load(@id, from:)), from)
     end
