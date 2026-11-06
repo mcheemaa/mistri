@@ -9,6 +9,9 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   record is sensitive data. Existing files keep their mode. A partial last
   line left by a crash mid-write no longer stops the session from loading,
   and the next append starts on a fresh line instead of merging with it.
+- The JSONL store rejects a session id outside `[A-Za-z0-9_-]{1,64}` with
+  `ArgumentError`. It used to rewrite such ids, so `a/b` and `a-b` shared one
+  file. Default ids are UUIDs and unaffected.
 - Compaction summaries are handoffs in seven fixed sections: the requests
   that shaped the work in the user's words, constraints, exact facts and
   references, decisions, progress, open failures, and current work with the
