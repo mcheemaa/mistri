@@ -6,9 +6,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 ## [Unreleased]
 
 - Stdio MCP servers no longer inherit the host environment. The child gets
-  only `PATH`, `HOME`, and the client's `env:`, so provider keys and other host
-  secrets never reach it. Pass any other variable a server needs, such as a
-  proxy setting, through `env:`.
+  only `PATH`, `HOME`, the CA bundle paths (`SSL_CERT_FILE`, `SSL_CERT_DIR`,
+  `NODE_EXTRA_CA_CERTS`), and the client's `env:`, so provider keys and other
+  host secrets never reach it. Pass any other variable a server needs, such as
+  a proxy setting, through `env:`.
 - Compaction summaries are handoffs in seven fixed sections: the requests
   that shaped the work in the user's words, constraints, exact facts and
   references, decisions, progress, open failures, and current work with the

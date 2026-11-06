@@ -103,12 +103,13 @@ module Mistri
 
       # Stdio: a spawned child process, one JSON-RPC message per line, with
       # credentials in its environment, as the spec prescribes for local
-      # servers. Third-party code gets only env: plus PATH and HOME, never the
-      # host's secrets. Its stderr stays attached for honest local debugging.
+      # servers. Third-party code gets only env:, PATH, HOME, and the CA bundle
+      # paths, never the host's secrets. Its stderr stays attached for honest
+      # local debugging.
       class Stdio
         READ_SIZE = 16 * 1024
         BLANK_RECORD = /\A[[:space:]]*\z/
-        INHERITED_ENV = %w[PATH HOME].freeze
+        INHERITED_ENV = %w[PATH HOME SSL_CERT_FILE SSL_CERT_DIR NODE_EXTRA_CA_CERTS].freeze
         private_constant :READ_SIZE, :BLANK_RECORD, :INHERITED_ENV
 
         def initialize(command:, env: {}, read_timeout: 120,
