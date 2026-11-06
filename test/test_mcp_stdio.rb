@@ -66,6 +66,7 @@ class TestMcpStdio < Minitest::Test
                                              "properties" => { "text" => { "type" => "string" } } } }] }
         when "tools/call"
           text = "echo: #{message.dig('params', 'arguments', 'text')} #{ENV['STUB_FLAVOR']}".strip
+          text = ENV.keys.sort.join(" ") if ENV["STUB_LIST_ENV"]
           { "content" => [{ "type" => "text", "text" => text }] }
         else {}
         end
@@ -89,6 +90,18 @@ class TestMcpStdio < Minitest::Test
     assert_equal "echo: hello spiced", result.dig("content", 0, "text"),
                  "arguments flowed out and env credentials flowed in"
   ensure
+    stdio.close
+  end
+
+  def test_the_child_environment_is_env_plus_path_and_home_only
+    ENV["STUB_FLAVOR"] = "from-parent"
+    stdio = client(env: { "STUB_LIST_ENV" => "1" })
+
+    keys = stdio.call_tool("echo", {}).dig("content", 0, "text").split
+
+    assert_equal %w[HOME PATH STUB_LIST_ENV], keys & %w[HOME PATH STUB_FLAVOR STUB_LIST_ENV]
+  ensure
+    ENV.delete("STUB_FLAVOR")
     stdio.close
   end
 
