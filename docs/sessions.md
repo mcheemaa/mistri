@@ -61,10 +61,11 @@ Built-in stores are:
 - `Mistri::Stores::JSONL` for one file per session;
 - `Mistri::Stores::ActiveRecord` for a host model and database.
 
-JSONL closes each append, so completed lines survive an ordinary process
-restart. It does not call `fsync`, provide a database transaction, or promise
-power-loss durability. Use a database or host store when that distinction
-matters.
+JSONL creates each file with mode 0600 and closes each append, so completed
+lines survive an ordinary process restart. A partial last line left by a crash
+mid-write is skipped on load and the next append starts on a fresh line. It
+does not call `fsync`, provide a database transaction, or promise power-loss
+durability. Use a database or host store when that distinction matters.
 
 ### Active Record
 

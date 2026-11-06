@@ -67,6 +67,34 @@ class TestStores < Minitest::Test
                  store.load("s")
   end
 
+  def test_jsonl_creates_session_files_readable_only_by_the_owner
+    Dir.mktmpdir do |dir|
+      Mistri::Stores::JSONL.new(dir).append("s", { "n" => 1 })
+
+      assert_equal 0o600, File.stat(File.join(dir, "s.jsonl")).mode & 0o777
+    end
+  end
+
+  def test_jsonl_load_drops_a_partial_last_line
+    Dir.mktmpdir do |dir|
+      store = Mistri::Stores::JSONL.new(dir)
+      store.append("s", { "n" => 1 })
+      File.write(File.join(dir, "s.jsonl"), '{"n":2,"cut', mode: "a")
+
+      assert_equal [{ "n" => 1 }], store.load("s")
+    end
+  end
+
+  def test_jsonl_append_starts_a_fresh_line_after_a_partial_last_line
+    Dir.mktmpdir do |dir|
+      store = Mistri::Stores::JSONL.new(dir)
+      File.write(File.join(dir, "s.jsonl"), '{"n":1,"cut')
+      store.append("s", { "n" => 2 })
+
+      assert_equal [{ "n" => 2 }], store.load("s")
+    end
+  end
+
   private
 
   def each_store

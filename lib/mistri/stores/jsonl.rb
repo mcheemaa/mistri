@@ -14,9 +14,14 @@ module Mistri
       end
 
       # One write call per line: concurrent appenders (a steer, a child's
-      # report) interleave whole lines, never fragments.
+      # report) interleave whole lines, never fragments. A fragment left by a
+      # crash mid-write gets its own newline so it never swallows this entry.
       def append(id, entry)
-        File.write(path(id), "#{JSON.generate(entry)}\n", mode: "a")
+        File.open(path(id), "a+", 0o600) do |file|
+          line = "#{JSON.generate(entry)}\n"
+          line = "\n#{line}" if file.size.positive? && file.pread(1, file.size - 1) != "\n"
+          file.write(line)
+        end
         nil
       end
 
@@ -25,6 +30,8 @@ module Mistri
 
         File.readlines(path(id)).filter_map do |line|
           JSON.parse(line) unless line.strip.empty?
+        rescue JSON::ParserError
+          nil
         end
       end
 

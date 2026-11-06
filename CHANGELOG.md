@@ -5,6 +5,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+- The JSONL store creates session files with mode 0600, since a session
+  record is sensitive data. Existing files keep their mode. A partial last
+  line left by a crash mid-write no longer stops the session from loading,
+  and the next append starts on a fresh line instead of merging with it.
 - Compaction summaries are handoffs in seven fixed sections: the requests
   that shaped the work in the user's words, constraints, exact facts and
   references, decisions, progress, open failures, and current work with the
