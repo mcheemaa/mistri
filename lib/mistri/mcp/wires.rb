@@ -103,9 +103,8 @@ module Mistri
 
       # Stdio: a spawned child process, one JSON-RPC message per line, with
       # credentials in its environment, as the spec prescribes for local
-      # servers. Third-party code gets only env:, PATH, HOME, and the CA bundle
-      # paths, never the host's secrets. Its stderr stays attached for honest
-      # local debugging.
+      # servers. It is third-party code, so the host's secrets never reach it.
+      # Its stderr stays attached for honest local debugging.
       class Stdio
         READ_SIZE = 16 * 1024
         BLANK_RECORD = /\A[[:space:]]*\z/
