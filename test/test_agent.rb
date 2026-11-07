@@ -212,15 +212,10 @@ class TestAgent < Minitest::Test
     ping = Mistri::Tool.define("ping", "Ping.") { "pong" }
 
     assert_raises(ArgumentError) { Mistri::Agent.new(provider:).run("") }
+    assert_raises(ArgumentError) { Mistri::Agent.new(provider:).run(" \n\t") }
     assert_raises(Mistri::ConfigurationError) do
       Mistri::Agent.new(provider:, tools: [ping, ping])
     end
-  end
-
-  def test_blank_input_is_rejected_like_empty_input
-    provider = Mistri::Providers::Fake.new
-
-    assert_raises(ArgumentError) { Mistri::Agent.new(provider:).run(" \n\t") }
   end
 
   def test_blank_input_beside_an_image_appends_no_text_block
