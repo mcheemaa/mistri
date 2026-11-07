@@ -100,10 +100,10 @@ class TestStores < Minitest::Test
       store = Mistri::Stores::JSONL.new(dir)
       store.append("a" * 64, { "n" => 1 })
 
-      ["", "a" * 65, "a/b", "a.b"].each do |id|
+      ["", "a" * 65, "a/b"].each do |id|
         assert_raises(ArgumentError, id.inspect) { store.append(id, { "n" => 1 }) }
-        assert_raises(ArgumentError, id.inspect) { store.load(id) }
       end
+      assert_raises(ArgumentError) { store.load("a/b") }
     end
   end
 

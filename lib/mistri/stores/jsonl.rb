@@ -17,8 +17,8 @@ module Mistri
       end
 
       # One write call per line: concurrent appenders (a steer, a child's
-      # report) interleave whole lines, never fragments. A fragment left by a
-      # crash mid-write gets its own newline so it never swallows this entry.
+      # report) interleave whole lines, never fragments. A crash's partial last
+      # line gets a newline first so it cannot swallow this entry.
       def append(id, entry)
         File.open(path(id), "a+", 0o600) do |file|
           line = "#{JSON.generate(entry)}\n"
@@ -28,11 +28,12 @@ module Mistri
         nil
       end
 
+      # A partial line from a crash mid-write must not block every later load.
       def load(id)
         return [] unless File.exist?(path(id))
 
         File.readlines(path(id)).filter_map do |line|
-          JSON.parse(line) unless line.strip.empty?
+          JSON.parse(line)
         rescue JSON::ParserError
           nil
         end
@@ -40,12 +41,10 @@ module Mistri
 
       private
 
-      # Session ids become filenames. Rewriting a hostile id would alias two
-      # sessions onto one file, so it is rejected instead.
+      # Session ids become filenames; a sanitized id would alias two sessions
+      # onto one file.
       def path(id)
-        unless SAFE_ID.match?(id.to_s)
-          raise ArgumentError, "session id #{id.inspect} is not a safe filename"
-        end
+        raise ArgumentError, "unsafe session id #{id.inspect}" unless SAFE_ID.match?(id)
 
         File.join(@dir, "#{id}.jsonl")
       end
