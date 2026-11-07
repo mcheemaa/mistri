@@ -5,6 +5,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+- `Agent#run` treats white-space-only input as empty: it raises `ArgumentError`
+  without images and appends no text block beside them. A blank text block
+  stayed in the session, and providers that reject it rejected every later
+  turn.
 - Compaction summaries are handoffs in seven fixed sections: the requests
   that shaped the work in the user's words, constraints, exact facts and
   references, decisions, progress, open failures, and current work with the

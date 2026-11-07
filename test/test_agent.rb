@@ -217,6 +217,22 @@ class TestAgent < Minitest::Test
     end
   end
 
+  def test_blank_input_is_rejected_like_empty_input
+    provider = Mistri::Providers::Fake.new
+
+    assert_raises(ArgumentError) { Mistri::Agent.new(provider:).run(" \n\t") }
+  end
+
+  def test_blank_input_beside_an_image_appends_no_text_block
+    provider = Mistri::Providers::Fake.new(turns: [{ text: "seen" }])
+    image = Mistri::Content::Image.new(data: "e30=", mime_type: "image/png")
+    agent = Mistri::Agent.new(provider:)
+
+    agent.run("  ", images: [image])
+
+    assert_equal [image], agent.session.messages.first.content
+  end
+
   def test_events_stream_through_to_the_caller
     provider = Mistri::Providers::Fake.new(turns: [{ text: "hello there" }])
     types = []
