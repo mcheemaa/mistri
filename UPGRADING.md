@@ -29,6 +29,20 @@ A provider built without `model:` now uses `claude-opus-5-5`, `gpt-6.1-sol`, or
 
 - Pass `model:` to keep an earlier model.
 
+### Stdio MCP servers no longer inherit the host environment
+
+A stdio MCP server used to get every variable the host process had, provider
+keys included. It now gets `env:` and a fixed list: identity and `PATH`,
+RubyGems paths, locale and temp files, and CA bundle paths. `docs/mcp.md` names
+each variable.
+
+- Pass a variable the server relied on through `env:`. For example,
+  `env: ENV.slice("HTTPS_PROXY", "NO_PROXY")` forwards the proxy settings.
+- A Ruby server no longer runs inside the host's bundle. Start it with
+  `bundle exec` if it needs the host's gems, and pass Bundler settings the
+  host keeps in its environment, such as `BUNDLE_PATH`, through `env:`.
+- `env: ENV.to_h` passes the whole environment, as before.
+
 ### OpenAI tools are no longer strict
 
 Mistri sends `strict: false` with every OpenAI tool. Before, the model wrote a

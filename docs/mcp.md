@@ -60,13 +60,27 @@ tools = Mistri::MCP.tools(
 )
 ```
 
-`command:` is an argument array, not a shell string. The child starts from an
-empty environment plus `PATH`, `HOME`, `SSL_CERT_FILE`, `SSL_CERT_DIR`, and
-`NODE_EXTRA_CA_CERTS` from the host process, so a runtime can be found, run,
-and trust the network; it does not inherit the host's provider keys or any
-other variable. Pass everything else the server needs, credentials and proxy
-settings included, through `env:`. Mistri writes one JSON-RPC object per line
-and bounds the complete record read, including the time after its first byte.
+`command:` is an argument array, not a shell string. Mistri writes one JSON-RPC
+object per line and bounds the complete record read, including the time after
+its first byte.
+
+The server does not inherit the host's environment, which holds provider keys
+and other secrets. It starts with `env:` and these variables from the host
+process:
+
+| Purpose | Variables |
+| --- | --- |
+| Identity and programs | `HOME`, `USER`, `LOGNAME`, `SHELL`, `PATH`, `TERM` |
+| RubyGems paths | `GEM_HOME`, `GEM_PATH` |
+| Locale, time, and temp files | `LANG`, `LC_ALL`, `LC_CTYPE`, `TZ`, `TMPDIR` |
+| CA bundles | `SSL_CERT_FILE`, `SSL_CERT_DIR`, `NODE_EXTRA_CA_CERTS`, `REQUESTS_CA_BUNDLE`, `CURL_CA_BUNDLE` |
+
+Pass anything else through `env:`. It also overrides the variables above. For
+example, `env: { "API_KEY" => key, **ENV.slice("HTTPS_PROXY", "NO_PROXY") }`
+gives the server a credential and the host's proxy settings.
+
+This is not a sandbox. The server runs as the host's user and can read the
+host's files.
 
 `@latest` is convenient for local exploration. Pin a reviewed package version
 in an application or deployment so the executable does not change without a
