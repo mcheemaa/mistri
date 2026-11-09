@@ -43,6 +43,16 @@ each variable.
   host keeps in its environment, such as `BUNDLE_PATH`, through `env:`.
 - `env: ENV.to_h` passes the whole environment, as before.
 
+### Blank input raises
+
+`Agent#run` and `Session#steer` now raise `ArgumentError` for text that is
+empty or only whitespace. Before, `run` sent whitespace to the provider, and
+`steer` accepted any text.
+
+- Check the text before you call them, or rescue `ArgumentError`. `Child#say`
+  raises the same way.
+- `run` still accepts images with no text. `task` is unchanged.
+
 ### OpenAI tools are no longer strict
 
 Mistri sends `strict: false` with every OpenAI tool. Before, the model wrote a

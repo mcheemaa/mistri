@@ -211,7 +211,8 @@ Mistri::Session.new(store: store, id: session_id).steer(
 
 The active Agent does not need to be shared with the writer. If a steer lands
 while the model finishes cleanly, the run extends for another turn so the new
-instruction is answered.
+instruction is answered. `steer` raises `ArgumentError` for text that is empty
+or only whitespace.
 
 Background child reports use the same ordered inbox. A host that wakes idle
 sessions should watch `session.pending_inbox`, not only

@@ -11,7 +11,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - The JSONL store rejects a session id outside `[A-Za-z0-9_-]{1,64}` with
   `ArgumentError`. It used to rewrite such ids, so `a/b` and `a-b` shared one
   file. Default ids are UUIDs and unaffected.
-- `Agent#run` and `Session#steer` reject white-space-only text with
+- `Agent#run` and `Session#steer` reject whitespace-only text with
   `ArgumentError`; `run` still accepts images alone. A blank text block, once
   appended, failed every later turn on providers that reject it.
 - Stdio MCP servers no longer inherit the host environment, which holds

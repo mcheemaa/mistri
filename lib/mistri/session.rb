@@ -113,7 +113,6 @@ module Mistri
     # model sees them mid-run; one that arrives as the model finishes cleanly
     # extends the run another turn so it is answered, not left dangling.
     def steer(text)
-      # A blank text block, once appended, fails every later replay on providers that reject it.
       raise ArgumentError, "steer needs text" if text.to_s.match?(/\A[[:space:]]*\z/)
 
       append("steer", "id" => SecureRandom.uuid, "message" => Message.user(text).to_h)
