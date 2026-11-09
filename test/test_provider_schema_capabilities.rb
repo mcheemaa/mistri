@@ -142,10 +142,10 @@ class TestProviderSchemaCapabilities < Minitest::Test
       gemini: PROVIDERS.fetch(:gemini).call
     }
 
-    openai = providers[:openai].send(:build_body, "gpt-5.6", history, nil, [],
+    openai = providers[:openai].send(:build_body, "gpt-6.1-sol", history, nil, [],
                                      output_schema: nil)
     anthropic = providers[:anthropic].send(
-      :build_body, "claude-haiku-4-5-20251001", history, nil, [], output_schema: nil
+      :build_body, "claude-haiku-5-5", history, nil, [], output_schema: nil
     )
     gemini = providers[:gemini].send(:build_body, history, nil, [], output_schema: nil)
 

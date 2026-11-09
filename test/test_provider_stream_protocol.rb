@@ -248,19 +248,19 @@ class TestProviderStreamProtocol < Minitest::Test
   end
 
   def drive_openai(events, records)
-    assembler = Mistri::Providers::OpenAI::Assembler.new(model: "gpt-5.5")
+    assembler = Mistri::Providers::OpenAI::Assembler.new(model: "gpt-6.1-sol")
     records.each { |record| assembler.feed(record) { |event| events << event } }
     assembler.finish { |event| events << event }
   end
 
   def drive_anthropic(events, records)
-    assembler = Mistri::Providers::Anthropic::Assembler.new(model: "claude-opus-4-8")
+    assembler = Mistri::Providers::Anthropic::Assembler.new(model: "claude-opus-5-5")
     records.each { |record| assembler.feed(record) { |event| events << event } }
     assembler.finish { |event| events << event }
   end
 
   def drive_gemini(events, records)
-    assembler = Mistri::Providers::Gemini::Assembler.new(model: "gemini-2.5-flash")
+    assembler = Mistri::Providers::Gemini::Assembler.new(model: "gemini-3.8-flash")
     records.each { |record| assembler.feed(record) { |event| events << event } }
     assembler.finish { |event| events << event }
   end

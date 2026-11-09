@@ -128,12 +128,21 @@ module Mistri
 
     # The provider-facing definition; every serializer accepts this shape.
     def spec
-      definition = { name: @name, description: @description, input_schema: @input_schema }
+      definition = { name: @name, description: reviewed_description, input_schema: @input_schema }
       definition[:eager_input_streaming] = true if @eager_input_streaming
       definition
     end
 
     private
+
+    # A model that cannot see the gate asks the user in text before calling,
+    # and the run never reaches the approval.
+    def reviewed_description
+      return @description unless @needs_approval
+
+      review = @needs_approval.respond_to?(:call) ? "may review a call" : "reviews each call"
+      "#{@description} A person #{review} before it runs.".lstrip
+    end
 
     def prepared_context?(context)
       context.respond_to?(:arguments_prepared?) && context.arguments_prepared?

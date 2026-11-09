@@ -307,6 +307,21 @@ class TestTool < Minitest::Test # rubocop:disable Metrics/ClassLength -- one pub
                    "additionalProperties" => false }, tool.spec[:input_schema])
   end
 
+  def test_a_gated_tool_tells_the_model_a_person_reviews_the_call
+    descriptions = [false, true, ->(args) { args["amount"].to_i > 100 }].map do |gate|
+      tool = Mistri::Tool.define("refund", "Refunds an order.", needs_approval: gate) { "ok" }
+
+      assert_equal "Refunds an order.", tool.description
+      tool.spec[:description]
+    end
+
+    assert_equal ["Refunds an order.",
+                  "Refunds an order. A person reviews each call before it runs.",
+                  "Refunds an order. A person may review a call before it runs."], descriptions
+    assert_equal "A person reviews each call before it runs.",
+                 Mistri::Tool.define("refund", "", needs_approval: true) { "ok" }.spec[:description]
+  end
+
   def test_eager_streaming_shows_up_in_the_spec
     tool = Mistri::Tool.define("write", "Writes.", eager_input_streaming: true) { "ok" }
 

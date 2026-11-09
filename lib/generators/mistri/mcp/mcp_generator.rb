@@ -45,7 +45,7 @@ module Mistri
 
           Then hand its tools to an agent:
 
-            agent = Mistri.agent("claude-opus-4-8", tools: connection.tools(prefix: "linear"))
+            agent = Mistri.agent("claude-opus-5-5", tools: connection.tools(prefix: "linear"))
 
           Tokens are encrypted; run bin/rails db:encryption:init if you have
           not set up Active Record encryption.

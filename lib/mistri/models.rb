@@ -98,6 +98,16 @@ module Mistri
     private_class_method :price
 
     CATALOG = [
+      ["claude-fable-5-2", :anthropic, 128_000, 1_000_000, :adaptive,
+       [price(input: 8.0, output: 40.0, cache_read: 0.2, cache_write: 10.0)]],
+      ["claude-opus-5-5", :anthropic, 128_000, 1_000_000, :adaptive,
+       [price(input: 4.0, output: 20.0, cache_read: 0.2, cache_write: 5.0)]],
+      ["claude-sonnet-5-5", :anthropic, 128_000, 1_000_000, :adaptive,
+       [price(input: 2.0, output: 10.0, cache_read: 0.1, cache_write: 2.5)]],
+      ["claude-haiku-5-5", :anthropic, 128_000, 1_000_000, :adaptive,
+       [price({ input: 0.1, output: 0.5, cache_read: 0.01, cache_write: 0.125 },
+              above: 100_000,
+              higher: { input: 0.5, output: 2.5, cache_read: 0.05, cache_write: 0.625 })]],
       ["claude-fable-5-1", :anthropic, 128_000, 1_000_000, :adaptive,
        [price(input: 10.0, output: 50.0, cache_read: 0.25, cache_write: 12.5)]],
       ["claude-fable-5", :anthropic, 128_000, 1_000_000, :adaptive,
@@ -111,9 +121,7 @@ module Mistri
       ["claude-opus-4-6", :anthropic, 128_000, 1_000_000, :adaptive,
        [price(input: 5.0, output: 25.0, cache_read: 0.5, cache_write: 6.25)]],
       ["claude-sonnet-5", :anthropic, 128_000, 1_000_000, :adaptive,
-       [price(input: 2.0, output: 10.0, cache_read: 0.2, cache_write: 2.5),
-        price({ input: 3.0, output: 15.0, cache_read: 0.3, cache_write: 3.75 },
-              from: Time.utc(2026, 9, 1))]],
+       [price(input: 2.0, output: 10.0, cache_read: 0.2, cache_write: 2.5)]],
       ["claude-sonnet-4-6", :anthropic, 128_000, 1_000_000, :adaptive,
        [price(input: 3.0, output: 15.0, cache_read: 0.3, cache_write: 3.75)]],
       ["claude-haiku-4-5", :anthropic, 64_000, 200_000, :budget,
@@ -123,6 +131,18 @@ module Mistri
               above: 272_000,
               higher: { input: 20.0, output: 75.0, cache_read: 2.0,
                         cache_write: 25.0 })]],
+      ["gpt-6.1-sol", :openai, 128_000, 1_050_000, :effort,
+       [price({ input: 2.0, output: 10.0, cache_read: 0.1, cache_write: 2.5 },
+              above: 272_000,
+              higher: { input: 4.0, output: 15.0, cache_read: 0.2, cache_write: 5.0 })]],
+      ["gpt-6.1-terra", :openai, 128_000, 1_050_000, :effort,
+       [price({ input: 1.0, output: 5.0, cache_read: 0.05, cache_write: 1.25 },
+              above: 272_000,
+              higher: { input: 2.0, output: 7.5, cache_read: 0.1, cache_write: 2.5 })]],
+      ["gpt-6-luna", :openai, 128_000, 1_050_000, :effort,
+       [price({ input: 0.1, output: 0.5, cache_read: 0.01, cache_write: 0.125 },
+              above: 272_000,
+              higher: { input: 0.2, output: 0.75, cache_read: 0.02, cache_write: 0.25 })]],
       ["gpt-5.6-sol", :openai, 128_000, 1_050_000, :effort,
        [price({ input: 5.0, output: 30.0, cache_read: 0.5, cache_write: 6.25 },
               above: 272_000,
@@ -151,17 +171,19 @@ module Mistri
       ["gemini-3.1-pro-preview", :gemini, 65_536, 1_048_576, :level,
        [price({ input: 2.0, output: 12.0, cache_read: 0.2 },
               above: 200_000, higher: { input: 4.0, output: 18.0, cache_read: 0.4 })]],
-      ["gemini-2.5-pro", :gemini, 65_536, 1_048_576, :budget,
-       [price({ input: 1.25, output: 10.0, cache_read: 0.125 },
-              above: 200_000, higher: { input: 2.5, output: 15.0, cache_read: 0.25 })]],
-      ["gemini-2.5-flash", :gemini, 65_536, 1_048_576, :budget,
-       [price(input: 0.3, output: 2.5, cache_read: 0.03)]]
+      ["gemini-3.8-flash", :gemini, 65_536, 1_048_576, :level,
+       [price(input: 0.75, output: 3.75, cache_read: 0.075),
+        price({ input: 1.5, output: 7.5, cache_read: 0.15 },
+              from: Time.utc(2027, 1, 1))]]
     ].to_h do |row|
       id, provider, max_output, context_window, thinking, pricing = row
       [id, Model.new(id:, provider:, max_output:, context_window:, thinking:, pricing:)]
     end.freeze
 
     ALIASES = { "gpt-5.6" => "gpt-5.6-sol" }.freeze
+    TURN_BOUND_THINKING = %w[claude-fable-5 claude-opus-5 claude-opus-4-8 claude-opus-4-7
+                             claude-opus-4-6 claude-sonnet-5 claude-sonnet-4-6
+                             claude-haiku-4-5].freeze
 
     # Published family aliases and dated ids resolve to their canonical entry.
     def self.find(id)
@@ -183,8 +205,13 @@ module Mistri
 
     def self.thinking(id) = find(id)&.thinking
 
-    # These signatures bind to the preceding conversation, not just their turn.
-    def self.prefix_bound_thinking?(id) = find(id)&.id == "claude-fable-5-1"
+    # Anthropic signatures bind to the preceding conversation, not just their
+    # turn, on every model released after the turn-bound ones. An id the
+    # catalog does not know is newer, so it counts as bound.
+    def self.prefix_bound_thinking?(id)
+      model = find(id)
+      model.nil? || (model.provider == :anthropic && !TURN_BOUND_THINKING.include?(model.id))
+    end
 
     def self.rates(id, usage: nil, at: Time.now) = find(id)&.rates(usage:, at:)
 

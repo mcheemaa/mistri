@@ -44,10 +44,9 @@ class TestCompaction < Minitest::Test
 
   def test_automatic_headroom_covers_full_output_and_framing_slack
     compaction = Mistri::Compaction.new
-    boundaries = [["claude-opus-4-8", 867_904],
+    boundaries = [["claude-opus-5-5", 867_904],
                   ["claude-haiku-4-5", 131_904],
-                  ["gpt-5.6", 917_904],
-                  ["gpt-5.5", 917_904],
+                  ["gpt-6.1-sol", 917_904],
                   ["gpt-5-nano", 267_904],
                   ["gemini-3.1-pro-preview", 1_032_192]]
 

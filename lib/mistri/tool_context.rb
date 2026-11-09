@@ -13,7 +13,7 @@ module Mistri
   # acting user, a tenant, a request), untouched. The gem provides the
   # slot, never the vocabulary:
   #
-  #   agent = Mistri.agent("claude-opus-4-8", tools: tools,
+  #   agent = Mistri.agent("claude-opus-5-5", tools: tools,
   #                        context: { traveler: current_traveler })
   #   Mistri::Tool.define("book_hotel", "Books the chosen hotel.", schema: -> {
   #     string :hotel_id, "Hotel ID", required: true

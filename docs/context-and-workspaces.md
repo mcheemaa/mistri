@@ -34,7 +34,7 @@ files:
 skills = Mistri::Skills.load("app/agent_skills")
 
 agent = Mistri.agent(
-  "claude-opus-4-8",
+  "claude-opus-5-5",
   skills: skills,
   tools: application_tools,
 )
@@ -62,6 +62,11 @@ Skill bodies are instructions, not a security boundary. Load only host-reviewed
 files, keep descriptions specific enough for correct selection, and let tool
 authorization enforce what the model may actually do.
 
+The model receives a Skill body as the result of `read_skill`. Gemini treats
+instructions inside a tool result as untrusted, so Mistri also puts a loaded
+Skill in Gemini's system instruction. An unknown Skill name is a failed tool
+result.
+
 ## Definitions
 
 A Definition keeps an Agent's editable prompt and host vocabulary in one
@@ -70,7 +75,7 @@ Markdown file:
 ```markdown
 ---
 role: Trip planner
-model: claude-opus-4-8
+model: claude-opus-5-5
 tools:
   - search_flights
   - book_hotel
@@ -106,7 +111,7 @@ Pass acting identity and request-scoped services through `context:`:
 
 ```ruby
 agent = Mistri.agent(
-  "claude-opus-4-8",
+  "claude-opus-5-5",
   tools: tools,
   context: { actor: current_user, tenant: current_tenant },
   before_tool: lambda { |call, tool_context|
@@ -139,10 +144,10 @@ This seam supports host redaction, retrieval, and deliberate windowing, but it
 is low-level. Preserve message order and every tool-call/result pair. A
 provider will reject a history whose correlation facts were removed.
 
-Fable 5.1 also binds thinking to the preceding prefix. A transform that changes
-between turns, including the periodic reminder below, can invalidate retained
-thinking. See [provider constraints](reliability.md#gpt-6-astra-and-fable-51)
-before using these transforms with it.
+Current Claude models sign thinking against the preceding prefix. A transform
+that changes between turns, including the periodic reminder below, makes the
+API drop earlier thinking. The run continues and the model reasons again. See
+[Thinking is signed against the prefix](reliability.md#thinking-is-signed-against-the-prefix).
 
 For periodic instruction reinforcement, use the built-in Reminder:
 
@@ -153,7 +158,7 @@ reminder = Mistri::Reminder.every(
 )
 
 agent = Mistri.agent(
-  "claude-opus-4-8",
+  "claude-opus-5-5",
   tools: tools,
   transform_context: reminder,
 )
@@ -219,7 +224,7 @@ workspace = Mistri::Workspace::Memory.new
 workspace.write("brief.md", "# Launch brief\n")
 
 agent = Mistri.agent(
-  "claude-opus-4-8",
+  "claude-opus-5-5",
   tools: Mistri::Tools.files(workspace),
   system: "Read before editing. Keep the brief concise.",
 )
@@ -344,7 +349,7 @@ memory = Mistri::Memory.new(
 )
 
 agent = Mistri.agent(
-  "claude-opus-4-8",
+  "claude-opus-5-5",
   tools: Mistri::Tools.memory(memory),
 )
 ```

@@ -10,7 +10,7 @@ module Mistri
   #
   #   client = Mistri::MCP::Client.new(url: "https://mcp.linear.app/mcp",
   #                                    token: -> { connection.fresh_token })
-  #   agent = Mistri.agent("claude-opus-4-8",
+  #   agent = Mistri.agent("claude-opus-5-5",
   #                        tools: Mistri::MCP.tools(client, prefix: "linear"))
   #
   # The bridge is duck-typed: any client responding to tools (an array of

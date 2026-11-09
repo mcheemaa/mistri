@@ -38,7 +38,7 @@ module Mistri
           end
 
           case type
-          when "message_start" then message_start(record)
+          when "message_start" then message_start(record, &)
           when "content_block_start" then start_block(record, &)
           when "content_block_delta" then delta_block(record, &)
           when "content_block_stop" then stop_block(record, &)
@@ -133,10 +133,20 @@ module Mistri
 
         private
 
-        def message_start(record)
+        def message_start(record, &)
           raw = record.dig("message", "usage")
           @service_tier = raw&.fetch("service_tier", nil)
           @usage = priced(parse_usage(raw))
+          report_dropped_thinking(record.dig("message", "input_transformations"), &)
+        end
+
+        def report_dropped_thinking(transformations, &)
+          reasons = Array(transformations).filter_map do |entry|
+            entry["reason"] if entry.is_a?(Hash) && entry["type"] == "thinking_dropped"
+          end
+          return if reasons.empty?
+
+          emit_event(:thinking_dropped, content: reasons.uniq.join(", "), &)
         end
 
         def start_block(record, &)

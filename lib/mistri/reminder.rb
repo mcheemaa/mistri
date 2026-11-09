@@ -7,7 +7,7 @@ module Mistri
   # transform_context, so it appears fresh on the wire each time it is due
   # and never persists to the session.
   #
-  #   agent = Mistri.agent("claude-opus-4-8", tools: tools,
+  #   agent = Mistri.agent("claude-opus-5-5", tools: tools,
   #                        transform_context: Mistri::Reminder.every(
   #                          3, "Stay on gifting. Verify with tools before claiming.",
   #                        ))

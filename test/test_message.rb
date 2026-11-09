@@ -23,7 +23,7 @@ class TestMessage < Minitest::Test
 
   def test_assistant_metadata_survives_a_json_round_trip
     message = Mistri::Message.assistant(
-      content: "done", model: "claude-opus-4-8", provider: :anthropic,
+      content: "done", model: "claude-opus-5-5", provider: :anthropic,
       usage: Mistri::Usage.new(input: 10, output: 5), stop_reason: :stop
     )
 

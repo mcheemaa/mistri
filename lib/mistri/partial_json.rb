@@ -166,8 +166,8 @@ module Mistri
         Integer(token)
       rescue ArgumentError
         begin
-          finite(Float(token))
-        rescue ArgumentError
+          finite(JSON.parse(token))
+        rescue JSON::ParserError
           trimmed_number(token)
         end
       end
@@ -178,15 +178,15 @@ module Mistri
         trimmed = token.sub(/[eE][+-]?\z/, "").sub(/\.\z/, "")
         return NOTHING if trimmed.empty? || trimmed == "-"
 
-        finite(Float(trimmed))
-      rescue ArgumentError
+        finite(JSON.parse(trimmed))
+      rescue JSON::ParserError
         NOTHING
       end
 
       # A model that emits 1e999 yields Float::INFINITY, which JSON cannot
       # generate, so it would crash replay and persistence. Drop it.
       def finite(number)
-        number.finite? ? number : NOTHING
+        number.is_a?(Numeric) && number.finite? ? number : NOTHING
       end
 
       def decode(json_string)

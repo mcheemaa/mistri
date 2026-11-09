@@ -190,4 +190,37 @@ class TestGeminiSerializer < Minitest::Test
            "the tool turn carries only functionResponse parts")
     assert_equal [{ text: "make it blue" }], contents.last[:parts]
   end
+
+  def test_a_loaded_skill_joins_the_system_instruction
+    history = [Mistri::Message.user("write copy"), *skill_read("a", "End with the sponsor name."),
+               *skill_read("b", "End with the sponsor name."),
+               *skill_read("c", 'Unknown skill "nope".', error: true),
+               Mistri::Message.tool(content: "painted", tool_call_id: "d", tool_name: "paint")]
+
+    instruction = SERIALIZER.system_instruction("Write copy.", history)
+    result = SERIALIZER.contents(history)[2].dig(:parts, 0, :functionResponse, :response)
+
+    assert_equal [{ text: "Write copy.\n\n## Loaded skill\n\nEnd with the sponsor name." }],
+                 instruction[:parts]
+    assert_equal({ "result" => "End with the sponsor name." }, result)
+  end
+
+  def test_the_system_instruction_is_unchanged_without_a_loaded_skill
+    history = [Mistri::Message.user("go")]
+
+    assert_equal({ parts: [{ text: "Be brief." }] },
+                 SERIALIZER.system_instruction("Be brief.", history))
+    assert_nil SERIALIZER.system_instruction(nil, history)
+    assert_equal [{ text: "## Loaded skill\n\nBe kind." }],
+                 SERIALIZER.system_instruction(nil, skill_read("a", "Be kind."))[:parts]
+  end
+
+  private
+
+  def skill_read(id, text, error: false)
+    call = Mistri::ToolCall.new(id:, name: "read_skill", arguments: { "name" => "brand-voice" })
+    [Mistri::Message.assistant(content: [call], provider: :gemini),
+     Mistri::Message.tool(content: text, tool_call_id: id, tool_name: "read_skill",
+                          tool_error: error)]
+  end
 end

@@ -81,7 +81,7 @@ class TestAnthropicAssembler < Minitest::Test
   end
 
   def test_fragmented_tool_arguments_release_the_buffer_after_the_aggregate_limit
-    assembler = Mistri::Providers::Anthropic::Assembler.new(model: "claude-opus-4-8")
+    assembler = Mistri::Providers::Anthropic::Assembler.new(model: "claude-opus-5-5")
     deltas = []
     emit = ->(event) { deltas << event.delta if event.type == :toolcall_delta }
     assembler.feed({ "type" => "content_block_start", "index" => 0,
@@ -114,7 +114,7 @@ class TestAnthropicAssembler < Minitest::Test
   end
 
   def test_partial_argument_parsing_has_a_bounded_work_schedule
-    assembler = Mistri::Providers::Anthropic::Assembler.new(model: "claude-opus-4-8")
+    assembler = Mistri::Providers::Anthropic::Assembler.new(model: "claude-opus-5-5")
     assembler.feed({ "type" => "content_block_start", "index" => 0,
                      "content_block" => { "type" => "tool_use", "id" => "bounded-preview",
                                           "name" => "inspect" } })
@@ -215,7 +215,7 @@ class TestAnthropicAssembler < Minitest::Test
   end
 
   def test_fragmented_thinking_signatures_have_an_aggregate_ceiling
-    assembler = Mistri::Providers::Anthropic::Assembler.new(model: "claude-opus-4-8")
+    assembler = Mistri::Providers::Anthropic::Assembler.new(model: "claude-opus-5-5")
     assembler.feed({ "type" => "content_block_start", "index" => 0,
                      "content_block" => { "type" => "thinking" } })
     fragment = "s" * (tool_argument_limit / 2)
@@ -275,7 +275,7 @@ class TestAnthropicAssembler < Minitest::Test
                         "usage" => { "output_tokens" => 500 } },
                       { "type" => "message_stop" }
                     ])
-    rates = Mistri::Models.rates("claude-opus-4-8")
+    rates = Mistri::Models.rates("claude-opus-5-5")
     expected = ((rates[:input] * 1000) + (rates[:cache_read] * 2000) +
                 (rates[:output] * 500)) / 1_000_000.0
 
@@ -293,7 +293,7 @@ class TestAnthropicAssembler < Minitest::Test
   end
 
   def test_usage_is_unknown_without_catalog_pricing_or_wire_usage
-    unpriced = Mistri::Providers::Anthropic::Assembler.new(model: "claude-opus-4-8",
+    unpriced = Mistri::Providers::Anthropic::Assembler.new(model: "claude-opus-5-5",
                                                            catalog_pricing: false)
     unpriced.feed({ "type" => "message_start",
                     "message" => { "usage" => { "input_tokens" => 1000 } } })
@@ -301,14 +301,14 @@ class TestAnthropicAssembler < Minitest::Test
 
     refute_predicate unpriced.finish.usage.cost, :known?
 
-    missing = Mistri::Providers::Anthropic::Assembler.new(model: "claude-opus-4-8")
+    missing = Mistri::Providers::Anthropic::Assembler.new(model: "claude-opus-5-5")
     missing.feed({ "type" => "message_stop" })
 
     refute_predicate missing.finish.usage.cost, :known?
   end
 
   def test_priority_service_tier_usage_is_unknown
-    priority = Mistri::Providers::Anthropic::Assembler.new(model: "claude-opus-4-8")
+    priority = Mistri::Providers::Anthropic::Assembler.new(model: "claude-opus-5-5")
     priority.feed({ "type" => "message_start",
                     "message" => { "usage" => { "input_tokens" => 1000,
                                                 "service_tier" => "priority" } } })
@@ -318,7 +318,7 @@ class TestAnthropicAssembler < Minitest::Test
   end
 
   def test_usage_without_a_reported_service_tier_is_unknown
-    assembler = Mistri::Providers::Anthropic::Assembler.new(model: "claude-opus-4-8")
+    assembler = Mistri::Providers::Anthropic::Assembler.new(model: "claude-opus-5-5")
     assembler.feed({ "type" => "message_start",
                      "message" => { "usage" => { "input_tokens" => 1000 } } })
     assembler.feed({ "type" => "message_stop" })
@@ -327,7 +327,7 @@ class TestAnthropicAssembler < Minitest::Test
   end
 
   def test_a_truncated_stream_keeps_partial_dollars_but_marks_them_unknown
-    assembler = Mistri::Providers::Anthropic::Assembler.new(model: "claude-opus-4-8")
+    assembler = Mistri::Providers::Anthropic::Assembler.new(model: "claude-opus-5-5")
     assembler.feed({ "type" => "message_start",
                      "message" => { "usage" => { "input_tokens" => 1000,
                                                  "service_tier" => "standard" } } })
@@ -340,7 +340,7 @@ class TestAnthropicAssembler < Minitest::Test
   end
 
   def test_message_stop_without_final_output_usage_is_unpriced
-    assembler = Mistri::Providers::Anthropic::Assembler.new(model: "claude-opus-4-8")
+    assembler = Mistri::Providers::Anthropic::Assembler.new(model: "claude-opus-5-5")
     assembler.feed({ "type" => "message_start",
                      "message" => { "usage" => { "input_tokens" => 1000,
                                                  "service_tier" => "standard" } } })
@@ -402,7 +402,7 @@ class TestAnthropicAssembler < Minitest::Test
   end
 
   def test_a_provider_error_folds_with_its_status_and_body
-    assembler = Mistri::Providers::Anthropic::Assembler.new(model: "claude-opus-4-8")
+    assembler = Mistri::Providers::Anthropic::Assembler.new(model: "claude-opus-5-5")
     error = Mistri::ServerError.new(status: 503, body: "upstream connect timeout")
 
     message = assembler.fail_stream(error)
@@ -440,7 +440,7 @@ class TestAnthropicAssembler < Minitest::Test
   end
 
   def drive(events, records)
-    assembler = Mistri::Providers::Anthropic::Assembler.new(model: "claude-opus-4-8")
+    assembler = Mistri::Providers::Anthropic::Assembler.new(model: "claude-opus-5-5")
     emit = ->(event) { events << event }
     records.each { |record| assembler.feed(record, &emit) }
     assembler.finish(&emit)

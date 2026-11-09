@@ -31,8 +31,11 @@ module Mistri
     # :subagent_report announces a background child's terminal outcome
     # (agent, session_id, status; content carries the report), so a UI that
     # watched the spawn can settle the child's lane the moment it ends.
+    # :thinking_dropped follows :start when the provider discarded replayed
+    # thinking it could no longer verify; content carries its reasons.
     TYPES = %i[
       start
+      thinking_dropped
       text_start text_delta text_end
       thinking_start thinking_delta thinking_end
       toolcall_start toolcall_delta toolcall_end

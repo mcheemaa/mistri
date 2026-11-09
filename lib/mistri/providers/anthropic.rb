@@ -15,6 +15,10 @@ module Mistri
       DEFAULT_ORIGIN = "https://api.anthropic.com"
       VERSION_HEADER = "2023-06-01"
       DEFAULT_THINKING = { type: "adaptive", display: "summarized" }.freeze
+      # Thinking signed under a prefix that later changed is dropped by the
+      # API instead of failing the request and every request after it.
+      DROP_STALE_THINKING = { block_binding: { prefix_mismatch_behavior: "drop_block" } }.freeze
+      BINDING_BETA = "thinking-binding-controls-2026-08-01"
 
       # Messages API parameters passed through verbatim from a stream override.
       PASSTHROUGH = %i[temperature top_p top_k stop_sequences metadata tool_choice].freeze
@@ -23,7 +27,7 @@ module Mistri
       # its real output limit.
       UNKNOWN_MODEL_MAX_TOKENS = 64_000
 
-      def initialize(api_key:, model: "claude-opus-4-8", origin: DEFAULT_ORIGIN,
+      def initialize(api_key:, model: "claude-opus-5-5", origin: DEFAULT_ORIGIN,
                      max_tokens: nil, thinking: DEFAULT_THINKING, cache: true,
                      service_tier: nil, catalog_pricing: nil,
                      **transport_options)
@@ -33,7 +37,8 @@ module Mistri
         @thinking = thinking
         @cache = cache
         @service_tier = service_tier
-        @catalog_pricing = catalog_pricing.nil? ? official_origin?(origin) : catalog_pricing
+        @official = official_origin?(origin)
+        @catalog_pricing = catalog_pricing.nil? ? @official : catalog_pricing
         @transport = Transport.new(origin: origin, **transport_options)
       end
 
@@ -55,7 +60,7 @@ module Mistri
         assembler = Anthropic::Assembler.new(model: model, catalog_pricing: @catalog_pricing)
         assembler.start(&delivery)
         body = build_body(model, messages, system, tools, overrides)
-        outcome = @transport.stream_post("/v1/messages", body: body, headers: headers,
+        outcome = @transport.stream_post("/v1/messages", body: body, headers: headers(body),
                                                          signal: signal) do |record|
           assembler.feed(
             record, &delivery
@@ -100,13 +105,15 @@ module Mistri
       # Adaptive thinking 400s on budget-only models like Haiku 4.5, so the
       # adaptive default is dropped for a model the catalog marks :budget; a
       # host that wants thinking there passes an explicit budget config. An
-      # unknown model keeps the default, since new models are adaptive.
+      # unknown model keeps the default, since new models are adaptive. Another
+      # origin may not accept the binding control, so a host sets it there.
       def thinking_for(model, overrides)
         thinking = overrides.fetch(:thinking, @thinking)
         return thinking unless thinking && thinking[:type] == "adaptive"
         return nil if Models.thinking(model) == :budget
+        return thinking if thinking.key?(:block_binding) || !@official
 
-        thinking
+        thinking.merge(DROP_STALE_THINKING)
       end
 
       # The API requires max_tokens and bills only actual output, so the
@@ -118,8 +125,10 @@ module Mistri
         end
       end
 
-      def headers
-        { "x-api-key" => @api_key, "anthropic-version" => VERSION_HEADER }
+      def headers(body)
+        headers = { "x-api-key" => @api_key, "anthropic-version" => VERSION_HEADER }
+        headers["anthropic-beta"] = BINDING_BETA if body.dig(:thinking, :block_binding)
+        headers
       end
     end
   end
