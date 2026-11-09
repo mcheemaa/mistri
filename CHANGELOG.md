@@ -5,6 +5,12 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+- The JSONL store creates session files with mode 0600; existing files keep
+  their mode. A partial last line left by a crash no longer blocks loading,
+  and the next append starts on a fresh line.
+- The JSONL store rejects a session id outside `[A-Za-z0-9_-]{1,64}` with
+  `ArgumentError`. It used to rewrite such ids, so `a/b` and `a-b` shared one
+  file. Default ids are UUIDs and unaffected.
 - `Agent#run` and `Session#steer` reject whitespace-only text with
   `ArgumentError`; `run` still accepts images alone. A blank text block, once
   appended, failed every later turn on providers that reject it.
