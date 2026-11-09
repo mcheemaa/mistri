@@ -9,7 +9,7 @@ module Mistri
   #
   #   ---
   #   role: Trip Planner
-  #   model: claude-opus-4-8
+  #   model: claude-opus-5-5
   #   tools:
   #     - search_flights
   #     - book_hotel

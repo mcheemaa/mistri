@@ -34,6 +34,39 @@ class TestSessionCompactionThinking < Minitest::Test
     assert_equal old, Mistri::Message.from_h(@session.entries[1].fetch("message"))
   end
 
+  def test_the_claude_5_5_models_are_prefix_bound
+    stored = %w[claude-opus-5-5 claude-sonnet-5-5 claude-haiku-5-5].map do |model|
+      assistant(model, model:).tap { |message| @session.append_message(message) }
+    end
+    compact
+
+    assert_empty @session.messages.flat_map(&:content).grep(Mistri::Content::Thinking)
+    assert_equal(stored, @session.entries[1, 3].map do |entry|
+      Mistri::Message.from_h(entry.fetch("message"))
+    end)
+  end
+
+  def test_anthropic_thinking_is_prefix_bound_unless_the_model_predates_binding
+    %w[claude-fable-5-2 claude-fable-5-1 claude-opus-5-5 claude-sonnet-5-5 claude-haiku-5-5
+       claude-fable-5-2-20261109 claude-fable-6].each do |id|
+      assert Mistri::Models.prefix_bound_thinking?(id), "#{id} binds its thinking"
+    end
+    %w[claude-fable-5 claude-opus-5 claude-opus-4-8 claude-opus-4-7 claude-opus-4-6
+       claude-sonnet-5 claude-sonnet-4-6 claude-haiku-4-5 gpt-6.1-sol gemini-3.8-flash].each do |id|
+      refute Mistri::Models.prefix_bound_thinking?(id), "#{id} does not bind its thinking"
+    end
+  end
+
+  def test_an_anthropic_model_the_catalog_does_not_know_is_prefix_bound
+    ["claude-fable-5-2", "claude-fable-6", nil].each_with_index do |model, index|
+      @session.append_message(assistant("reply #{index}", model:))
+    end
+    compact
+
+    assert_equal ["reply 0", "reply 1", "reply 2"], @session.messages.drop(1).map(&:text)
+    assert_empty @session.messages.flat_map(&:content).grep(Mistri::Content::Thinking)
+  end
+
   def test_repeated_compaction_invalidates_thinking_from_the_previous_prefix
     @session.append_message(assistant("first"))
     compact
@@ -75,8 +108,6 @@ class TestSessionCompactionThinking < Minitest::Test
     messages = [assistant("older", model: "claude-fable-5"),
                 assistant("opus", model: "claude-opus-5"),
                 assistant("foreign", model: "gpt-6-astra", provider: :openai),
-                assistant("missing", model: nil),
-                assistant("future", model: "claude-fable-6"),
                 assistant("mismatched", provider: :gemini),
                 assistant("plain").with(content: [Mistri::Content::Text.new(text: "no thinking")])]
     messages.each { |message| @session.append_message(message) }

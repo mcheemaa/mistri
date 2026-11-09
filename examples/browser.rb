@@ -18,7 +18,7 @@ begin
   tools = Mistri::MCP.tools(browser, prefix: "web",
                                      allow: %w[browser_navigate browser_snapshot])
 
-  agent = Mistri.agent("claude-opus-4-8", tools: tools,
+  agent = Mistri.agent("claude-opus-5-5", tools: tools,
                                           system: "Use the browser tools to answer. Be brief.")
 
   puts agent.run("Open https://example.com and report the main heading.").text

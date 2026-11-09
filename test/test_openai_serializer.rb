@@ -16,6 +16,18 @@ class TestOpenAISerializer < Minitest::Test
     assert_equal tool.input_schema, wire.first[:parameters]
   end
 
+  def test_tools_are_not_strict_so_optional_fields_stay_optional
+    tool = Mistri::Tool.define("search", "Searches.", schema: lambda {
+      string :query, "Query", required: true
+      integer :limit, "Limit"
+    }) { "ok" }
+
+    wire = SERIALIZER.tools([tool.spec]).first
+
+    refute wire.fetch(:strict)
+    assert_equal ["query"], wire[:parameters].fetch("required")
+  end
+
   def test_an_assembled_turn_replays_with_its_pairing_intact
     reasoning_item = { "type" => "reasoning", "id" => "rs_1", "summary" => [],
                        "encrypted_content" => "opaque" }

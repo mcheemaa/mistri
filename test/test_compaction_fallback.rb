@@ -171,16 +171,16 @@ class TestCompactionFallback < Minitest::Test
     assert_same provider, Mistri::Compaction.new(fallback: provider).fallback
     assert_nil Mistri::Compaction.new.fallback
     with_env("ANTHROPIC_API_KEY" => "test") do
-      resolved = Mistri::Compaction.new(fallback: "claude-haiku-4-5").fallback
+      resolved = Mistri::Compaction.new(fallback: "claude-haiku-5-5").fallback
 
       assert_kind_of Mistri::Providers::Anthropic, resolved
-      assert_equal "claude-haiku-4-5", resolved.model
+      assert_equal "claude-haiku-5-5", resolved.model
     ensure
       resolved&.close
     end
 
     with_env("ANTHROPIC_API_KEY" => nil) do
-      assert_raises(Mistri::ConfigurationError) { Mistri::Compaction.new(fallback: "claude-haiku-4-5") }
+      assert_raises(Mistri::ConfigurationError) { Mistri::Compaction.new(fallback: "claude-haiku-5-5") }
     end
     [:sonnet, 42, Object.new].each do |value|
       error = assert_raises(ArgumentError) { Mistri::Compaction.new(fallback: value) }

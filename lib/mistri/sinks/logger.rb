@@ -40,7 +40,7 @@ module Mistri
                 done: :turn_line, error: :error_line, retry: :retry_line,
                 approval_needed: :approval_line, compacting: :compacting_line,
                 compaction: :compaction_line, compaction_failed: :compaction_failed_line,
-                subagent_report: :report_line }.freeze
+                subagent_report: :report_line, thinking_dropped: :thinking_dropped_line }.freeze
       QUIET = %i[text_end thinking_end tool_started done approval_needed
                  compacting compaction subagent_report].to_h { |type| [type, true] }.freeze
       COLORS = { bold: "1", dim: "2", red: "31", green: "32", yellow: "33" }.freeze
@@ -215,6 +215,8 @@ module Mistri
       def compaction_failed_line(event)
         ["#{paint("compaction failed", :yellow)}#{note(event.error_message)}", :warn]
       end
+
+      def thinking_dropped_line(event) = ["thinking dropped: #{field(event.content)}", :warn]
 
       def report_line(event)
         "worker #{field(event.agent)} (#{field(event.session_id.to_s[0, 8], limit: 16)}) " \

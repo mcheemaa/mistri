@@ -124,7 +124,7 @@ class TestGeminiAssembler < Minitest::Test
                                              "candidatesTokenCount" => 100,
                                              "thoughtsTokenCount" => 50 } }
                     ])
-    rates = Mistri::Models.rates("gemini-2.5-flash")
+    rates = Mistri::Models.rates("gemini-3.8-flash")
     expected = ((rates[:input] * 600) + (rates[:cache_read] * 400) +
                 (rates[:output] * 150)) / 1_000_000.0
 
@@ -139,7 +139,7 @@ class TestGeminiAssembler < Minitest::Test
 
     refute_predicate unknown.finish.usage.cost, :known?
 
-    unpriced = Mistri::Providers::Gemini::Assembler.new(model: "gemini-2.5-flash",
+    unpriced = Mistri::Providers::Gemini::Assembler.new(model: "gemini-3.8-flash",
                                                         catalog_pricing: false)
     unpriced.feed({ "candidates" => [{ "finishReason" => "STOP" }],
                     "usageMetadata" => { "promptTokenCount" => 1000,
@@ -147,25 +147,25 @@ class TestGeminiAssembler < Minitest::Test
 
     refute_predicate unpriced.finish.usage.cost, :known?
 
-    missing = Mistri::Providers::Gemini::Assembler.new(model: "gemini-2.5-flash")
+    missing = Mistri::Providers::Gemini::Assembler.new(model: "gemini-3.8-flash")
     missing.feed({ "candidates" => [{ "finishReason" => "STOP" }] })
 
     refute_predicate missing.finish.usage.cost, :known?
   end
 
   def test_pro_usage_is_priced_at_the_higher_request_tier
-    assembler = Mistri::Providers::Gemini::Assembler.new(model: "gemini-2.5-pro")
+    assembler = Mistri::Providers::Gemini::Assembler.new(model: "gemini-3.1-pro-preview")
     assembler.feed({ "candidates" => [{ "finishReason" => "STOP" }],
                      "usageMetadata" => { "promptTokenCount" => 200_001,
                                           "candidatesTokenCount" => 100 } })
     usage = assembler.finish.usage
 
-    assert_in_delta 0.5000025, usage.cost.input, 1e-9
-    assert_in_delta 0.0015, usage.cost.output, 1e-9
+    assert_in_delta 0.800004, usage.cost.input, 1e-9
+    assert_in_delta 0.0018, usage.cost.output, 1e-9
   end
 
   def test_nonstandard_service_tier_usage_is_unknown
-    assembler = Mistri::Providers::Gemini::Assembler.new(model: "gemini-2.5-flash")
+    assembler = Mistri::Providers::Gemini::Assembler.new(model: "gemini-3.8-flash")
     assembler.feed({ "candidates" => [{ "finishReason" => "STOP" }],
                      "usageMetadata" => { "promptTokenCount" => 1000,
                                           "candidatesTokenCount" => 100,
@@ -173,7 +173,7 @@ class TestGeminiAssembler < Minitest::Test
 
     refute_predicate assembler.finish.usage.cost, :known?
 
-    requested = Mistri::Providers::Gemini::Assembler.new(model: "gemini-2.5-flash",
+    requested = Mistri::Providers::Gemini::Assembler.new(model: "gemini-3.8-flash",
                                                          service_tier: "flex")
     requested.feed({ "candidates" => [{ "finishReason" => "STOP" }],
                      "usageMetadata" => { "promptTokenCount" => 1000,
@@ -183,7 +183,7 @@ class TestGeminiAssembler < Minitest::Test
   end
 
   def test_a_truncated_stream_keeps_partial_dollars_but_marks_them_unknown
-    assembler = Mistri::Providers::Gemini::Assembler.new(model: "gemini-2.5-flash")
+    assembler = Mistri::Providers::Gemini::Assembler.new(model: "gemini-3.8-flash")
     assembler.feed({ "usageMetadata" => { "promptTokenCount" => 1000,
                                           "candidatesTokenCount" => 100,
                                           "serviceTier" => "standard" } })
@@ -283,7 +283,7 @@ class TestGeminiAssembler < Minitest::Test
   end
 
   def drive(events, records)
-    assembler = Mistri::Providers::Gemini::Assembler.new(model: "gemini-2.5-flash")
+    assembler = Mistri::Providers::Gemini::Assembler.new(model: "gemini-3.8-flash")
     emit = ->(event) { events << event }
     records.each { |record| assembler.feed(record, &emit) }
     assembler.finish(&emit)

@@ -23,8 +23,8 @@ class TestCompactionRequest < Minitest::Test
 
   def test_the_summary_output_limit_is_host_policy_capped_at_the_model_ceiling
     provider = Mistri::Providers::Fake.new(turns: [{ text: "Summary." }, { text: "Summary." }])
-    provider.define_singleton_method(:model) { "claude-haiku-4-5" }
-    ceiling = Mistri::Models.max_output("claude-haiku-4-5")
+    provider.define_singleton_method(:model) { "claude-haiku-5-5" }
+    ceiling = Mistri::Models.max_output("claude-haiku-5-5")
 
     Mistri::Compactor.call(session: history, provider:, settings: settings(max_tokens: 2_000))
     Mistri::Compactor.call(session: history, provider:, settings: settings(max_tokens: ceiling * 2))
@@ -38,12 +38,12 @@ class TestCompactionRequest < Minitest::Test
     overrides = { max_tokens: 400, thinking: nil, reasoning: nil }
     openai = Mistri::Providers::OpenAI.new(api_key: "k", reasoning: { effort: "high" })
     gemini = Mistri::Providers::Gemini.new(api_key: "k")
-    anthropic = Mistri::Providers::Anthropic.new(api_key: "k", model: "claude-opus-4-8",
+    anthropic = Mistri::Providers::Anthropic.new(api_key: "k", model: "claude-opus-5-5",
                                                  max_tokens: 1_024)
 
-    openai_body = openai.send(:build_body, "gpt-5.6", HISTORY, nil, [], overrides)
+    openai_body = openai.send(:build_body, "gpt-6.1-sol", HISTORY, nil, [], overrides)
     gemini_body = gemini.send(:build_body, HISTORY, nil, [], overrides)
-    anthropic_body = anthropic.send(:build_body, "claude-opus-4-8", HISTORY, nil, [], overrides)
+    anthropic_body = anthropic.send(:build_body, "claude-opus-5-5", HISTORY, nil, [], overrides)
 
     assert_equal 400, openai_body[:max_output_tokens]
     refute openai_body.key?(:reasoning), "the host's reasoning effort must not reach the summary"
@@ -58,19 +58,21 @@ class TestCompactionRequest < Minitest::Test
   def test_ordinary_requests_keep_the_hosts_settings_and_no_cap
     openai = Mistri::Providers::OpenAI.new(api_key: "k", reasoning: { effort: "high" })
     gemini = Mistri::Providers::Gemini.new(api_key: "k")
-    anthropic = Mistri::Providers::Anthropic.new(api_key: "k", model: "claude-opus-4-8",
+    anthropic = Mistri::Providers::Anthropic.new(api_key: "k", model: "claude-opus-5-5",
                                                  max_tokens: 1_024)
 
-    openai_body = openai.send(:build_body, "gpt-5.6", HISTORY, nil, [], {})
+    openai_body = openai.send(:build_body, "gpt-6.1-sol", HISTORY, nil, [], {})
     gemini_body = gemini.send(:build_body, HISTORY, nil, [], {})
-    anthropic_body = anthropic.send(:build_body, "claude-opus-4-8", HISTORY, nil, [], {})
+    anthropic_body = anthropic.send(:build_body, "claude-opus-5-5", HISTORY, nil, [], {})
 
     refute openai_body.key?(:max_output_tokens)
     assert_equal({ effort: "high" }, openai_body[:reasoning])
     refute gemini_body.dig(:generationConfig, :maxOutputTokens)
     assert_equal({ includeThoughts: true }, gemini_body.dig(:generationConfig, :thinkingConfig))
     assert_equal 1_024, anthropic_body[:max_tokens]
-    assert_equal({ type: "adaptive", display: "summarized" }, anthropic_body[:thinking])
+    assert_equal({ type: "adaptive", display: "summarized",
+                   block_binding: { prefix_mismatch_behavior: "drop_block" } },
+                 anthropic_body[:thinking])
   ensure
     [openai, gemini, anthropic].compact.each(&:close)
   end

@@ -13,7 +13,7 @@ class TestCompactionFallbackLive < Minitest::Test
     skip "no ANTHROPIC_API_KEY" if ENV["ANTHROPIC_API_KEY"].to_s.empty?
 
     @fallback = Mistri::Providers::Anthropic.new(
-      api_key: ENV.fetch("ANTHROPIC_API_KEY"), model: "claude-haiku-4-5-20251001",
+      api_key: ENV.fetch("ANTHROPIC_API_KEY"), model: "claude-haiku-5-5",
       thinking: { type: "disabled" }, service_tier: "standard_only", read_timeout: 120
     )
   end
@@ -35,7 +35,7 @@ class TestCompactionFallbackLive < Minitest::Test
       end
 
       assert_equal %i[compacting compaction], events
-      assert_equal "claude-haiku-4-5-20251001", session.last_compaction.fetch("model")
+      assert_equal "claude-haiku-5-5", session.last_compaction.fetch("model")
       assert_operator result[:usage].output, :>, 0
       assert_predicate result[:usage].cost, :known?
       assert_equal 0, session.compaction_failures

@@ -6,6 +6,8 @@ module Mistri
   # the read_skill tool, so a large library costs almost nothing until a
   # skill is actually used.
   module Skills
+    READER = "read_skill"
+
     module_function
 
     # Reads a directory of skills in either layout: <dir>/<name>/SKILL.md
@@ -53,12 +55,15 @@ module Mistri
 
     def reader(skills)
       by_name = skills.to_h { |skill| [skill.name, skill] }
-      Tool.define("read_skill", "Reads the full playbook for a named skill.",
+      Tool.define(READER, "Reads the full playbook for a named skill.",
                   schema: -> { string :name, "Skill name", required: true }) do |args|
         skill = by_name[args["name"]]
         next skill.body if skill
 
-        "Unknown skill #{args["name"].inspect}. Available: #{by_name.keys.join(", ")}"
+        ToolResult.new(
+          content: "Unknown skill #{args["name"].inspect}. Available: #{by_name.keys.join(", ")}",
+          error: true
+        )
       end
     end
 

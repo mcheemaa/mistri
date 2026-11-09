@@ -55,7 +55,7 @@ class TestAnthropicLive < Minitest::Test
 
   def test_a_nested_freeform_object_reaches_a_tool_call
     provider = Mistri::Providers::Anthropic.new(
-      api_key: ENV.fetch("ANTHROPIC_API_KEY"), model: "claude-haiku-4-5-20251001"
+      api_key: ENV.fetch("ANTHROPIC_API_KEY"), model: "claude-haiku-5-5"
     )
     tool = Mistri::Tool.define("render_chart", "Renders the requested chart.", schema: lambda {
       object :config, "Chart config; include a series array.", required: true
@@ -87,11 +87,11 @@ class TestAnthropicLive < Minitest::Test
                              content: [Mistri::Content::Thinking.new(
                                thinking: "Checking the clock.", signature: JSON.generate(item)
                              ), Mistri::Content::Text.new(text: "It is noon.")],
-                             model: "gpt-5.6-terra", provider: :openai,
+                             model: "gpt-6.1-terra", provider: :openai,
                              stop_reason: Mistri::StopReason::STOP
                            ))
     provider = Mistri::Providers::Anthropic.new(
-      api_key: ENV.fetch("ANTHROPIC_API_KEY"), model: "claude-haiku-4-5-20251001"
+      api_key: ENV.fetch("ANTHROPIC_API_KEY"), model: "claude-haiku-5-5"
     )
 
     result = Mistri::Agent.new(provider:, session:).run("Reply with exactly: bye")
@@ -105,7 +105,7 @@ class TestAnthropicLive < Minitest::Test
 
   def test_native_signed_thinking_replays_across_turns
     provider = Mistri::Providers::Anthropic.new(
-      api_key: ENV.fetch("ANTHROPIC_API_KEY"), model: "claude-haiku-4-5-20251001",
+      api_key: ENV.fetch("ANTHROPIC_API_KEY"), model: "claude-haiku-4-5",
       max_tokens: 2048,
       thinking: { type: "enabled", budget_tokens: 1024, display: "summarized" }
     )
