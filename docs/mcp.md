@@ -60,10 +60,13 @@ tools = Mistri::MCP.tools(
 )
 ```
 
-`command:` is an argument array, not a shell string. Pass credentials through
-`env:` when the child process needs them. Mistri writes one JSON-RPC object per
-line and bounds the complete record read, including the time after its first
-byte.
+`command:` is an argument array, not a shell string. The child starts from an
+empty environment plus `PATH`, `HOME`, `SSL_CERT_FILE`, `SSL_CERT_DIR`, and
+`NODE_EXTRA_CA_CERTS` from the host process, so a runtime can be found, run,
+and trust the network; it does not inherit the host's provider keys or any
+other variable. Pass everything else the server needs, credentials and proxy
+settings included, through `env:`. Mistri writes one JSON-RPC object per line
+and bounds the complete record read, including the time after its first byte.
 
 `@latest` is convenient for local exploration. Pin a reviewed package version
 in an application or deployment so the executable does not change without a
