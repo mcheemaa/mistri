@@ -5,7 +5,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
-- `Agent#run` and `Session#steer` reject white-space-only text with
+- `Agent#run` and `Session#steer` reject whitespace-only text with
   `ArgumentError`; `run` still accepts images alone. A blank text block, once
   appended, failed every later turn on providers that reject it.
 - Stdio MCP servers no longer inherit the host environment, which holds
