@@ -19,7 +19,7 @@ class TestCompactionLive < Minitest::Test
     skip "set MISTRI_LIVE=1 for live tests" unless ENV["MISTRI_LIVE"] == "1"
     skip "no ANTHROPIC_API_KEY" if ENV["ANTHROPIC_API_KEY"].to_s.empty?
 
-    options = { api_key: ENV.fetch("ANTHROPIC_API_KEY"), model: "claude-haiku-4-5-20251001",
+    options = { api_key: ENV.fetch("ANTHROPIC_API_KEY"), model: "claude-haiku-4-5",
                 thinking: { type: "disabled" }, service_tier: "standard_only", read_timeout: 120 }
     @summarizer = ObservedAnthropic.new(**options)
     @provider = Mistri::Providers::Anthropic.new(**options)

@@ -13,7 +13,7 @@ module Mistri
   #
   #   researcher = Mistri::SubAgent.new(
   #     name: "researcher", description: "Answers factual questions.",
-  #     provider: Mistri.provider("claude-haiku-4-5-20251001"),
+  #     provider: Mistri.provider("claude-haiku-5-5"),
   #     system: "Research. Report findings only.", tools: [fetch_page],
   #   )
   #   agent = Mistri::Agent.new(provider:, tools: [researcher.tool])

@@ -16,7 +16,7 @@ module Mistri
       DEFAULT_ORIGIN = "https://generativelanguage.googleapis.com"
       DEFAULT_THINKING = { includeThoughts: true }.freeze
 
-      def initialize(api_key:, model: "gemini-2.5-flash",
+      def initialize(api_key:, model: "gemini-3.8-flash",
                      origin: DEFAULT_ORIGIN, thinking: DEFAULT_THINKING,
                      service_tier: nil, catalog_pricing: nil, **transport_options)
         @api_key = api_key
@@ -69,7 +69,7 @@ module Mistri
 
       def build_body(messages, system, tools, overrides)
         body = { contents: Serializer.contents(messages) }
-        instruction = Serializer.system_instruction(system)
+        instruction = Serializer.system_instruction(system, messages)
         body[:systemInstruction] = instruction if instruction
         body[:tools] = Serializer.tools(tools) if tools.any?
         service_tier = overrides.fetch(:service_tier, @service_tier)

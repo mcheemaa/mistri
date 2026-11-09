@@ -21,13 +21,13 @@ transcripts are supported.
 researcher = Mistri::SubAgent.new(
   name: "researcher",
   description: "Reads approved sources and answers factual questions.",
-  provider: Mistri.provider("claude-haiku-4-5"),
+  provider: Mistri.provider("claude-haiku-5-5"),
   system: "Research the question. Return findings and source URLs.",
   tools: [fetch_page],
 )
 
 agent = Mistri.agent(
-  "claude-opus-4-8",
+  "claude-opus-5-5",
   tools: [researcher.tool],
 )
 ```
@@ -50,11 +50,11 @@ The open spawner lets the parent compose a worker from a pool the host controls:
 spawn = Mistri::SubAgent.spawner(
   provider: child_provider,
   tools: [fetch_page, search_catalog],
-  models: ["claude-haiku-4-5", "gpt-5-nano"],
+  models: ["claude-haiku-5-5", "gpt-5-nano"],
   max_children: 4,
 )
 
-agent = Mistri.agent("claude-opus-4-8", tools: [spawn])
+agent = Mistri.agent("claude-opus-5-5", tools: [spawn])
 ```
 
 The generated `spawn_agent` tool asks for a complete task and system
@@ -81,7 +81,7 @@ spawn = Mistri::SubAgent.spawner(
   provider: child_provider,
   tools: [fetch_page, search_catalog, inspect_record],
   types: types,
-  models: ["claude-haiku-4-5"],
+  models: ["claude-haiku-5-5"],
 )
 ```
 

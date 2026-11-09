@@ -93,8 +93,8 @@ module Mistri
   # Build a provider for a model, inferring which one from the model id and
   # reading its key from the environment unless one is passed.
   #
-  #   Mistri.provider("claude-opus-4-8")
-  #   Mistri.provider("gpt-5.6", api_key: key, reasoning: { effort: "high" })
+  #   Mistri.provider("claude-opus-5-5")
+  #   Mistri.provider("gpt-6.1-sol", api_key: key, reasoning: { effort: "high" })
   def provider(model, api_key: nil, **)
     name = provider_name(model)
     klass = PROVIDERS.fetch(name) { raise ConfigurationError, "no provider for #{model.inspect}" }
@@ -107,7 +107,7 @@ module Mistri
   # Build an agent for a model in one call: infers and constructs the provider,
   # then wraps it in the loop.
   #
-  #   agent = Mistri.agent("claude-opus-4-8", tools: [weather], system: "Be brief.")
+  #   agent = Mistri.agent("claude-opus-5-5", tools: [weather], system: "Be brief.")
   #   agent.run("Weather in Lahore?") { |event| ... }
   def agent(model, api_key: nil, provider_options: {}, **agent_options)
     built = provider(model, api_key: api_key, **provider_options)

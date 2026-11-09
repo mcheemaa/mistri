@@ -13,7 +13,7 @@ weather = Mistri::Tool.define(
   "34C and clear in #{args["city"]}"
 end
 
-agent = Mistri.agent("claude-opus-4-8", tools: [weather])
+agent = Mistri.agent("claude-opus-5-5", tools: [weather])
 
 agent.run("What should I wear in Lahore today? One sentence.") do |event|
   print event.delta if event.type == :text_delta

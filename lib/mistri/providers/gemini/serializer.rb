@@ -37,10 +37,17 @@ module Mistri
           end
         end
 
-        def system_instruction(system)
-          return nil if system.nil? || system.empty?
+        def system_instruction(system, history = [])
+          text = [system, *loaded_skills(history)].compact.reject(&:empty?).join("\n\n")
+          text.empty? ? nil : { parts: [{ text: }] }
+        end
 
-          { parts: [{ text: system }] }
+        # Gemini takes instructions from its system instruction and treats a
+        # tool result as data, so a skill the model loaded is repeated here.
+        def loaded_skills(history)
+          history.select { |message| message.tool? && message.tool_name == Skills::READER }
+                 .reject(&:tool_error?).filter_map(&:text).uniq
+                 .map { |body| "## Loaded skill\n\n#{body}" }
         end
 
         def tools(definitions)

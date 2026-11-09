@@ -71,11 +71,13 @@ class TestSkills < Minitest::Test
 
     agent.run("write copy")
 
-    results = agent.session.messages.select(&:tool?).map(&:text)
+    loaded, unknown = agent.session.messages.select(&:tool?)
 
-    assert_equal "End with the sponsor name.", results.first
-    assert_includes results.last, 'Unknown skill "nope"'
-    assert_includes results.last, "brand-voice"
+    assert_equal "End with the sponsor name.", loaded.text
+    refute_predicate loaded, :tool_error?
+    assert_includes unknown.text, 'Unknown skill "nope"'
+    assert_includes unknown.text, "brand-voice"
+    assert_predicate unknown, :tool_error?
   end
 
   def test_skills_accepts_a_directory_path

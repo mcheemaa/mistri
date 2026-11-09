@@ -26,7 +26,7 @@ tools = Mistri::MCP.tools(
   gates: { "create_issue" => true },
 )
 
-agent = Mistri.agent("claude-opus-4-8", tools: tools)
+agent = Mistri.agent("claude-opus-5-5", tools: tools)
 ```
 
 `token:` accepts a String or callable. The callable resolves for every request.

@@ -171,7 +171,7 @@ class TestTransportLimits < Minitest::Test
       server.chunk(socket, "data: #{"x" * 100}")
     end
     provider = Mistri::Providers::OpenAI.new(
-      api_key: "test", model: "gpt-5.6", origin: server.origin, max_record_bytes: 32
+      api_key: "test", model: "gpt-6.1-sol", origin: server.origin, max_record_bytes: 32
     )
     retries = Mistri::RetryPolicy.new(attempts: 2, base: 0.0)
     agent = Mistri::Agent.new(provider: provider, retries: retries)

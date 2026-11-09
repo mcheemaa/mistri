@@ -40,13 +40,39 @@ class TestCoreLoopIntegration < Minitest::Test
       if event.type == :start
         refute open, "a provider stream opened before its predecessor terminated"
         open = true
-      elsif event.terminal?
+      elsif event.terminal? || event.type == :retry
         assert open, "a provider terminal arrived without a matching :start"
         open = false
       end
     end
 
     refute open, "the final provider stream never terminated"
+  end
+
+  # One tool definition must mean the same call on every provider.
+  Integration.scenario(self, :optional_tool_fields_stay_unset) do |model|
+    received = []
+    reminders = Mistri::Tool.define(
+      "manage_reminders", "Lists, creates, or updates reminders.",
+      schema: lambda {
+        string :action, "What to do", required: true, enum: %w[list create update]
+        string :title, "Title"
+        string :repeat, "How it repeats", enum: %w[once daily weekly]
+        integer :every_minutes, "Interval in minutes"
+        array :weekdays, "Days of the week", items: { type: "string" }
+        boolean :notify, "Whether to notify"
+      }
+    ) do |args|
+      received << args
+      "[]"
+    end
+    agent = Mistri::Agent.new(provider: Mistri.provider(model), tools: [reminders],
+                              system: "Use the tool. Be brief.")
+
+    result = agent.run("List my reminders.")
+
+    assert_predicate result, :completed?
+    assert_equal({ "action" => "list" }, received.first)
   end
 
   # Serializer tests prove ui never reaches provider input; this live path
