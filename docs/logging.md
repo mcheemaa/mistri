@@ -11,7 +11,7 @@ Mistri.logger = Rails.logger   # or any object responding to info/warn/error
 ```
 
 ```text
-[mistri 0a1b2c3d] run "What is 2 plus 3?" (gpt-5.6, 3 tools)
+[mistri 0a1b2c3d] run "What is 2 plus 3?" (gpt-6.1-sol, 3 tools)
 [mistri 0a1b2c3d] turn 1 done tool_use (312 in / 48 out)
 [mistri 0a1b2c3d] tool add#7f3a {"a":2,"b":3}
 [mistri 0a1b2c3d] tool add#7f3a ok 12ms "5"

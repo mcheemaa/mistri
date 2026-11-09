@@ -63,7 +63,9 @@ class TestStructuredOutputIntegration < Minitest::Test
       schema: tuple_schema
     )
 
+    assert_predicate scalar_result, :completed?, scalar_result.error_message
     assert_equal scalar, scalar_result.output
+    assert_predicate tuple_result, :completed?, tuple_result.error_message
     assert_equal [tuple_value, 37], tuple_result.output
   end
 end

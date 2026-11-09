@@ -24,7 +24,7 @@ module Mistri
 
         def messages(history, cache: false)
           turns = history.reject(&:system?).chunk_while { |a, b| a.tool? && b.tool? }
-          wire = turns.map do |group|
+          wire = turns.filter_map do |group|
             group.first.tool? ? tool_results(group) : message(group.first)
           end
           mark_last_user_turn(wire) if cache
@@ -41,10 +41,11 @@ module Mistri
           end
         end
 
+        # The API rejects a user turn with no content.
         def message(msg)
           own = msg.provider == :anthropic
-          { role: msg.role.to_s,
-            content: msg.content.filter_map { |content| block(content, own:) } }
+          blocks = msg.content.filter_map { |content| block(content, own:) }
+          { role: msg.role.to_s, content: blocks } unless msg.user? && blocks.empty?
         end
 
         def tool_results(group)
@@ -76,9 +77,9 @@ module Mistri
           end
         end
 
-        # The API rejects empty text content blocks.
+        # The API rejects a turn whose text is only whitespace.
         def text_block(block)
-          block.text.empty? ? nil : { type: "text", text: block.text }
+          block.text.match?(/\A[[:space:]]*\z/) ? nil : { type: "text", text: block.text }
         end
 
         # Thinking replays only with its signature. Redacted thinking carries

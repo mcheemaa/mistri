@@ -228,7 +228,7 @@ before_tool = lambda do |call, context|
   next "currency is not enabled" unless call.arguments.fetch("currency") == "USD"
 end
 
-agent = Mistri.agent("claude-opus-4-8", tools: tools, before_tool: before_tool)
+agent = Mistri.agent("claude-opus-5-5", tools: tools, before_tool: before_tool)
 ```
 
 The hook also runs when an approved call resumes, so long-lived approval does

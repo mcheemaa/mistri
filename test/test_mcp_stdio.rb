@@ -66,6 +66,7 @@ class TestMcpStdio < Minitest::Test
                                              "properties" => { "text" => { "type" => "string" } } } }] }
         when "tools/call"
           text = "echo: #{message.dig('params', 'arguments', 'text')} #{ENV['STUB_FLAVOR']}".strip
+          text = ENV.keys.sort.join(" ") if ENV["STUB_LIST_ENV"]
           { "content" => [{ "type" => "text", "text" => text }] }
         else {}
         end
@@ -90,6 +91,27 @@ class TestMcpStdio < Minitest::Test
                  "arguments flowed out and env credentials flowed in"
   ensure
     stdio.close
+  end
+
+  def test_the_child_gets_the_inherited_names_and_env_but_no_other_host_variable
+    inherited = %w[
+      HOME USER LOGNAME SHELL PATH TERM
+      GEM_HOME GEM_PATH
+      LANG LC_ALL LC_CTYPE TZ TMPDIR
+      SSL_CERT_FILE SSL_CERT_DIR NODE_EXTRA_CA_CERTS REQUESTS_CA_BUNDLE CURL_CA_BUNDLE
+    ]
+    unset = inherited - ENV.keys
+    unset.each { |name| ENV[name] = "set-by-test" }
+    ENV["STUB_FLAVOR"] = "host-only"
+    stdio = client(env: { "STUB_LIST_ENV" => "1" })
+
+    names = stdio.call_tool("echo", {}).dig("content", 0, "text").split
+
+    assert_empty [*inherited, "STUB_LIST_ENV"] - names
+    refute_includes names, "STUB_FLAVOR"
+  ensure
+    [*unset, "STUB_FLAVOR"].each { |name| ENV.delete(name) }
+    stdio&.close
   end
 
   def test_a_bridged_stdio_tool_reaches_an_agent

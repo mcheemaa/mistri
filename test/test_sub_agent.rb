@@ -236,10 +236,10 @@ class TestSubAgent < Minitest::Test
 
   def test_child_models_come_only_from_the_host_allowlist
     spawn = Mistri::SubAgent.spawner(provider: fake({ text: "hi" }),
-                                     models: ["claude-haiku-4-5-20251001"])
+                                     models: ["claude-haiku-5-5"])
     parent_fake = fake({ tool_calls: [{ name: "spawn_agent",
                                         arguments: { "task" => "t", "instructions" => "i",
-                                                     "model" => "gpt-5.2-mini" } }] },
+                                                     "model" => "gpt-6.1-terra" } }] },
                        { text: "ok" })
     agent = Mistri::Agent.new(provider: parent_fake, tools: [spawn])
 
@@ -302,7 +302,7 @@ class TestSubAgent < Minitest::Test
   end
 
   def test_the_model_surface_names_the_default_child_model
-    spawn = Mistri::SubAgent.spawner(provider: fake, models: ["claude-haiku-4-5-20251001"])
+    spawn = Mistri::SubAgent.spawner(provider: fake, models: ["claude-haiku-5-5"])
     properties = spawn.spec[:input_schema]["properties"]
 
     assert properties.key?("name"), "the worker name surface exists"

@@ -9,6 +9,86 @@ Upgrade a representative application and persisted session set in staging
 before production. Do not treat a passing bundle update as a session migration
 test.
 
+## Unreleased
+
+Most hosts need no code change. Read the points that apply to you.
+
+### Gemini 2.5 models are removed
+
+Google retired `gemini-2.5-pro` and `gemini-2.5-flash`. The catalog no longer
+lists them.
+
+- Name a current model, for example `gemini-3.8-flash`.
+- An agent with a cost budget on a 2.5 model now raises
+  `Mistri::ConfigurationError` when you build it.
+
+### Provider defaults changed
+
+A provider built without `model:` now uses `claude-opus-5-5`, `gpt-6.1-sol`, or
+`gemini-3.8-flash`.
+
+- Pass `model:` to keep an earlier model.
+
+### Stdio MCP servers no longer inherit the host environment
+
+A stdio MCP server used to get every variable the host process had, provider
+keys included. It now gets `env:` and a fixed list: identity and `PATH`,
+RubyGems paths, locale and temp files, and CA bundle paths. `docs/mcp.md` names
+each variable.
+
+- Pass a variable the server relied on through `env:`. For example,
+  `env: ENV.slice("HTTPS_PROXY", "NO_PROXY")` forwards the proxy settings.
+- A Ruby server no longer runs inside the host's bundle. Start it with
+  `bundle exec` if it needs the host's gems, and pass Bundler settings the
+  host keeps in its environment, such as `BUNDLE_PATH`, through `env:`.
+- `env: ENV.to_h` passes the whole environment, as before.
+
+### OpenAI tools are no longer strict
+
+Mistri sends `strict: false` with every OpenAI tool. Before, the model wrote a
+value into every optional field, for example `""`, `0`, or `[]`.
+
+- Remove code that ignores those made-up values.
+- Mistri still validates arguments against your schema before the handler runs.
+
+### A changed prompt costs thinking, not the session
+
+Current Claude models reject earlier thinking when the system prompt or a tool
+definition changes. Mistri now asks the API to drop that thinking, and the
+request succeeds.
+
+- Keep the system prompt and tool definitions stable during a session. The
+  model repeats dropped reasoning, which costs output tokens.
+- Handle the new `:thinking_dropped` event to see when this happens. The run
+  log prints a warning.
+- Mistri sends the control only to `api.anthropic.com`. For another `origin:`,
+  set it yourself:
+
+```ruby
+Mistri.agent(
+  "claude-opus-5-5",
+  provider_options: {
+    origin: gateway_url,
+    thinking: { type: "adaptive", display: "summarized",
+                block_binding: { prefix_mismatch_behavior: "drop_block" } },
+  },
+)
+```
+
+### A gated tool tells the model
+
+The description a provider receives for a tool with `needs_approval` now ends
+with "A person reviews each call before it runs." `Tool#description` returns
+your text unchanged.
+
+- Remove the same sentence from your own descriptions.
+
+### Skills
+
+- `read_skill` now marks an unknown skill name as a failed tool result.
+- Gemini also receives a loaded skill in its system instruction. You do not
+  need to change anything.
+
 ## From 0.5.x to 0.6.x
 
 This is a safety-focused minor upgrade. The built-in Anthropic, OpenAI, and

@@ -60,7 +60,8 @@ class TestControlSurfacesIntegration < Minitest::Test
 
   # A crash between the assistant turn and its tool results leaves calls
   # unanswered, which providers reject on every later turn. Healing must
-  # make the resumed context acceptable to the real API.
+  # make the resumed context acceptable to the real API. The healed result
+  # tells the model to verify before retrying, so the host gives it a way to.
   Integration.scenario(self, :a_crashed_run_resumes_healed) do |model|
     venue = Integration.marker
     store = Mistri::Stores::Memory.new
@@ -72,7 +73,10 @@ class TestControlSurfacesIntegration < Minitest::Test
 
     booked = Mistri::Tool.define("book_venue", "Books the venue.",
                                  schema: -> { string :city, "City" }) { "Booked #{venue}." }
-    agent = Mistri::Agent.new(provider: Mistri.provider(model), tools: [booked], session:)
+    lookup = Mistri::Tool.define("venue_booking", "Returns the venue booked for a city, if any.",
+                                 schema: -> { string :city, "City" }) { "No venue is booked." }
+    agent = Mistri::Agent.new(provider: Mistri.provider(model), tools: [booked, lookup],
+                              session:)
 
     result = agent.run("Run book_venue for Lisbon again now, then repeat " \
                        "the venue name it returns back to me.")

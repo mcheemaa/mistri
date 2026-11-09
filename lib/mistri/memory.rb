@@ -9,7 +9,7 @@ module Mistri
   #     read: -> { org.agent_memory.to_s },
   #     write: ->(text) { org.update!(agent_memory: text) }
   #   )
-  #   agent = Mistri.agent("claude-opus-4-8", tools: [*Mistri::Tools.memory(memory)])
+  #   agent = Mistri.agent("claude-opus-5-5", tools: [*Mistri::Tools.memory(memory)])
   class Memory
     def initialize(read:, write:)
       @read = read

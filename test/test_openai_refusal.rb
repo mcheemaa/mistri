@@ -70,7 +70,7 @@ class TestOpenAIRefusal < Minitest::Test
   end
 
   def drive(events, records)
-    assembler = Mistri::Providers::OpenAI::Assembler.new(model: "gpt-5.6")
+    assembler = Mistri::Providers::OpenAI::Assembler.new(model: "gpt-6.1-sol")
     records.each { |record| assembler.feed(record) { |event| events << event } }
     assembler.finish { |event| events << event }
   end

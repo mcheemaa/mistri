@@ -103,11 +103,22 @@ module Mistri
 
       # Stdio: a spawned child process, one JSON-RPC message per line, with
       # credentials in its environment, as the spec prescribes for local
-      # servers. Its stderr stays attached for honest local debugging.
+      # servers. It is third-party code, so it starts from INHERITED_ENV and
+      # the client's env, not the host's environment. Its stderr stays attached
+      # for honest local debugging.
       class Stdio
         READ_SIZE = 16 * 1024
         BLANK_RECORD = /\A[[:space:]]*\z/
-        private_constant :READ_SIZE, :BLANK_RECORD
+        # What a runtime needs to start and behave: identity and programs,
+        # RubyGems paths, locale and temp files, CA bundles. A name that can
+        # carry a credential stays out, proxy settings included.
+        INHERITED_ENV = %w[
+          HOME USER LOGNAME SHELL PATH TERM
+          GEM_HOME GEM_PATH
+          LANG LC_ALL LC_CTYPE TZ TMPDIR
+          SSL_CERT_FILE SSL_CERT_DIR NODE_EXTRA_CA_CERTS REQUESTS_CA_BUNDLE CURL_CA_BUNDLE
+        ].freeze
+        private_constant :READ_SIZE, :BLANK_RECORD, :INHERITED_ENV
 
         def initialize(command:, env: {}, read_timeout: 120,
                        max_record_bytes: DEFAULT_MAX_RECORD_BYTES)
@@ -162,7 +173,9 @@ module Mistri
         def spawn_server
           child_in, @stdin = IO.pipe
           @stdout, child_out = IO.pipe
-          @pid = Process.spawn(@env, *@command, in: child_in, out: child_out)
+          env = ENV.slice(*INHERITED_ENV).merge(@env)
+          @pid = Process.spawn(env, *@command,
+                               in: child_in, out: child_out, unsetenv_others: true)
           @read_buffer = +"".b
           @newline_search_offset = 0
           child_in.close

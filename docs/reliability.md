@@ -97,7 +97,7 @@ policy = Mistri::RetryPolicy.new(
   max_delay: 30.0,
 )
 
-agent = Mistri.agent("claude-opus-4-8", retries: policy)
+agent = Mistri.agent("claude-opus-5-5", retries: policy)
 ```
 
 Set `retries: false` to disable the Agent retry loop.
@@ -151,6 +151,8 @@ Loop-level events are:
   summary in `content` and the summarizing reply in `message`, or
   `:compaction_failed` with the reason in `error_message`;
 - `:retry` before provider backoff;
+- `:thinking_dropped` after `:start`, when the provider discarded earlier
+  thinking it could no longer verify;
 - `:subagent_report` when a running background child reaches a terminal state;
   an inactive `Child#stop` persists the report without this callback because it
   has no event sink.
@@ -276,13 +278,13 @@ Anthropic and OpenAI require the tier explicitly:
 
 ```ruby
 anthropic = Mistri.agent(
-  "claude-opus-4-8",
+  "claude-opus-5-5",
   budget: Mistri::Budget.new(cost_usd: 5.00),
   provider_options: { service_tier: "standard_only" },
 )
 
 openai = Mistri.agent(
-  "gpt-5.6-terra",
+  "gpt-6.1-terra",
   budget: Mistri::Budget.new(cost_usd: 5.00),
   provider_options: { service_tier: "default" },
 )
@@ -357,12 +359,12 @@ Provider constructor settings go through `provider_options:`:
 
 ```ruby
 Mistri.agent(
-  "gpt-5.6",
+  "gpt-6.1-sol",
   provider_options: { reasoning: { summary: "auto" } },
 )
 
 Mistri.agent(
-  "claude-opus-4-8",
+  "claude-opus-5-5",
   provider_options: { cache: false },
 )
 ```
@@ -390,14 +392,40 @@ uses always-on adaptive thinking. Keep Mistri's default thinking configuration;
 disabled or token-budget thinking and forced `tool_choice: any/tool` are not
 supported. It also requires an eligible Anthropic account with 30-day retention.
 
-Fable's signed thinking binds to all preceding messages, the system prompt,
-and tool definitions. Keep those stable when continuing a session. Transient
-context transforms, including `Reminder.every`, can invalidate later thinking
-when their injected messages disappear. Mistri handles its own
-[compaction boundary](sessions.md#compaction), not arbitrary host prefix
-rewrites. Start a new session for a different prefix, or deliberately remove
-the affected thinking blocks from the host's replay view. Do not rewrite the
-stored transcript or tool-call/result pairs.
+### Claude 5.5 models and Fable 5.2
+
+`claude-opus-5-5` is the default Anthropic model. Select `claude-sonnet-5-5`,
+`claude-haiku-5-5`, or `claude-fable-5-2` explicitly. Opus 5.5, Sonnet 5.5, and
+Fable 5.2 reject disabled thinking and forced `tool_choice: any/tool`; Haiku
+5.5 rejects token-budget thinking. Keep Mistri's default thinking
+configuration.
+
+### Thinking is signed against the prefix
+
+Fable 5.1, Fable 5.2, and the Claude 5.5 models sign each thinking block
+against the system prompt, the tool definitions, and every earlier message.
+When one of those changes, the API can no longer verify the earlier thinking.
+Accounts created since 31 August 2026 reject such a request, and Fable 5.2
+rejects it on every account.
+
+Mistri asks the API to drop thinking it cannot verify, so the request
+succeeds. The model then reasons again, which costs output tokens. The stream
+emits `:thinking_dropped` with the reason in `event.content`, and the run log
+prints a warning.
+
+To avoid that cost, keep the prefix stable for the life of a session:
+
+- Build the system prompt once. Do not put the time, a counter, or other
+  per-request text in it.
+- Do not reword a tool description or change the tool list.
+- A context transform that changes between turns changes the prefix.
+  `Reminder.every` does so each time it fires.
+
+Mistri drops pre-compaction thinking itself, because its own
+[compaction boundary](sessions.md#compaction) changes the prefix. Mistri sends
+the control only to `api.anthropic.com`. For another `origin:`, pass
+`block_binding` in `thinking:`; see [Upgrading](../UPGRADING.md#unreleased).
+Do not rewrite the stored transcript or tool-call/result pairs.
 
 ## Custom providers
 
@@ -466,7 +494,7 @@ OpenAI, and Gemini model by default:
 
 ```console
 $ bundle exec rake integration
-$ MISTRI_INTEGRATION_MODELS=claude-opus-4-8 bundle exec rake integration
+$ MISTRI_INTEGRATION_MODELS=claude-opus-5-5 bundle exec rake integration
 ```
 
 Keys load from the gitignored `.env.development.local`. A missing key skips that

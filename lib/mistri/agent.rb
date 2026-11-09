@@ -85,7 +85,9 @@ module Mistri
           raise ConfigurationError,
                 "session is awaiting approvals; call resume"
         end
-        if input.to_s.empty? && Array(images).empty?
+        # A blank text block, once appended, fails every later replay on providers that reject it.
+        input = nil if input.to_s.match?(/\A[[:space:]]*\z/)
+        if input.nil? && Array(images).empty?
           raise ArgumentError,
                 "run needs input text or images"
         end

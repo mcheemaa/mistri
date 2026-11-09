@@ -212,9 +212,20 @@ class TestAgent < Minitest::Test
     ping = Mistri::Tool.define("ping", "Ping.") { "pong" }
 
     assert_raises(ArgumentError) { Mistri::Agent.new(provider:).run("") }
+    assert_raises(ArgumentError) { Mistri::Agent.new(provider:).run(" \n\t") }
     assert_raises(Mistri::ConfigurationError) do
       Mistri::Agent.new(provider:, tools: [ping, ping])
     end
+  end
+
+  def test_blank_input_beside_an_image_appends_no_text_block
+    provider = Mistri::Providers::Fake.new(turns: [{ text: "seen" }])
+    image = Mistri::Content::Image.new(data: "e30=", mime_type: "image/png")
+    agent = Mistri::Agent.new(provider:)
+
+    agent.run("  ", images: [image])
+
+    assert_equal [image], agent.session.messages.first.content
   end
 
   def test_events_stream_through_to_the_caller

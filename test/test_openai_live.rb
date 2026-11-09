@@ -12,7 +12,7 @@ class TestOpenAILive < Minitest::Test
 
   def test_a_text_turn_streams_and_lands
     provider = Mistri::Providers::OpenAI.new(api_key: ENV.fetch("OPENAI_API_KEY"),
-                                             model: "gpt-5.6",
+                                             model: "gpt-6.1-sol",
                                              service_tier: "default")
     events = []
 
@@ -36,7 +36,7 @@ class TestOpenAILive < Minitest::Test
   # on broken pairing.
   def test_a_tool_turn_replays_cleanly_into_a_final_answer
     provider = Mistri::Providers::OpenAI.new(api_key: ENV.fetch("OPENAI_API_KEY"),
-                                             model: "gpt-5.6",
+                                             model: "gpt-6.1-sol",
                                              service_tier: "default")
     weather = { name: "get_weather", description: "Current weather for a city.",
                 input_schema: { type: "object", properties: { city: { type: "string" } },
@@ -62,7 +62,7 @@ class TestOpenAILive < Minitest::Test
 
   def test_a_nested_freeform_object_schema_is_accepted
     provider = Mistri::Providers::OpenAI.new(api_key: ENV.fetch("OPENAI_API_KEY"),
-                                             model: "gpt-5.5")
+                                             model: "gpt-6.1-sol")
     tool = Mistri::Tool.define("render_chart", "Renders the requested chart.", schema: lambda {
       object :config, "Chart config; include a series array.", required: true
     }) { |_args| "rendered" }
@@ -82,9 +82,9 @@ class TestOpenAILive < Minitest::Test
     provider&.close
   end
 
-  def test_gpt_5_6_cache_writes_are_accounted
+  def test_cache_writes_are_accounted
     provider = Mistri::Providers::OpenAI.new(api_key: ENV.fetch("OPENAI_API_KEY"),
-                                             model: "gpt-5.6-luna",
+                                             model: "gpt-6-luna",
                                              reasoning: { effort: "none" },
                                              service_tier: "default")
     prompt = [SecureRandom.hex(16), "Mistri cache accounting probe. " * 700,

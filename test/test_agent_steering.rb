@@ -32,6 +32,13 @@ class TestAgentSteering < Minitest::Test
                  "the steer folds in after the tool results it arrived during"
   end
 
+  def test_a_blank_steer_is_rejected_before_it_is_queued
+    session = Mistri::Session.new(store: Mistri::Stores::Memory.new)
+
+    assert_raises(ArgumentError) { session.steer(" \n") }
+    assert_empty session.pending_inbox
+  end
+
   def test_a_steer_during_the_final_answer_extends_the_run
     store = Mistri::Stores::Memory.new
     session = Mistri::Session.new(store:)

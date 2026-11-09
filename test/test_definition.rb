@@ -24,7 +24,7 @@ class TestDefinition < Minitest::Test
     definition = Mistri::Definition.load(write(<<~MD))
       ---
       role: Trip Planner
-      model: claude-opus-4-8
+      model: claude-opus-5-5
       tools:
         - search_flights
         - book_hotel
@@ -33,7 +33,7 @@ class TestDefinition < Minitest::Test
     MD
 
     assert_equal "trip_planner", definition.name
-    assert_equal "claude-opus-4-8", definition.model
+    assert_equal "claude-opus-5-5", definition.model
     assert_equal "Trip Planner", definition.role
     assert_equal %w[search_flights book_hotel], definition.tool_names
     assert_equal({ "search_flights" => {}, "book_hotel" => {} }, definition.tools)

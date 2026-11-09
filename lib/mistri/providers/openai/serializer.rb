@@ -21,11 +21,13 @@ module Mistri
           history.reject(&:system?).flat_map { |msg| items_for(msg) }
         end
 
+        # Left unset, the API makes each schema strict, which makes every
+        # optional field required, and the model then invents their values.
         def tools(definitions)
           definitions.map do |tool|
             spec = tool.transform_keys(&:to_sym)
             { type: "function", name: spec[:name], description: spec[:description],
-              parameters: spec[:input_schema] }
+              parameters: spec[:input_schema], strict: false }
           end
         end
 

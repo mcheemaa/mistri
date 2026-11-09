@@ -151,7 +151,7 @@ class TestOpenAIAssembler < Minitest::Test # rubocop:disable Metrics/ClassLength
   end
 
   def test_completed_item_supersedes_a_fragmented_argument_overflow
-    assembler = Mistri::Providers::OpenAI::Assembler.new(model: "gpt-5.5")
+    assembler = Mistri::Providers::OpenAI::Assembler.new(model: "gpt-6.1-sol")
     deltas = []
     emit = ->(event) { deltas << event.delta if event.type == :toolcall_delta }
     item = { "type" => "function_call", "id" => "fc_large", "call_id" => "call_large",
@@ -183,7 +183,7 @@ class TestOpenAIAssembler < Minitest::Test # rubocop:disable Metrics/ClassLength
   end
 
   def test_missing_completed_arguments_preserve_a_stream_overflow
-    assembler = Mistri::Providers::OpenAI::Assembler.new(model: "gpt-5.5")
+    assembler = Mistri::Providers::OpenAI::Assembler.new(model: "gpt-6.1-sol")
     item = { "type" => "function_call", "id" => "fc_large", "call_id" => "call_large",
              "name" => "inspect" }
     assembler.feed({ "type" => "response.output_item.added", "item" => item })
@@ -203,7 +203,7 @@ class TestOpenAIAssembler < Minitest::Test # rubocop:disable Metrics/ClassLength
   end
 
   def test_partial_argument_parsing_has_a_bounded_work_schedule
-    assembler = Mistri::Providers::OpenAI::Assembler.new(model: "gpt-5.5")
+    assembler = Mistri::Providers::OpenAI::Assembler.new(model: "gpt-6.1-sol")
     assembler.feed({ "type" => "response.output_item.added",
                      "item" => { "type" => "function_call" } })
     previews = []
@@ -346,7 +346,7 @@ class TestOpenAIAssembler < Minitest::Test # rubocop:disable Metrics/ClassLength
                                        "output_tokens" => 200 }
                         } }
                     ])
-    rates = Mistri::Models.rates("gpt-5.5")
+    rates = Mistri::Models.rates("gpt-6.1-sol")
     expected = ((rates[:input] * 600) + (rates[:cache_read] * 400) +
                 (rates[:output] * 200)) / 1_000_000.0
 
@@ -362,7 +362,7 @@ class TestOpenAIAssembler < Minitest::Test # rubocop:disable Metrics/ClassLength
 
     refute_predicate unknown.finish.usage.cost, :known?
 
-    unpriced = Mistri::Providers::OpenAI::Assembler.new(model: "gpt-5.5",
+    unpriced = Mistri::Providers::OpenAI::Assembler.new(model: "gpt-6.1-sol",
                                                         catalog_pricing: false)
     unpriced.feed({ "type" => "response.completed",
                     "response" => { "status" => "completed",
@@ -371,12 +371,12 @@ class TestOpenAIAssembler < Minitest::Test # rubocop:disable Metrics/ClassLength
 
     refute_predicate unpriced.finish.usage.cost, :known?
 
-    missing = Mistri::Providers::OpenAI::Assembler.new(model: "gpt-5.5")
+    missing = Mistri::Providers::OpenAI::Assembler.new(model: "gpt-6.1-sol")
     missing.feed({ "type" => "response.completed", "response" => { "status" => "completed" } })
 
     refute_predicate missing.finish.usage.cost, :known?
 
-    flex = Mistri::Providers::OpenAI::Assembler.new(model: "gpt-5.5")
+    flex = Mistri::Providers::OpenAI::Assembler.new(model: "gpt-6.1-sol")
     flex.feed({ "type" => "response.completed",
                 "response" => { "status" => "completed", "service_tier" => "flex",
                                 "usage" => { "input_tokens" => 1000, "output_tokens" => 200 } } })
@@ -385,7 +385,7 @@ class TestOpenAIAssembler < Minitest::Test # rubocop:disable Metrics/ClassLength
   end
 
   def test_usage_separates_cache_reads_and_writes_from_uncached_input
-    assembler = Mistri::Providers::OpenAI::Assembler.new(model: "gpt-5.6-luna")
+    assembler = Mistri::Providers::OpenAI::Assembler.new(model: "gpt-6-luna")
     assembler.feed({ "type" => "response.completed",
                      "response" => {
                        "status" => "completed",
@@ -400,7 +400,7 @@ class TestOpenAIAssembler < Minitest::Test # rubocop:disable Metrics/ClassLength
                        }
                      } })
     usage = assembler.finish.usage
-    rates = Mistri::Models.rates("gpt-5.6-luna", usage:)
+    rates = Mistri::Models.rates("gpt-6-luna", usage:)
 
     assert_equal 300, usage.input
     assert_equal 400, usage.cache_read
@@ -417,19 +417,19 @@ class TestOpenAIAssembler < Minitest::Test # rubocop:disable Metrics/ClassLength
   end
 
   def test_long_context_usage_is_priced_at_the_higher_request_tier
-    assembler = Mistri::Providers::OpenAI::Assembler.new(model: "gpt-5.5")
+    assembler = Mistri::Providers::OpenAI::Assembler.new(model: "gpt-6.1-sol")
     assembler.feed({ "type" => "response.completed",
                      "response" => { "status" => "completed", "service_tier" => "default",
                                      "usage" => { "input_tokens" => 272_001,
                                                   "output_tokens" => 100 } } })
     usage = assembler.finish.usage
 
-    assert_in_delta 2.72001, usage.cost.input, 1e-9
-    assert_in_delta 0.0045, usage.cost.output, 1e-9
+    assert_in_delta 1.088004, usage.cost.input, 1e-9
+    assert_in_delta 0.0015, usage.cost.output, 1e-9
   end
 
   def test_usage_without_a_reported_service_tier_is_unknown
-    assembler = Mistri::Providers::OpenAI::Assembler.new(model: "gpt-5.5")
+    assembler = Mistri::Providers::OpenAI::Assembler.new(model: "gpt-6.1-sol")
     assembler.feed({ "type" => "response.completed",
                      "response" => { "status" => "completed",
                                      "usage" => { "input_tokens" => 1000 } } })
@@ -505,7 +505,7 @@ class TestOpenAIAssembler < Minitest::Test # rubocop:disable Metrics/ClassLength
   end
 
   def drive(events, records)
-    assembler = Mistri::Providers::OpenAI::Assembler.new(model: "gpt-5.5")
+    assembler = Mistri::Providers::OpenAI::Assembler.new(model: "gpt-6.1-sol")
     emit = ->(event) { events << event }
     records.each { |record| assembler.feed(record, &emit) }
     assembler.finish(&emit)

@@ -11,7 +11,7 @@ chosen store.
 Every Agent has a Session. Without one, Mistri creates an in-memory session:
 
 ```ruby
-agent = Mistri.agent("claude-opus-4-8")
+agent = Mistri.agent("claude-opus-5-5")
 agent.session.id
 ```
 
@@ -21,11 +21,11 @@ Pass a persistent store when work must survive a process:
 store = Mistri::Stores::JSONL.new("tmp/mistri-sessions")
 session = Mistri::Session.new(store: store)
 
-agent = Mistri.agent("claude-opus-4-8", session: session)
+agent = Mistri.agent("claude-opus-5-5", session: session)
 agent.run("Start the research plan.")
 
 reloaded = Mistri::Session.new(store: store, id: session.id)
-Mistri.agent("claude-opus-4-8", session: reloaded).run("Continue the plan.")
+Mistri.agent("claude-opus-5-5", session: reloaded).run("Continue the plan.")
 ```
 
 `Session#entries` returns the raw typed log. `Session#messages` returns the
@@ -112,6 +112,11 @@ Rebuild the Agent with the current tool definitions, authorization context,
 hooks, provider configuration, and business policy before resuming. The Session
 contains durable facts, not frozen application policy.
 
+The Session does not store the system prompt or the tool definitions. On
+current Claude models a change to either makes the API drop the session's
+earlier thinking. The run continues. See
+[Thinking is signed against the prefix](reliability.md#thinking-is-signed-against-the-prefix).
+
 ## Human approval
 
 Declare a boolean or argument predicate on the tool:
@@ -131,6 +136,11 @@ send_gift = Mistri::Tool.define(
   )
 end
 ```
+
+Mistri tells the model about the gate. The description a provider receives
+ends with "A person reviews each call before it runs.", or "may review a call"
+for a predicate. Without it, a careful model asks the user in text and the run
+never reaches the approval.
 
 When the model calls it:
 
@@ -157,7 +167,7 @@ sleeps while waiting. To continue:
 ```ruby
 session = Mistri::Session.new(store: store, id: session_id)
 agent = Mistri.agent(
-  "claude-opus-4-8",
+  "claude-opus-5-5",
   tools: current_tools,
   session: session,
   context: current_authorization_context,
@@ -221,11 +231,11 @@ settings = Mistri::Compaction.new(
   reserve: 64_000,
   keep_recent: 24_000,
   max_tokens: 8_192,
-  fallback: "claude-sonnet-5",
+  fallback: "claude-sonnet-5-5",
   instructions: "Preserve decisions, identifiers, and unresolved risks.",
 )
 
-agent = Mistri.agent("claude-opus-4-8", compaction: settings)
+agent = Mistri.agent("claude-opus-5-5", compaction: settings)
 ```
 
 An explicit `window:` enables compaction for an uncatalogued deployment. An
@@ -248,7 +258,7 @@ a refusal included. The model that failed is never asked again: a fallback
 naming the primary's own model is skipped, so a second deployment of the same
 model is not a fallback. The host chooses it, so a refusal never changes
 models silently. Natural pairs are a smaller model of the same family: Sonnet
-5 behind Fable 5.1 or Opus 5, Sol behind Astra, Flash behind Gemini Pro. The
+5.5 behind Fable 5.1 or Opus 5.5, Sol behind Astra, Flash behind Gemini Pro. The
 compaction entry records which model wrote the summary, and the `:compaction`
 event carries that reply in `event.message` (so a serialized event repeats the
 summary once). When both fail, the one `compaction_failed` entry names each
@@ -299,9 +309,11 @@ uses the visible summary plus the retained tail, while the full original log
 remains available through `entries` and `transcript`. Compaction cannot hide an
 open approval or split a completed tool call from its result.
 
-Fable 5.1 binds thinking to the conversation prefix. After compaction, replay
-omits its pre-compaction thinking from the kept tail; new thinking and the
-durable transcript stay intact. Other models' thinking is unchanged. Manual
+Current Claude models bind thinking to the conversation prefix. After
+compaction, replay omits their pre-compaction thinking from the kept tail; new
+thinking and the durable transcript stay intact. This applies to every
+Anthropic model except the older ones the catalog names, so a model newer than
+the catalog is covered. Other providers' thinking is unchanged. Manual
 compaction must use the same per-session serialization as `run` and `resume`,
 between provider turns, not inside an event callback or alongside an in-flight
 request. An answer generated against the old prefix cannot safely join the

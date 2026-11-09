@@ -22,7 +22,7 @@ Dir.mktmpdir do |dir|
     "gift queued for #{args["to"]}"
   end
 
-  agent = Mistri.agent("claude-opus-4-8", tools: [send_gift], session:)
+  agent = Mistri.agent("claude-opus-5-5", tools: [send_gift], session:)
   result = agent.run("Send a welcome gift to Ana.")
   puts "suspended: #{result.awaiting_approval?} (nothing executed)"
 
@@ -30,7 +30,7 @@ Dir.mktmpdir do |dir|
   Mistri::Session.new(store:, id: session.id).approve(result.pending.first.id)
 
   reloaded = Mistri::Session.new(store:, id: session.id)
-  resumed = Mistri.agent("claude-opus-4-8", tools: [send_gift], session: reloaded).resume
+  resumed = Mistri.agent("claude-opus-5-5", tools: [send_gift], session: reloaded).resume
   puts "resumed: #{resumed.status}"
   puts resumed.text
 end

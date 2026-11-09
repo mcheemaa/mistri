@@ -58,7 +58,7 @@ weather = Mistri::Tool.define(
   { city: args.fetch("city"), forecast: "34 C and clear" }
 end
 
-agent = Mistri.agent("claude-opus-5", tools: [weather])
+agent = Mistri.agent("claude-opus-5-5", tools: [weather])
 
 result = agent.run("What should I wear in Lahore today? One sentence.") do |event|
   print event.delta if event.type == :text_delta
@@ -77,7 +77,7 @@ Mistri.logger = Rails.logger   # or any Logger-compatible object
 ```
 
 ```text
-[mistri 0a1b2c3d] run "What is 2 plus 3?" (gpt-5.6, 3 tools)
+[mistri 0a1b2c3d] run "What is 2 plus 3?" (gpt-6.1-sol, 3 tools)
 [mistri 0a1b2c3d] turn 1 done tool_use (312 in / 48 out)
 [mistri 0a1b2c3d] tool add#7f3a {"a":2,"b":3}
 [mistri 0a1b2c3d] tool add#7f3a ok 12ms "5"
@@ -104,7 +104,7 @@ send_gift = Mistri::Tool.define(
   needs_approval: ->(args) { args.fetch("total_usd") > 500 },
 ) { |args| Gifts.send!(args) }
 
-agent = Mistri.agent("claude-opus-5", tools: [send_gift])
+agent = Mistri.agent("claude-opus-5-5", tools: [send_gift])
 
 result = agent.run("Send the executive box to Sarah.")
 result.awaiting_approval? # => true; the handler did not run
@@ -143,8 +143,8 @@ These projects solve different problems:
 
 | Need | Start with |
 | --- | --- |
-| A durable, approvable agent loop inside an existing Ruby application | **Mistri** |
-| Broad model access plus media, embeddings, image generation, and Rails-backed chat | [RubyLLM](https://github.com/crmne/ruby_llm) |
+| A durable, approvable agent loop in any Ruby application, on a session store you own, with no runtime dependencies | **Mistri** |
+| A full AI framework: many providers, media, embeddings, and agents persisted through Rails | [RubyLLM](https://github.com/crmne/ruby_llm) |
 | Agents expressed through Rails controllers, actions, callbacks, views, and Active Job | [Active Agent](https://github.com/activeagents/activeagent) |
 
 Mistri is deliberately not a terminal UI, hosted agent service, media client,
@@ -162,11 +162,11 @@ session:
 store = Mistri::Stores::JSONL.new("tmp/mistri-sessions")
 session = Mistri::Session.new(store: store)
 
-Mistri.agent("claude-opus-5", session: session).run("Start a haiku about the sea.")
+Mistri.agent("claude-opus-5-5", session: session).run("Start a haiku about the sea.")
 
 # A later process reloads the same session by ID and continues it.
 reloaded = Mistri::Session.new(store: store, id: session.id)
-Mistri.agent("claude-opus-5", session: reloaded).run("Now finish it.")
+Mistri.agent("claude-opus-5-5", session: reloaded).run("Now finish it.")
 
 # Steering queues a redirect from anywhere, without the Agent object; a
 # run in flight folds it at its next turn.
@@ -229,11 +229,11 @@ linked and inspectable.
 researcher = Mistri::SubAgent.new(
   name: "researcher",
   description: "Reads pages and answers factual questions.",
-  provider: Mistri.provider("claude-haiku-4-5"),
+  provider: Mistri.provider("claude-haiku-5-5"),
   tools: [fetch_page],
 )
 
-agent = Mistri.agent("claude-opus-5", tools: [researcher.tool])
+agent = Mistri.agent("claude-opus-5-5", tools: [researcher.tool])
 ```
 
 Mistri also provides an open spawn tool, background dispatch through your own
