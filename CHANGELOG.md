@@ -5,6 +5,9 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+- `Agent#run` and `Session#steer` reject white-space-only text with
+  `ArgumentError`; `run` still accepts images alone. A blank text block, once
+  appended, failed every later turn on providers that reject it.
 - Stdio MCP servers no longer inherit the host environment, which holds
   provider keys and other host secrets. The child gets the client's `env:` and
   a fixed list from the host: identity and `PATH`, RubyGems paths, locale and
