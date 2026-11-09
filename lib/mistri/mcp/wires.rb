@@ -103,12 +103,21 @@ module Mistri
 
       # Stdio: a spawned child process, one JSON-RPC message per line, with
       # credentials in its environment, as the spec prescribes for local
-      # servers. It is third-party code, so the host's secrets never reach it.
-      # Its stderr stays attached for honest local debugging.
+      # servers. It is third-party code, so it starts from INHERITED_ENV and
+      # the client's env, not the host's environment. Its stderr stays attached
+      # for honest local debugging.
       class Stdio
         READ_SIZE = 16 * 1024
         BLANK_RECORD = /\A[[:space:]]*\z/
-        INHERITED_ENV = %w[PATH HOME SSL_CERT_FILE SSL_CERT_DIR NODE_EXTRA_CA_CERTS].freeze
+        # What a runtime needs to start and behave: identity and programs,
+        # RubyGems paths, locale and temp files, CA bundles. A name that can
+        # carry a credential stays out, proxy settings included.
+        INHERITED_ENV = %w[
+          HOME USER LOGNAME SHELL PATH TERM
+          GEM_HOME GEM_PATH
+          LANG LC_ALL LC_CTYPE TZ TMPDIR
+          SSL_CERT_FILE SSL_CERT_DIR NODE_EXTRA_CA_CERTS REQUESTS_CA_BUNDLE CURL_CA_BUNDLE
+        ].freeze
         private_constant :READ_SIZE, :BLANK_RECORD, :INHERITED_ENV
 
         def initialize(command:, env: {}, read_timeout: 120,

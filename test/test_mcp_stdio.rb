@@ -93,20 +93,25 @@ class TestMcpStdio < Minitest::Test
     stdio.close
   end
 
-  def test_the_child_environment_is_env_plus_the_runtime_allowlist_only
-    ca = ENV.fetch("NODE_EXTRA_CA_CERTS", nil)
-    ENV["NODE_EXTRA_CA_CERTS"] = "/ca.pem"
-    ENV["STUB_FLAVOR"] = "from-parent"
+  def test_the_child_gets_the_inherited_names_and_env_but_no_other_host_variable
+    inherited = %w[
+      HOME USER LOGNAME SHELL PATH TERM
+      GEM_HOME GEM_PATH
+      LANG LC_ALL LC_CTYPE TZ TMPDIR
+      SSL_CERT_FILE SSL_CERT_DIR NODE_EXTRA_CA_CERTS REQUESTS_CA_BUNDLE CURL_CA_BUNDLE
+    ]
+    unset = inherited - ENV.keys
+    unset.each { |name| ENV[name] = "set-by-test" }
+    ENV["STUB_FLAVOR"] = "host-only"
     stdio = client(env: { "STUB_LIST_ENV" => "1" })
 
-    keys = stdio.call_tool("echo", {}).dig("content", 0, "text").split
+    names = stdio.call_tool("echo", {}).dig("content", 0, "text").split
 
-    assert_equal %w[HOME NODE_EXTRA_CA_CERTS PATH STUB_LIST_ENV],
-                 keys & %w[HOME NODE_EXTRA_CA_CERTS PATH STUB_FLAVOR STUB_LIST_ENV]
+    assert_empty [*inherited, "STUB_LIST_ENV"] - names
+    refute_includes names, "STUB_FLAVOR"
   ensure
-    ENV["NODE_EXTRA_CA_CERTS"] = ca
-    ENV.delete("STUB_FLAVOR")
-    stdio.close
+    [*unset, "STUB_FLAVOR"].each { |name| ENV.delete(name) }
+    stdio&.close
   end
 
   def test_a_bridged_stdio_tool_reaches_an_agent
