@@ -160,7 +160,7 @@ class TestSubscriberProviderBoundaries < Minitest::Test
 
   def anthropic_provider(server)
     Mistri::Providers::Anthropic.new(api_key: "test", origin: server.origin,
-                                     model: "claude-haiku-4-5-20251001")
+                                     model: "claude-haiku-5-5")
   end
 
   def error_server

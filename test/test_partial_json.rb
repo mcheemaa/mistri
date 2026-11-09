@@ -59,6 +59,16 @@ class TestPartialJson < Minitest::Test
     assert(JSON.generate(Mistri::PartialJson.parse('{"y": 1e999, "z": 2}')))
   end
 
+  def test_out_of_range_numbers_are_quiet_and_keep_finite_neighbors
+    assert_silent do
+      assert_equal({ "kept" => 2 },
+                   Mistri::PartialJson.parse('{"positive":1e999,"negative":-1e999,"kept":2}'))
+      assert_equal [0.0, Float::MAX], Mistri::PartialJson.parse("[1e-999,1.7976931348623157e308]")
+      assert_equal({ "kept" => 2 }, Mistri::PartialJson.parse('{"kept":2,"overflow":1e999e'))
+      assert_equal({ "kept" => 2 }, Mistri::PartialJson.parse('{"kept":2,"broken":truee}'))
+    end
+  end
+
   def test_a_complete_trailing_backslash_survives_mid_stream_salvage
     assert_equal({ "s" => "a\\" }, Mistri::PartialJson.parse('{"s": "a\\\\'))
   end

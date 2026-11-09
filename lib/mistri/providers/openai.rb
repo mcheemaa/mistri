@@ -17,7 +17,7 @@ module Mistri
       DEFAULT_ORIGIN = "https://api.openai.com"
       DEFAULT_REASONING = { summary: "auto" }.freeze
 
-      def initialize(api_key:, model: "gpt-5.5", origin: DEFAULT_ORIGIN,
+      def initialize(api_key:, model: "gpt-6.1-sol", origin: DEFAULT_ORIGIN,
                      reasoning: DEFAULT_REASONING, service_tier: nil,
                      catalog_pricing: nil, **transport_options)
         @api_key = api_key

@@ -35,6 +35,23 @@ class TestAnthropicSerializer < Minitest::Test
     assert_equal({ type: "tool_use", id: "a", name: "x", input: {} }, wire[1][:content].first)
   end
 
+  def test_whitespace_only_text_never_reaches_the_wire
+    call = Mistri::ToolCall.new(id: "a", name: "x", arguments: {})
+    history = [
+      Mistri::Message.user(" \n\t "),
+      Mistri::Message.user([Mistri::Content::Text.new(text: "\u00A0"),
+                            Mistri::Content::Text.new(text: " kept ")]),
+      Mistri::Message.assistant(content: "\n\n", tool_calls: [call], stop_reason: :tool_use),
+      Mistri::Message.tool(content: "  ", tool_call_id: "a")
+    ]
+
+    mixed, assistant, results = SERIALIZER.messages(history)
+
+    assert_equal [{ type: "text", text: " kept " }], mixed[:content]
+    assert_equal(["tool_use"], assistant[:content].map { |block| block[:type] })
+    assert_equal [{ type: "text", text: " " }], results[:content].first[:content]
+  end
+
   def test_only_failed_tool_results_emit_is_error
     history = [Mistri::Message.tool(content: "Error-looking success", tool_call_id: "a"),
                Mistri::Message.tool(content: "plain failure", tool_call_id: "b",

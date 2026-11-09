@@ -10,6 +10,41 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   `NODE_EXTRA_CA_CERTS`), and the client's `env:`, so provider keys and other
   host secrets never reach it. Pass any other variable a server needs, such as
   a proxy setting, through `env:`.
+- Provider defaults move to the current models: `claude-opus-5-5`,
+  `gpt-6.1-sol`, and `gemini-3.8-flash`. `claude-fable-5-2`, `claude-opus-5-5`,
+  `claude-sonnet-5-5`, `claude-haiku-5-5`, `gpt-6.1-sol`, `gpt-6.1-terra`,
+  `gpt-6-luna`, and `gemini-3.8-flash` join the model catalog with published
+  context limits and pricing, including Haiku 5.5's higher rates above
+  100,000 prompt tokens and Gemini 3.8 Flash's January 2027 price change.
+- A changed system prompt, tool definition, or transient context transform no
+  longer ends an Anthropic session. Current Claude models reject earlier
+  thinking once any of those change, and every later request failed the same
+  way. Requests with adaptive thinking on the official origin now ask the API
+  to drop thinking it cannot verify. The stream reports each drop as a
+  `:thinking_dropped` event, and the run log warns. A `block_binding` the host
+  sets in `thinking:` is sent as given.
+- Compacted replay drops pre-compaction thinking for every Anthropic model
+  except the older ones the catalog names. A new model is safe before it is
+  catalogued; Fable 5.2 failed its first compaction without this.
+- The Anthropic serializer no longer sends whitespace-only text, or a user
+  turn that holds nothing else. A session that stored one answers again.
+- OpenAI tools are sent with `strict: false`. Left unset, the Responses API
+  made each schema strict, and the model invented a value for every optional
+  field.
+- Gemini receives a skill the model loaded in its system instruction as well
+  as in the tool result. Gemini treats instructions inside a tool result as
+  untrusted and ignored a loaded skill about half the time.
+- `read_skill` marks an unknown skill name as a failed tool result.
+- The description a provider sees for a tool with `needs_approval` says that a
+  person reviews the call. A model that could not see the gate sometimes asked
+  the user in text and never reached it. `Tool#description` is unchanged.
+- The retired `gemini-2.5-pro` and `gemini-2.5-flash` leave the model catalog.
+  A cost-budgeted agent that names one now fails at construction.
+- `claude-sonnet-5` is priced at its standing rates again. Anthropic cancelled
+  the September 2026 increase the catalog applied, so its costs were
+  overstated from that date.
+- Partial JSON previews drop an overflowing number without a Ruby float
+  warning.
 - Compaction summaries are handoffs in seven fixed sections: the requests
   that shaped the work in the user's words, constraints, exact facts and
   references, decisions, progress, open failures, and current work with the

@@ -3,9 +3,10 @@
 require "securerandom"
 require_relative "test_helper"
 
-# Fable's prefix-bound thinking must survive compaction as durable history,
-# without sending an invalid signature back in the shortened replay.
-class TestFableCompactionLive < Minitest::Test
+# Prefix-bound thinking must survive compaction as durable history, without
+# sending an invalid signature back in the shortened replay.
+class TestPrefixBoundCompactionLive < Minitest::Test
+  MODELS = Mistri::Models::CATALOG.keys.select { |id| Mistri::Models.prefix_bound_thinking?(id) }
   SYSTEM = "Follow the user's instructions exactly. " \
            "Use lookup_checkpoint before stating its value."
 
@@ -38,11 +39,6 @@ class TestFableCompactionLive < Minitest::Test
     skip "set MISTRI_LIVE=1 for live tests" unless ENV["MISTRI_LIVE"] == "1"
     skip "no ANTHROPIC_API_KEY" if ENV["ANTHROPIC_API_KEY"].to_s.empty?
 
-    @provider = Mistri::Providers::Anthropic.new(
-      api_key: ENV.fetch("ANTHROPIC_API_KEY"), model: "claude-fable-5-1", read_timeout: 120
-    )
-    @transport = BindingCheckedTransport.new(@provider.instance_variable_get(:@transport))
-    @provider.instance_variable_set(:@transport, @transport)
     @tools = [{ name: "lookup_checkpoint", description: "Returns the checkpoint value.",
                 input_schema: { type: "object", properties: { prime: { type: "integer" } },
                                 required: ["prime"] } }]
@@ -52,7 +48,25 @@ class TestFableCompactionLive < Minitest::Test
     @provider&.close
   end
 
-  def test_signed_tool_thinking_replays_after_compaction_and_a_later_turn
+  MODELS.each do |model|
+    define_method("test_signed_tool_thinking_replays_after_compaction_on_#{model.tr("-", "_")}") do
+      bind(model)
+
+      assert_signed_tool_thinking_replays_after_compaction
+    end
+  end
+
+  private
+
+  def bind(model)
+    @provider = Mistri::Providers::Anthropic.new(
+      api_key: ENV.fetch("ANTHROPIC_API_KEY"), model:, read_timeout: 120
+    )
+    @transport = BindingCheckedTransport.new(@provider.instance_variable_get(:@transport))
+    @provider.instance_variable_set(:@transport, @transport)
+  end
+
+  def assert_signed_tool_thinking_replays_after_compaction
     session = checkpoint_session
     reply = signed_tool_reply(session.messages)
     call = reply.tool_calls.first
@@ -90,8 +104,6 @@ class TestFableCompactionLive < Minitest::Test
 
     assert_completed_value(session.messages, secret)
   end
-
-  private
 
   # The summary request is the compactor's own: no thinking, so no binding
   # control, while every signed-thinking turn before it stayed strictly bound.

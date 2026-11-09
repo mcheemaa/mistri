@@ -22,7 +22,7 @@ workspace = Mistri::Workspace::Single.new(
   path: "hero.html"
 )
 
-agent = Mistri.agent("claude-opus-4-8",
+agent = Mistri.agent("claude-opus-5-5",
                      tools: Mistri::Tools.files(workspace),
                      system: "Edit the page with the document tools. Read before editing.")
 
