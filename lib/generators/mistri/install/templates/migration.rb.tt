@@ -9,7 +9,8 @@ class Create<%= table_name.camelize %> < ActiveRecord::Migration[<%= ActiveRecor
 
     # The unique position is the optimistic concurrency boundary for
     # independent appenders; a collision retries at the next position. It
-    # also serves every read and delete by session, so it is the only index.
+    # also serves every read and delete by session, so the store needs no
+    # other index.
     add_index :<%= table_name %>, [:session_id, :position], unique: true
   end
 end

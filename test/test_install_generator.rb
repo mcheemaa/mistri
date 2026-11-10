@@ -26,6 +26,7 @@ if defined?(Mistri::Generators::InstallGenerator)
         assert_match(/create_table :agent_entries/, migration)
         assert_match(/t\.string :session_id, null: false$/, migration)
         refute_match(/index: true/, migration)
+        assert_equal 1, migration.scan("add_index").length
         assert_match(/t\.integer :position, null: false/, migration)
         assert_match(/t\.text :payload, null: false/, migration)
         assert_match(/add_index :agent_entries, \[:session_id, :position\], unique: true/,

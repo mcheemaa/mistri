@@ -118,7 +118,7 @@ The table needs `session_id`, `position`, and `payload`, plus a unique index on
 `[session_id, position]`. The unique index is the optimistic append boundary for
 independent writers, and it serves every read: a load from a position is one
 range read on it. It also serves a read or a delete of a whole session, so the
-table needs no other index.
+store needs no other index.
 
 Positions run 1, 2, 3 with no gap because rows are only ever appended. A read
 whose rows are not at consecutive positions raises

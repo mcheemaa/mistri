@@ -103,8 +103,9 @@ remove_index :agent_entries, :session_id
 ```
 
 It saves the storage of that index: about half of the table's secondary index
-size on MySQL 8.4 and a fifth on PostgreSQL 14, measured on 220,000 rows. It
-does not make an append faster.
+size on MySQL 8.4 and a fifth on PostgreSQL 14, measured on 220,000 rows. The
+measured time of an append was unchanged. Keep the index if your own queries
+on the table use it.
 
 ### The single-value workspace recipe borrows its connection
 
