@@ -2,11 +2,15 @@
 
 require "securerandom"
 require_relative "../test_helper"
+require_relative "live_report"
+
+Mistri::Test::LiveReport.install
 
 # The live integration harness runs the full loop against real provider APIs,
 # once per model in the matrix. Scenarios pair generated values with structural
 # assertions. Opaque markers prove exact data flow; pronounceable synthetic
 # names keep entity prompts natural without relying on a real company or person.
+# A run ends with what it spent: calls, seconds, tokens and dollars per model.
 #
 #   bundle exec rake integration
 #   MISTRI_INTEGRATION_STRICT=1 bundle exec rake integration

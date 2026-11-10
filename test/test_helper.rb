@@ -39,6 +39,11 @@ end
 require "mistri"
 require "minitest/autorun"
 
+if ENV["MISTRI_LIVE"] == "1"
+  require_relative "support/live_report"
+  Mistri::Test::LiveReport.install
+end
+
 module Mistri
   module Test
     ALLOW_LOOPBACK = ->(_uri, address) { address.loopback? }
