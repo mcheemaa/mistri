@@ -39,6 +39,17 @@ module SessionStoreTests
     assert_raises(Mistri::ConfigurationError) { @store.load("s") }
   end
 
+  def test_a_session_read_does_not_keep_a_connection_checked_out
+    session = Mistri::Session.new(store: @store)
+    session.append_message(Mistri::Message.user("hello"))
+    model.connection_pool.release_connection
+
+    session.messages
+    session.messages
+
+    refute_predicate model.connection_pool, :active_connection?
+  end
+
   def test_a_session_does_not_keep_a_decision_that_was_rolled_back
     session = session_with_a_parked_approval
 

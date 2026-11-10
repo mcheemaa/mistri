@@ -153,12 +153,24 @@ if defined?(Mistri::Stores::ActiveRecord)
   class FakeEntryModel
     Row = Struct.new(:session_id, :position, :payload)
 
+    Connection = Struct.new(:open) do
+      def transaction_open? = open
+    end
+
     # The position ranges the store asked for, in order.
     attr_reader :filters
+
+    # Whether a transaction is open, and how many times a connection was
+    # borrowed or kept.
+    attr_accessor :transaction_open
+    attr_reader :borrowed, :kept
 
     def initialize
       @rows = []
       @filters = []
+      @transaction_open = false
+      @borrowed = 0
+      @kept = 0
       @mutex = Mutex.new
       @before_insert = nil
       @caching = false
@@ -218,6 +230,16 @@ if defined?(Mistri::Stores::ActiveRecord)
 
     def insert_bare(session_id, position)
       @rows << Row.new(session_id, position, "{}")
+    end
+
+    def with_connection
+      @borrowed += 1
+      yield Connection.new(@transaction_open)
+    end
+
+    def connection
+      @kept += 1
+      Connection.new(@transaction_open)
     end
 
     def delete_at(session_id, position)
@@ -300,6 +322,19 @@ if defined?(Mistri::Stores::ActiveRecord)
       @model.delete_at("s", 2)
 
       assert_raises(Mistri::ConfigurationError) { @store.load("s", from: 1) }
+    end
+
+    def test_reads_are_settled_only_outside_a_transaction
+      assert_predicate @store, :settled?
+      @model.transaction_open = true
+
+      refute_predicate @store, :settled?
+    end
+
+    def test_asking_about_a_transaction_borrows_a_connection_and_keeps_none
+      @store.settled?
+
+      assert_equal [1, 0], [@model.borrowed, @model.kept]
     end
 
     def test_a_losing_writer_retries_at_the_next_position
