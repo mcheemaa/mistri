@@ -2,9 +2,7 @@
 
 # Store doubles for tests of how a session or a worker window reads its log.
 module SessionStores
-  # Records each load: the session, where it starts, how many entries it
-  # returns. `loaded` gets a signal after each one, for a test that must act
-  # only once a read has finished.
+  # Records each load and signals when it has finished.
   class Recording < Mistri::Stores::Memory
     Read = Data.define(:id, :from, :entries)
 
@@ -28,8 +26,7 @@ module SessionStores
     end
   end
 
-  # Appends made inside #transaction vanish when it is rolled back, as rows
-  # do in a database transaction.
+  # Appends made inside #transaction vanish when it is rolled back.
   class Transactional < Mistri::Stores::Memory
     class Rollback < StandardError; end
 
@@ -46,8 +43,7 @@ module SessionStores
     end
   end
 
-  # Serves the thread that pinned it a copy of the log from that moment, as
-  # a REPEATABLE READ transaction does on its connection.
+  # Serves the thread that pinned it the log as it was then, like REPEATABLE READ.
   class Snapshot < Mistri::Stores::Memory
     def pin
       copy = @mutex.synchronize { @entries.to_h { |id, entries| [id, entries.dup] } }
