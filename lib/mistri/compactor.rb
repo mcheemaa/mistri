@@ -164,12 +164,13 @@ module Mistri
 
       # Walk back from the tail until the keep budget is spent; the cut then
       # snaps to the next safe turn boundary, so replay keeps at most about
-      # keep_recent tokens of recent turns.
+      # keep_recent tokens of recent turns. A synthesized message has no
+      # position, so the walk goes on to the entry it stands behind.
       def keep_boundary(replay, keep_recent)
         kept = 0
         replay.reverse_each do |(message, index)|
           kept += Compaction.estimate(message)
-          return index || 0 if kept >= keep_recent
+          return index if index && kept >= keep_recent
         end
         nil
       end
