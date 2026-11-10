@@ -68,6 +68,20 @@ class PostgresqlSnapshotBarrier
 end
 
 # The real PostgreSQL proof for row locks, schema inspection, and create CAS.
+# A pool of one connection: a second checkout from inside a borrowed block
+# would wait and time out.
+class PostgresqlOneConnectionRecord < ActiveRecord::Base
+  self.abstract_class = true
+  establish_connection(
+    ActiveRecord::Base.connection_db_config.configuration_hash.merge(pool: 1, checkout_timeout: 2)
+  )
+end
+
+# Never loaded before its test, so its schema is read for the first time there.
+class PostgresqlColdDocument < PostgresqlOneConnectionRecord
+  self.table_name = "mistri_postgresql_documents"
+end
+
 class TestWorkspacePostgresql < Minitest::Test
   def setup
     PostgresqlAtomicDocument.delete_all
@@ -82,6 +96,25 @@ class TestWorkspacePostgresql < Minitest::Test
     assert_instance_of String, expression.columns
     assert_predicate expression, :valid?
     assert_predicate workspace, :atomic_writes?
+  end
+
+  def test_the_first_schema_check_needs_only_one_connection
+    workspace = Mistri::Workspace::ActiveRecord.new(
+      PostgresqlColdDocument, scope: { tenant_id: "tenant-a" }
+    )
+
+    assert_predicate workspace, :atomic_writes?
+    refute_predicate PostgresqlColdDocument.connection_pool, :active_connection?
+  end
+
+  def test_an_edit_leaves_no_connection_checked_out
+    workspace = build_workspace("tenant-a", page)
+    PostgresqlAtomicDocument.connection_pool.release_connection
+
+    Mistri::Tools.edit_file(workspace).call(headline_edit("New"))
+
+    refute_predicate PostgresqlAtomicDocument.connection_pool, :active_connection?
+    assert_includes workspace.read("page.html"), "<h1>New</h1>"
   end
 
   def test_atomic_operations_reject_an_external_transaction

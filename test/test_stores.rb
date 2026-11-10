@@ -232,6 +232,9 @@ if defined?(Mistri::Stores::ActiveRecord)
       @rows << Row.new(session_id, position, "{}")
     end
 
+    # Lends a connection for a block, as a pool does.
+    def connection_pool = self
+
     def with_connection
       @borrowed += 1
       yield Connection.new(@transaction_open)

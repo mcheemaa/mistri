@@ -69,16 +69,9 @@ module Mistri
 
       # Inside a transaction a read can be rolled back or pinned to an older
       # snapshot, so a session reads the whole log there and holds nothing.
-      # with_connection borrows a connection for the question; connection would
-      # keep one checked out for the rest of the run.
-      def settled?
-        open = if @model.respond_to?(:with_connection)
-                 @model.with_connection(&:transaction_open?)
-               else
-                 @model.connection.transaction_open?
-               end
-        !open
-      end
+      # The pool lends a connection for the question; asking the model for its
+      # connection would keep one checked out for the rest of the run.
+      def settled? = !@model.connection_pool.with_connection(&:transaction_open?)
 
       private
 

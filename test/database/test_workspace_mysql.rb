@@ -119,6 +119,20 @@ class MysqlConflictOnce
 end
 
 # The real database proof for scoped row locks and unique create CAS.
+# A pool of one connection: a second checkout from inside a borrowed block
+# would wait and time out.
+class MysqlOneConnectionRecord < ActiveRecord::Base
+  self.abstract_class = true
+  establish_connection(
+    ActiveRecord::Base.connection_db_config.configuration_hash.merge(pool: 1, checkout_timeout: 2)
+  )
+end
+
+# Never loaded before its test, so its schema is read for the first time there.
+class MysqlColdDocument < MysqlOneConnectionRecord
+  self.table_name = "mistri_atomic_documents"
+end
+
 class TestWorkspaceMysql < Minitest::Test
   def setup
     MysqlAtomicDocument.delete_all
@@ -148,6 +162,25 @@ class TestWorkspaceMysql < Minitest::Test
     error = assert_raises(Mistri::ConfigurationError) { workspace.snapshot("page.html") }
 
     assert_match(/InnoDB/, error.message)
+  end
+
+  def test_the_first_schema_check_needs_only_one_connection
+    workspace = Mistri::Workspace::ActiveRecord.new(
+      MysqlColdDocument, scope: { tenant_id: "tenant-a" }
+    )
+
+    assert_predicate workspace, :atomic_writes?
+    refute_predicate MysqlColdDocument.connection_pool, :active_connection?
+  end
+
+  def test_an_edit_leaves_no_connection_checked_out
+    workspace = build_workspace("tenant-a", page)
+    MysqlAtomicDocument.connection_pool.release_connection
+
+    Mistri::Tools.edit_file(workspace).call(headline_edit("New"))
+
+    refute_predicate MysqlAtomicDocument.connection_pool, :active_connection?
+    assert_includes workspace.read("page.html"), "<h1>New</h1>"
   end
 
   def test_atomic_operations_reject_an_external_transaction
@@ -389,7 +422,7 @@ class TestWorkspaceMysql < Minitest::Test
       read: -> { record.reload.content },
       write: ->(content) { record.update!(content:) },
       synchronize: lambda do |&operation|
-        if record.class.connection.transaction_open?
+        if record.class.connection_pool.with_connection(&:transaction_open?)
           raise Mistri::ConfigurationError, "page editor must run outside a transaction"
         end
 

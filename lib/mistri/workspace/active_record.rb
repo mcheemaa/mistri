@@ -103,18 +103,22 @@ module Mistri
 
       def verify_atomic_context!
         unless atomic_writes?
-          adapter = @model.connection.adapter_name
+          adapter = with_connection(&:adapter_name)
           raise ConfigurationError,
                 "atomic Active Record workspace writes require PostgreSQL or InnoDB, " \
                 "a matching non-null primary key, non-null scope/path/content columns, " \
                 "and an exact unique scope/path key; #{@model.table_name.inspect} on " \
                 "#{adapter} does not qualify"
         end
-        return unless @model.connection.transaction_open?
+        return unless with_connection(&:transaction_open?)
 
         raise ConfigurationError,
               "atomic Active Record workspace operations cannot join an open transaction"
       end
+
+      # Borrows a connection for the block and returns it. Asking the model
+      # for its connection would keep one checked out for the rest of the run.
+      def with_connection(&) = @model.connection_pool.with_connection(&)
 
       def relation(path) = @model.where(**@scope, path: path.to_s)
 
@@ -131,14 +135,15 @@ module Mistri
       end
 
       def atomic_storage?
-        adapter = @model.connection.adapter_name
-        supported = adapter == "PostgreSQL" ||
-                    (MYSQL_ADAPTERS.include?(adapter) && innodb_table?)
-        supported && atomic_schema?
+        with_connection do |connection|
+          adapter = connection.adapter_name
+          supported = adapter == "PostgreSQL" ||
+                      (MYSQL_ADAPTERS.include?(adapter) && innodb_table?(connection))
+          supported && atomic_schema?(connection)
+        end
       end
 
-      def innodb_table?
-        connection = @model.connection
+      def innodb_table?(connection)
         database, table = mysql_table_coordinates(connection)
         sql = "SELECT ENGINE FROM information_schema.TABLES " \
               "WHERE TABLE_SCHEMA = #{connection.quote(database)} " \
@@ -153,8 +158,7 @@ module Mistri
         [connection.current_database, names.first]
       end
 
-      def atomic_schema?
-        connection = @model.connection
+      def atomic_schema?(connection)
         columns = connection.columns(@model.table_name).to_h { |column| [column.name, column] }
         primary_columns = Array(@model.primary_key).compact.map(&:to_s)
         catalog_primary = Array(connection.primary_keys(@model.table_name)).map(&:to_s)
