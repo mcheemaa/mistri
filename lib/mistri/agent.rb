@@ -30,7 +30,7 @@ module Mistri
               "the user now: give your best answer from the work so far, and say what is " \
               "done and what is not."
     private_constant :MAX_ARGUMENT_VIOLATIONS, :MAX_ARGUMENT_ERROR_BYTES,
-                     :MAX_VIOLATION_SOURCE_BYTES, :TOOL_ARGUMENT_VALIDATOR
+                     :MAX_VIOLATION_SOURCE_BYTES, :TOOL_ARGUMENT_VALIDATOR, :WRAP_UP
 
     # compaction defaults on so long sessions survive their context window;
     # pass false to disable, or a tuned Compaction. It only ever triggers

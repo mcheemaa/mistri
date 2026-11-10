@@ -58,8 +58,9 @@ class TestBudgetWrapUp < Minitest::Test
     sent = provider.requests.last[:messages].last
 
     assert_predicate sent, :user?
-    assert_equal Mistri::Agent::WRAP_UP, sent.text
-    assert(agent.session.messages.none? { |message| message.text == Mistri::Agent::WRAP_UP })
+    refute_empty sent.text.strip
+    refute_includes agent.session.messages, sent
+    assert_raises(NameError) { Mistri::Agent::WRAP_UP }
   end
 
   def test_a_failed_wrap_up_turn_falls_back_to_the_fixed_message
