@@ -59,8 +59,16 @@ if defined?(Mistri::Workspace::ActiveRecord)
       end
     end
 
-    attr_reader :lock_reads, :saves, :transactions, :creates, :connection
+    attr_reader :lock_reads, :saves, :transactions, :creates, :connection, :borrowed
     attr_accessor :save_error, :create_error, :save_transform
+
+    # Lends the model's one connection for a block, as a pool does.
+    def connection_pool = self
+
+    def with_connection
+      @borrowed += 1
+      yield @connection
+    end
 
     Column = Data.define(:name, :null)
     Index = Data.define(:columns, :unique, :where, :valid) do
@@ -85,6 +93,7 @@ if defined?(Mistri::Workspace::ActiveRecord)
       @saves = 0
       @transactions = 0
       @creates = 0
+      @borrowed = 0
       columns = %w[id tenant_id path content].map { |name| Column.new(name:, null: false) }
       index = Index.new(columns: %w[tenant_id path], unique: true, where: nil, valid: true)
       @connection = Connection.new(
@@ -207,6 +216,13 @@ if defined?(Mistri::Workspace::ActiveRecord)
       assert_equal 1, @model.transactions
       assert_equal 1, @model.lock_reads
       assert_equal 1, @model.saves
+    end
+
+    def test_every_question_about_the_database_borrows_a_connection
+      before = @workspace.snapshot("page.html")
+      @workspace.compare_and_write("page.html", "two", expected_revision: before.revision)
+
+      assert_equal 3, @model.borrowed
     end
 
     def test_a_stale_update_is_side_effect_free

@@ -150,6 +150,16 @@ class TestWorkspaceMysql < Minitest::Test
     assert_match(/InnoDB/, error.message)
   end
 
+  def test_an_edit_leaves_no_connection_checked_out
+    workspace = build_workspace("tenant-a", page)
+    MysqlAtomicDocument.connection_pool.release_connection
+
+    Mistri::Tools.edit_file(workspace).call(headline_edit("New"))
+
+    refute_predicate MysqlAtomicDocument.connection_pool, :active_connection?
+    assert_includes workspace.read("page.html"), "<h1>New</h1>"
+  end
+
   def test_atomic_operations_reject_an_external_transaction
     workspace = build_workspace("tenant-a", page)
 
@@ -389,7 +399,7 @@ class TestWorkspaceMysql < Minitest::Test
       read: -> { record.reload.content },
       write: ->(content) { record.update!(content:) },
       synchronize: lambda do |&operation|
-        if record.class.connection.transaction_open?
+        if record.class.connection_pool.with_connection(&:transaction_open?)
           raise Mistri::ConfigurationError, "page editor must run outside a transaction"
         end
 

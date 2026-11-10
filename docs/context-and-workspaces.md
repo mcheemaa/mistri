@@ -266,7 +266,7 @@ workspace = Mistri::Workspace::Single.new(
   read: -> { page.reload.draft_html },
   write: ->(html) { page.update!(draft_html: html) },
   synchronize: lambda do |&operation|
-    if page.class.connection.transaction_open?
+    if page.class.connection_pool.with_connection(&:transaction_open?)
       raise Mistri::ConfigurationError, "page editor must run outside a transaction"
     end
 

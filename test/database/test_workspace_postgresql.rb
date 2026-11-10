@@ -84,6 +84,16 @@ class TestWorkspacePostgresql < Minitest::Test
     assert_predicate workspace, :atomic_writes?
   end
 
+  def test_an_edit_leaves_no_connection_checked_out
+    workspace = build_workspace("tenant-a", page)
+    PostgresqlAtomicDocument.connection_pool.release_connection
+
+    Mistri::Tools.edit_file(workspace).call(headline_edit("New"))
+
+    refute_predicate PostgresqlAtomicDocument.connection_pool, :active_connection?
+    assert_includes workspace.read("page.html"), "<h1>New</h1>"
+  end
+
   def test_atomic_operations_reject_an_external_transaction
     workspace = build_workspace("tenant-a", page)
 

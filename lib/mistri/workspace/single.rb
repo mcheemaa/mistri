@@ -13,7 +13,8 @@ module Mistri
     #     read: -> { page.reload.draft_html },
     #     write: ->(html) { page.update!(draft_html: html) },
     #     synchronize: lambda do |&operation|
-    #       raise "outer transaction" if page.class.connection.transaction_open?
+    #       open = page.class.connection_pool.with_connection(&:transaction_open?)
+    #       raise "outer transaction" if open
     #       page.with_lock(&operation)
     #     end
     #   )

@@ -89,6 +89,19 @@ unchanged: without `settled?` it is read whole on every read, as before.
   included, for as long as the object lives. After a session's rows are
   deleted, build a new `Session` object.
 
+### The single-value workspace recipe borrows its connection
+
+The recipe for `Mistri::Workspace::Single` asked
+`page.class.connection.transaction_open?`. On Rails 7.2 and later, asking a
+model for its connection keeps that connection checked out until the job ends.
+If you copied the recipe, borrow the connection instead:
+
+```ruby
+page.class.connection_pool.with_connection(&:transaction_open?)
+```
+
+The Active Record workspace and session store need no change in your code.
+
 ### OpenAI tools are no longer strict
 
 Mistri sends `strict: false` with every OpenAI tool. Before, the model wrote a
