@@ -89,6 +89,24 @@ unchanged: without `settled?` it is read whole on every read, as before.
   included, for as long as the object lives. After a session's rows are
   deleted, build a new `Session` object.
 
+### The generated session table has one index
+
+The install generator no longer adds an index on `session_id` alone. The
+unique index on `[session_id, position]` serves every query the store sends,
+and a read or a delete of a whole session.
+
+An existing table keeps working as it is. Removing the extra index is
+optional:
+
+```ruby
+remove_index :agent_entries, :session_id
+```
+
+It saves the storage of that index: about half of the table's secondary index
+size on MySQL 8.4 and a fifth on PostgreSQL 14, measured on 220,000 rows. The
+measured time of an append was unchanged. Keep the index if your own queries
+on the table use it.
+
 ### The single-value workspace recipe borrows its connection
 
 The recipe for `Mistri::Workspace::Single` asked

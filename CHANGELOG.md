@@ -5,6 +5,9 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+- The install generator creates the session table with one index, the unique
+  index on `[session_id, position]`. The index on `session_id` alone was
+  redundant. An existing table is unaffected.
 - The Active Record workspace no longer keeps a database connection checked
   out. On Rails 7.2 and later, the first atomic edit of a job held one until
   the job ended. The single-value workspace recipe in the guide now borrows
