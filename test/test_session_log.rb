@@ -235,18 +235,20 @@ class TestSessionLog < Minitest::Test
     exchange("first", session)
     store.hold_next_load
     first = Thread.new { session.messages.length }
-    store.entered.pop
+
+    assert store.entered.pop(timeout: 5), "the first reader never reached the store"
     second = Thread.new { session.messages.length }
     wait_until { second.status == "sleep" }
 
     assert_equal [0], store.starts
     store.release
 
+    assert first.join(5) && second.join(5), "a reader never returned"
     assert_equal [2, 2], [first.value, second.value]
     assert_equal [0, 2], store.starts
   ensure
     store&.release
-    [first, second].compact.each(&:join)
+    [first, second].compact.each(&:kill).each(&:join)
   end
 
   def test_readers_on_many_threads_share_one_consistent_log

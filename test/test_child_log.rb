@@ -144,16 +144,18 @@ class TestChildLog < Minitest::Test
     session.append(TERMINAL, "status" => "done", "report" => "Done.")
     store.hold_next_load
     first = Thread.new { child.status }
-    store.entered.pop
+
+    assert store.entered.pop(timeout: 5), "the first reader never reached the store"
     second = Thread.new { child.report }
     wait_until { second.status == "sleep" }
     store.release
 
+    assert first.join(5) && second.join(5), "a reader never returned"
     assert_equal [:done, "Done."], [first.value, second.value]
     assert_equal [0, 2], store.starts
   ensure
     store&.release
-    [first, second].compact.each(&:join)
+    [first, second].compact.each(&:kill).each(&:join)
   end
 
   def test_a_stop_through_a_warmed_window_ends_a_queued_child_once
@@ -214,6 +216,32 @@ class TestChildLog < Minitest::Test
     assert_equal :queued, window(@store, "child-2").status
   end
 
+  def test_a_changed_id_string_does_not_move_a_stop_a_steer_or_the_report
+    Mistri.locks = Mistri::Locks::Memory.new
+    @session.append(DISPATCHED, "spec" => dispatch_spec)
+    id = +"child-1"
+    child = Mistri::Child.new(name: "Magpie", session_id: id, store: @store)
+    child.status
+    id.replace("child-2")
+    child.session_id << " changed"
+    Mistri.locks.acquire(Mistri::Child.lease_key("child-1"), ttl: 30)
+
+    assert child.stop
+    assert Mistri.locks.flag?(Mistri::Child.stop_key("child-1"))
+    refute Mistri.locks.flag?(Mistri::Child.stop_key("child-2"))
+    child.say("wrap up")
+    Mistri.locks.release(Mistri::Child.lease_key("child-1"))
+
+    2.times { assert child.stop }
+
+    steers = @store.load("child-1").count { |entry| entry["type"] == "steer" }
+
+    assert_equal ["stopped"], ends
+    assert_equal 1, steers
+    assert_empty @store.load("child-2")
+    assert_equal [%w[Magpie child-1 stopped]], reports_to("parent-1")
+  end
+
   def test_the_session_id_a_child_returns_is_a_copy_the_caller_owns
     Mistri.locks = Mistri::Locks::Memory.new
     @session.append(DISPATCHED, {})
@@ -236,6 +264,18 @@ class TestChildLog < Minitest::Test
   # The status of each terminal entry in the child's log, oldest first.
   def ends
     @store.load("child-1").filter_map { |entry| entry["status"] if entry["type"] == TERMINAL }
+  end
+
+  # What a spawner stores for a dispatched child: the route its report takes.
+  def dispatch_spec
+    { "spec_version" => Mistri::SubAgent::DISPATCH_SPEC_VERSION, "session_id" => "child-1",
+      "parent_session_id" => "parent-1", "name" => "Magpie" }
+  end
+
+  def reports_to(parent_id)
+    @store.load(parent_id).filter_map do |entry|
+      entry.values_at("name", "session_id", "status") if entry["type"] == "subagent_report"
+    end
   end
 
   # Returns once the store has finished that many loads, so what follows
