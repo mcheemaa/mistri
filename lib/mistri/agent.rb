@@ -44,7 +44,7 @@ module Mistri
     def initialize(provider:, session: nil, system: nil, tools: [], budget: nil,
                    max_concurrency: 4, transform_context: nil, compaction: Compaction.new,
                    retries: RetryPolicy.new, skills: [], before_tool: nil, after_tool: nil,
-                   context: nil, log_label: nil)
+                   context: nil, log_label: nil, lease: true)
       @provider = provider
       @session = session || Session.new(store: Stores::Memory.new)
       skills = skills.is_a?(String) ? Skills.load(skills) : Array(skills)
@@ -66,6 +66,7 @@ module Mistri
       @after_tool = after_tool
       @context = context
       @log_label = log_label
+      @lease = lease
     end
 
     attr_reader :session
@@ -79,8 +80,10 @@ module Mistri
     def run(input, images: [], signal: nil, output_schema: nil, &emit)
       # The frame covers the whole public method, so an audit rejection or
       # a store failure gets a crash line too, not just loop failures.
-      logged(emit, verb: "run", input: input) do |subscriber|
-        exclusive { exchange(input, images:, signal:, output_schema:, &subscriber) }
+      exclusive do
+        logged(emit, verb: "run", input: input) do |subscriber|
+          exchange(input, images:, signal:, output_schema:, &subscriber)
+        end
       end
     end
 
@@ -90,8 +93,8 @@ module Mistri
     # carries on as if it never stopped, unless a settled call's tool ends
     # the turn, in which case its execution was the run's last word.
     def resume(signal: nil, &emit)
-      logged(emit, verb: "resume") do |subscriber|
-        exclusive do
+      exclusive do
+        logged(emit, verb: "resume") do |subscriber|
           open = refresh_tool_control
           pending = open.select { |approval| approval[:decision].nil? }
           if pending.any?
@@ -128,8 +131,8 @@ module Mistri
     # back. Ask again once the answer arrives.
     def task(input, schema:, images: [], signal: nil, fixes: 1, &emit)
       # One log frame, so the done line reports the validated outcome.
-      logged(emit, verb: "task", input: input) do |subscriber|
-        exclusive do
+      exclusive do
+        logged(emit, verb: "task", input: input) do |subscriber|
           plan = Schema.task_plan(schema)
           validated_task(input, plan, images, signal, fixes, &subscriber)
         end
@@ -198,25 +201,31 @@ module Mistri
 
     # Concurrent runners interleave appends; without an adapter the host serializes them.
     def exclusive
-      return yield unless Mistri.locks
+      lease = session_lease
+      yield
+    ensure
+      release(lease) if lease
+    end
 
-      lease = Locks.hold("run:#{@session.id}")
-      unless lease
-        raise SessionBusyError.new("session #{@session.id} has an active runner",
-                                   session_id: @session.id)
-      end
+    # One lease per session: a child's runner holds this key for the agent it builds.
+    def session_lease
+      return unless @lease && Mistri.locks
 
-      begin
-        yield
-      ensure
-        # Never mask the run's outcome; an unreleased lease expires on its own.
-        begin
-          lease.release
-        rescue StandardError => e
-          warn "mistri: releasing the run lease for session #{@session.id} failed " \
-               "(#{e.class}: #{e.message}); it expires on its own"
-        end
-      end
+      lease = Locks.hold(Child.lease_key(@session.id))
+    rescue StandardError => e
+      warn "mistri: the lock backend failed (#{e.class}: #{e.message}); " \
+           "session #{@session.id} runs without its lease"
+    else
+      lease || raise(SessionBusyError.new("session #{@session.id} has an active runner",
+                                          session_id: @session.id))
+    end
+
+    # Never mask the run's outcome; an unreleased lease expires on its own.
+    def release(lease)
+      lease.release
+    rescue StandardError => e
+      warn "mistri: releasing the lease for session #{@session.id} failed " \
+           "(#{e.class}: #{e.message}); it expires on its own"
     end
 
     # With Mistri.logger set, tees events into a session log framed by the input,

@@ -135,11 +135,14 @@ Only when `Mistri.locks` is set:
 
 - A second concurrent `run`, `resume`, `task`, or `compact` raises
   `Mistri::SessionBusyError`. Retry, or report the session busy.
-- So does a tool or event subscriber that calls back into its own agent.
-- After a crash, runs can raise it for up to three minutes. A child job raises
-  it when its own session is busy and stays retryable.
-- An adapter that raises on acquire fails the run. After a failed release
-  the session stays busy for up to three minutes.
+- So does a call back into a running session. From an event subscriber the
+  error reaches the host. From a tool it comes back to the model as that
+  tool's error and the run goes on.
+- After a crash, runs can raise it for up to three minutes. So can runs after
+  a failed release.
+- When the lock backend is down, a run warns and goes ahead without its lease.
+- A session has one lease. Pass `lease: false` to `Agent.new` when your own
+  code already holds a lock for the session.
 
 ### OpenAI tools are no longer strict
 

@@ -8,7 +8,7 @@ require "stringio"
 class TestRunnerLease < Minitest::Test
   class FailingRelease < Mistri::Locks::Memory
     def release(key)
-      raise "lock backend down" if key.start_with?("run:")
+      raise "lock backend down" if key.start_with?("child:")
 
       super
     end
@@ -75,14 +75,14 @@ class TestRunnerLease < Minitest::Test
     assert_equal 0, appended
   end
 
-  def test_a_refused_run_reaches_the_logger
+  def test_a_refused_run_writes_nothing_to_the_run_log
     log = StringIO.new
     Mistri.logger = Logger.new(log)
     agent = Mistri::Agent.new(provider: Mistri::Providers::Fake.new)
-    Mistri.locks.acquire("run:#{agent.session.id}", ttl: 60)
+    hold(agent.session)
 
     assert_raises(Mistri::SessionBusyError) { agent.run("hi") }
-    assert_match(/crashed Mistri::SessionBusyError/, log.string)
+    assert_empty log.string
   end
 
   def test_the_lease_is_released_when_a_run_raises
@@ -96,7 +96,7 @@ class TestRunnerLease < Minitest::Test
     agent = Mistri::Agent.new(provider: Mistri::Providers::Fake.new(turns: [{ text: "one" }]))
     result = nil
 
-    assert_output(nil, /releasing the run lease .* failed/) { result = agent.run("hi") }
+    assert_output(nil, /releasing the lease .* failed/) { result = agent.run("hi") }
     assert_predicate result, :completed?
   end
 
@@ -104,12 +104,12 @@ class TestRunnerLease < Minitest::Test
     Mistri.locks = FailingRelease.new
     agent = Mistri::Agent.new(provider: Mistri::Providers::Fake.new)
 
-    assert_output(nil, /releasing the run lease/) do
+    assert_output(nil, /releasing the lease/) do
       assert_raises(Mistri::ConfigurationError) { agent.run("hi") }
     end
   end
 
-  def test_a_task_fix_pass_runs_under_the_tasks_lease
+  def test_a_task_holds_the_lease_through_its_fix_pass
     provider = Mistri::Providers::Fake.new(turns: [
                                              { text: '{"city":"Lahore"}' },
                                              { text: '{"city":"Lahore","temperature":31}' }
@@ -117,16 +117,31 @@ class TestRunnerLease < Minitest::Test
     schema = { type: "object",
                properties: { "city" => { type: "string" }, "temperature" => { type: "number" } },
                required: %w[city temperature] }
+    agent = Mistri::Agent.new(provider:)
+    held = []
 
-    result = Mistri::Agent.new(provider:).task("weather", schema:)
+    result = agent.task("weather", schema:) do |event|
+      held << Mistri.locks.held?(Mistri::Child.lease_key(agent.session.id)) if event.type == :start
+    end
 
     assert_equal 31, result.output["temperature"]
+    assert_equal [true, true], held
+  end
+
+  def test_an_agent_built_without_a_lease_takes_none
+    provider = Mistri::Providers::Fake.new(turns: [{ text: "one" }])
+    agent = Mistri::Agent.new(provider:, lease: false)
+    held = nil
+
+    agent.run("hi") { held ||= Mistri.locks.held?(Mistri::Child.lease_key(agent.session.id)) }
+
+    refute held
   end
 
   def test_a_refused_run_leaves_queued_steers_pending
     agent = Mistri::Agent.new(provider: Mistri::Providers::Fake.new)
     agent.session.steer("queued")
-    Mistri.locks.acquire("run:#{agent.session.id}", ttl: 60)
+    hold(agent.session)
 
     assert_raises(Mistri::SessionBusyError) { agent.run("hi") }
     assert_equal 1, agent.session.pending_inbox.length
@@ -138,17 +153,24 @@ class TestRunnerLease < Minitest::Test
     turn = { tool_calls: [{ name: "gated", arguments: {} }] }
     agent = Mistri::Agent.new(provider: Mistri::Providers::Fake.new(turns: [turn]), tools: [gated])
     agent.session.approve(agent.run("go").pending.first.id)
-    Mistri.locks.acquire("run:#{agent.session.id}", ttl: 60)
+    hold(agent.session)
 
     assert_raises(Mistri::SessionBusyError) { agent.resume }
     assert_equal 0, runs
   end
 
-  def test_a_lock_backend_that_cannot_acquire_fails_the_run_before_it_appends
+  def test_a_lock_backend_that_is_down_does_not_stop_a_run
     Mistri.locks = FailingAcquire.new
     agent = Mistri::Agent.new(provider: Mistri::Providers::Fake.new(turns: [{ text: "hi" }]))
+    result = nil
 
-    assert_raises(RuntimeError) { agent.run("hi") }
-    assert_empty agent.session.entries
+    assert_output(nil, /lock backend failed .* runs without its lease/) { result = agent.run("hi") }
+    assert_predicate result, :completed?
+  end
+
+  private
+
+  def hold(session)
+    Mistri.locks.acquire(Mistri::Child.lease_key(session.id), ttl: 60)
   end
 end
