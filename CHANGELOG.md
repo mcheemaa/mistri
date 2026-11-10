@@ -5,6 +5,9 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+- With `client_secret_basic`, an MCP token request carries the client id only
+  in the Basic header. It was also sent in the form, and a strict token
+  endpoint refuses a request that identifies the client twice.
 - A session starts at its newest checkpoint. A compaction entry carries the
   sub-agent links, the delivered reports and the old-style call ids with an
   approval from before it, and a session reads, replays and audits from its
