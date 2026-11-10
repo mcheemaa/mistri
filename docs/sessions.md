@@ -413,9 +413,10 @@ second runner raises `Mistri::SessionBusyError` before it appends. The lease
 catches a missed case; it does not replace host serialization. Without an
 adapter nothing is checked. With one, a runner that stalls or cannot renew for
 longer than the lease can still overlap the next. After a crash the lease
-expires on its own within three minutes. When the lock backend is down, a run
-warns and goes ahead without its lease. Read [Reliability](reliability.md) for
-the complete contract.
+expires on its own within three minutes. When the lock backend is down, a
+top-level run warns and goes ahead without its lease, and a sub-agent still
+fails with a report. Read [Reliability](reliability.md) for the complete
+contract.
 
 A session has one lease, whoever runs it. A sub-agent's runner holds it for
 the child it runs. Pass `lease: false` to `Agent.new` when your own code

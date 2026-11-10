@@ -140,7 +140,8 @@ Only when `Mistri.locks` is set:
   tool's error and the run goes on.
 - After a crash, runs can raise it for up to three minutes. So can runs after
   a failed release.
-- When the lock backend is down, a run warns and goes ahead without its lease.
+- When the lock backend is down, a top-level run warns and goes ahead without
+  its lease. A sub-agent still fails with a report, as before.
 - A session has one lease. Pass `lease: false` to `Agent.new` when your own
   code already holds a lock for the session.
 

@@ -24,8 +24,9 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   session; a second runner raises `Mistri::SessionBusyError` (with
   `session_id`) before appending. A session has one lease: a sub-agent's
   runner holds it for the child, and `Agent.new(lease: false)` takes none.
-  When the lock backend is down a run warns and goes ahead without it. After
-  a failed release the session stays busy until the lease expires.
+  When the lock backend is down a top-level run warns and goes ahead without
+  it; a sub-agent still fails with a report. After a failed release the
+  session stays busy until the lease expires.
 - A failed lease renewal warns and retries; it used to stop renewing.
 - `Locks::RailsCache` raises `Mistri::Error` when a cache write fails; an
   outage used to read as a held lease.
