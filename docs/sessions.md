@@ -123,8 +123,8 @@ store may still decode it on the way to finding the window.
 Because a call id can come back after a checkpoint, an approval decision
 records the position of the request it answers and applies only to that
 request. A decision that arrives late never decides a newer request that
-happens to carry the same call id. Its caller is told the approval has
-already been decided.
+happens to carry the same call id. If its own request has left the window,
+its caller is told the approval has already been decided.
 
 A compaction entry written by hand, or by a version before checkpoints,
 carries nothing. While it is the newest compaction the session is read whole.

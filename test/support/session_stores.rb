@@ -116,7 +116,8 @@ module SessionStores
 
       @release_after = nil
       release
-      @landed.pop
+      raise "the held decision never landed" unless @landed.pop(timeout: 5)
+
       nil
     end
   end
