@@ -5,6 +5,11 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+- A finished worker is read from the end of its log. On a store that answers
+  `size`, `Child#status`, `report` and `error` read its last entry, and
+  `Child#transcript(tail:)` reads only the entries it returns. The check
+  before a spawn and `list_agents` used to load the whole log of every worker
+  the session ever had. A worker that has not finished is still read whole.
 - A session starts at its newest checkpoint. A compaction entry carries the
   sub-agent links, the delivered reports and the old-style call ids with an
   approval from before it, and a session reads, replays and audits from its
