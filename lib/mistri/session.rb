@@ -23,9 +23,7 @@ module Mistri
       @id = @log.id
     end
 
-    # A string id comes back as a copy. The id a session was built with is
-    # fixed: changing the string it was given, or the one returned here, does
-    # not move the session.
+    # A string id is copied, so a caller cannot change which session this is.
     def id = @id.is_a?(String) ? @id.dup : @id
 
     def append_message(message)

@@ -3,9 +3,7 @@
 require_relative "test_helper"
 require_relative "support/session_stores"
 
-# A Child reads its session through a held log, so a wait reads the child's
-# log once and then only what was appended since, and still answers what a
-# read of the whole log would.
+# A Child reads through a held log and still answers what a whole read would.
 class TestChildLog < Minitest::Test
   TERMINAL = Mistri::Child::TERMINAL
   DISPATCHED = Mistri::Child::DISPATCHED
@@ -261,12 +259,10 @@ class TestChildLog < Minitest::Test
     Mistri::Child.new(name: "Magpie", session_id:, store:)
   end
 
-  # The status of each terminal entry in the child's log, oldest first.
   def ends
     @store.load("child-1").filter_map { |entry| entry["status"] if entry["type"] == TERMINAL }
   end
 
-  # What a spawner stores for a dispatched child: the route its report takes.
   def dispatch_spec
     { "spec_version" => Mistri::SubAgent::DISPATCH_SPEC_VERSION, "session_id" => "child-1",
       "parent_session_id" => "parent-1", "name" => "Magpie" }
@@ -278,14 +274,11 @@ class TestChildLog < Minitest::Test
     end
   end
 
-  # Returns once the store has finished that many loads, so what follows
-  # happens after the waiting thread has polled.
   def wait_for_loads(count)
     count.times { flunk "the wait never polled" unless @store.loaded.pop(timeout: 5) }
   end
 
-  # One child from its queue to its end, with a steer and a second end that
-  # land after it.
+  # One child from its queue to a second end written after the first.
   def script
     [-> { @session.append(DISPATCHED, { "spec" => { "name" => "Magpie" } }) },
      -> { @session.append(STARTED, {}) },

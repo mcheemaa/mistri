@@ -9,7 +9,6 @@ module Mistri
     # nothing is held. The entries are frozen: every reader of one Session
     # shares them, from any thread.
     class Log
-      # A copy of a held value that its caller may change.
       def self.owned(value)
         case value
         when Hash then value.to_h { |key, nested| [owned(key), owned(nested)] }
@@ -21,9 +20,7 @@ module Mistri
 
       attr_reader :id
 
-      # A String id is the caller's object and can be changed in place. The
-      # log reads under its own copy, so its entries stay one session's. Any
-      # other id is kept as given, the way a Hash keeps a key.
+      # A String id can be changed in place by its caller, so the log keeps its own.
       def initialize(store, id)
         @store = store
         @id = id.is_a?(String) ? id.dup.freeze : id

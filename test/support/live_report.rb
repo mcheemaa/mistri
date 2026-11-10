@@ -4,11 +4,7 @@ require "minitest"
 
 module Mistri
   module Test
-    # What a run's calls to the vendors cost: for each model the calls, the
-    # seconds waited, the tokens and the dollars at catalog prices, then the
-    # slowest tests. A call is one call to a provider's `stream`. The cost is
-    # an estimate from the usage each call reported, not a bill. A call to a
-    # stub server is not counted.
+    # What a run's vendor calls took and cost at catalog prices: an estimate, not a bill.
     class LiveReport
       SLOWEST = 10
       HEADINGS = ["model", "calls", "seconds", "input", "cache read", "cache write",
@@ -56,8 +52,6 @@ module Mistri
         @mutex = Mutex.new
       end
 
-      # A module to prepend to a provider class. A provider built on the
-      # vendor's origin makes real calls, and those are recorded.
       def recorder(vendor)
         report = self
         billed = @billed
@@ -74,8 +68,6 @@ module Mistri
         end
       end
 
-      # A call that raises, as when a test's own block does, is kept with no
-      # usage.
       def timed(provider, model)
         return yield unless @billed.key?(provider)
 
@@ -119,14 +111,11 @@ module Mistri
          count(usage.output), format("%.4f", dollars(calls))]
       end
 
-      # Only a known cost counts. A call cut short keeps a partial figure
-      # its provider no longer vouches for.
+      # A cost that is not known can still carry a partial figure.
       def dollars(calls)
         calls.sum { |call| call.usage.cost.known? ? call.usage.cost.total : 0.0 }
       end
 
-      # A call that failed, was cut short or raised has no known cost, which
-      # makes the dollars a floor.
       def unpriced(recorded)
         missing = recorded.count { |call| !call.usage.cost.known? }
         return [] if missing.zero?

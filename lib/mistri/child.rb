@@ -38,9 +38,7 @@ module Mistri
       @parent_session_id = parent_session_id
     end
 
-    # A string id comes back as a copy. The child a window looks at is fixed
-    # when the window is built: its reads, its lease and stop keys and its
-    # report to the parent all use the one id.
+    # A string id is copied, so a caller cannot change which child this window reads.
     def session_id = @session_id.is_a?(String) ? @session_id.dup : @session_id
 
     def status
@@ -185,8 +183,6 @@ module Mistri
       @session ||= Session.new(store: @store, id: @session_id)
     end
 
-    # The child's log as this window has read it, brought up to date: a wait
-    # reads it once and then only what was appended since.
     def read_log = @log.entries
 
     def terminal_entry
