@@ -18,7 +18,7 @@ module SessionStores
       id ? @reads.select { |read| read.id == id } : @reads
     end
 
-    def load(id, from: 0)
+    def load(id, from: 0, to: nil)
       super.tap do |entries|
         @reads << Read.new(id:, from:, entries: entries.length)
         @loaded << true
@@ -54,11 +54,11 @@ module SessionStores
 
     def settled? = Thread.current.thread_variable_get(:pinned).nil?
 
-    def load(id, from: 0)
+    def load(id, from: 0, to: nil)
       pinned = Thread.current.thread_variable_get(:pinned)
       return super unless pinned
 
-      pinned.fetch(id, []).drop(from).map { |entry| json_copy(entry, freeze: false) }
+      pinned.fetch(id, [])[from...to].to_a.map { |entry| json_copy(entry, freeze: false) }
     end
   end
 
@@ -94,7 +94,7 @@ module SessionStores
 
     def release = @gate << true
 
-    def load(id, from: 0)
+    def load(id, from: 0, to: nil)
       @starts << from
       if @hold
         @hold = false

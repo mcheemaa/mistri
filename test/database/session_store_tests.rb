@@ -32,6 +32,39 @@ module SessionStoreTests
     assert_match(/position\W+>=/, queries.first)
   end
 
+  def test_size_is_the_number_of_entries_appended
+    assert_equal 0, @store.size("s")
+    5.times { |n| @store.append("s", { "n" => n }) }
+    @store.append("other", { "n" => 99 })
+
+    assert_equal 5, @store.size("s")
+  end
+
+  def test_a_read_between_two_positions_is_one_query_bounded_on_both_sides
+    6.times { |n| @store.append("s", { "n" => n }) }
+
+    numbers = nil
+    queries = selects { numbers = @store.load("s", from: 2, to: 5).map { |entry| entry["n"] } }
+
+    assert_equal [2, 3, 4], numbers
+    assert_equal 1, queries.length
+    assert_match(/BETWEEN|<=/i, queries.first)
+  end
+
+  def test_a_new_session_reads_its_window_and_not_the_whole_log
+    writer = Mistri::Session.new(store: @store, id: "s")
+    150.times { |n| writer.append_message(Mistri::Message.user("old #{n}")) }
+    writer.checkpoint(summary: "Earlier.", kept_from: 148)
+    writer.append_message(Mistri::Message.user("new"))
+
+    texts = nil
+    queries = selects { texts = Mistri::Session.new(store: @store, id: "s").messages.map(&:text) }
+
+    assert_equal ["old 148", "old 149", "new"], texts.drop(1)
+    assert_equal 2, queries.length
+    assert_match(/BETWEEN|<=/i, queries.last)
+  end
+
   def test_a_session_with_a_deleted_row_is_refused
     3.times { |n| @store.append("s", { "n" => n }) }
     model.where(session_id: "s", position: 2).delete_all

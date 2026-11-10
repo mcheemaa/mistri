@@ -72,8 +72,8 @@ settled?                  # true when a load returns only committed entries
 An entry's position is the number of entries appended before it, and it never
 changes. While `settled?` is true, a `Session` object holds the entries it has
 read, image data included, and asks only for the ones after them. When it is
-false, or the store does not answer it, the session reads the whole log with
-`load(session_id)` and holds nothing.
+false, or the store does not answer it, the session reads fresh on every read
+and holds nothing.
 
 Answer true only when the load that follows returns committed entries that
 can no longer change or disappear. Entries must also become visible in order:
@@ -83,8 +83,43 @@ reads: its own rows can be rolled back, and it expects to read its own
 snapshot. The answer has to hold for the load that follows it and for the
 place that load reads from, so a subclass or a wrapper that reads from
 somewhere else must answer for itself and not inherit the answer. When in
-doubt answer false. A session then reads the whole log, which is always
-correct. The built-in stores answer both.
+doubt answer false. A session then reads fresh, which is always correct. The
+built-in stores answer both.
+
+### Starting at the newest checkpoint
+
+A compaction written by Mistri is a checkpoint. Besides the summary and
+`kept_from`, the position replay starts at, its entry carries what a later
+turn needs from before that position: the links to sub-agents and which of
+them have reported. A session's window is the entries from the newest
+checkpoint's `kept_from` to the end. Replay, the context size, the inbox, open
+approvals and the audit of tool calls all work on the window, however old the
+session is. `Session#children` adds the carried links, so it stays complete.
+`Session#entries` and `Session#transcript` still return everything.
+
+A store lets a new `Session` find its window without loading the rest by
+answering two more things:
+
+```ruby
+size(session_id)                   # the position the next entry will get
+load(session_id, from: 0, to: nil) # the entries from `from` up to, not including, `to`
+```
+
+The session reads back from the end in growing chunks until one holds a
+checkpoint, then from that checkpoint's `kept_from`. A store without `size` is
+read whole and the same window is used in memory, so every store answers the
+same. The memory and Active Record stores answer both. The JSONL store does
+not, because a file is read from its start either way.
+
+Three things follow at the edge. A tool call id has to be unique within the
+window, not over the session's whole life. A decision repeated for a call that
+was settled before the newest checkpoint raises "no open approval". An entry
+older than the window is never parsed, so one that cannot be read does not
+stop the session.
+
+A compaction entry written by hand, or by a version before checkpoints,
+carries nothing and does not bound a read. Write one with
+`Session#checkpoint(summary:, kept_from:)`.
 
 Built-in stores are:
 

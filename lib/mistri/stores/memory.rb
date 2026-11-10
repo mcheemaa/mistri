@@ -14,11 +14,13 @@ module Mistri
         nil
       end
 
-      def load(id, from: 0)
+      def load(id, from: 0, to: nil)
         @mutex.synchronize do
-          @entries[id].drop(from).map { |entry| json_copy(entry, freeze: false) }
+          @entries[id][from...to].to_a.map { |entry| json_copy(entry, freeze: false) }
         end
       end
+
+      def size(id) = @mutex.synchronize { @entries[id].length }
 
       def settled? = true
 
