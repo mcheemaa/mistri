@@ -6,8 +6,9 @@ module Mistri
   module Test
     # What a run's calls to the vendors cost: for each model the calls, the
     # seconds waited, the tokens and the dollars at catalog prices, then the
-    # slowest tests. It is an estimate from the usage each call reported, not
-    # a bill. A call to a stub server is not counted.
+    # slowest tests. A call is one call to a provider's `stream`. The cost is
+    # an estimate from the usage each call reported, not a bill. A call to a
+    # stub server is not counted.
     class LiveReport
       SLOWEST = 10
       HEADINGS = ["model", "calls", "seconds", "input", "cache read", "cache write",
@@ -73,8 +74,8 @@ module Mistri
         end
       end
 
-      # A call that raises, as when a test's own block does, was still sent:
-      # it is kept, with no usage.
+      # A call that raises, as when a test's own block does, is kept with no
+      # usage.
       def timed(provider, model)
         return yield unless @billed.key?(provider)
 

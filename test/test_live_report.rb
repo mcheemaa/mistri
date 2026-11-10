@@ -77,11 +77,17 @@ class TestLiveReport < Minitest::Test
   def test_a_call_whose_callback_raises_is_still_counted
     provider = vendor(model: "claude-haiku-5-5", catalog_pricing: true)
 
-    assert_raises(RuntimeError) do
-      provider.stream(messages: MESSAGES) { |event| raise "stop here" if event.type == :done }
-    end
+    failure = RuntimeError.new("stop here")
 
+    raised = assert_raises(RuntimeError) do
+      provider.stream(messages: MESSAGES) { |event| raise failure if event.type == :done }
+    end
+    call = @report.calls.first
+
+    assert_same failure, raised
     assert_equal ["claude-haiku-5-5"], @report.calls.map(&:model)
+    assert_equal [0, 0], [call.usage.input, call.usage.output]
+    assert_predicate call.seconds, :positive?
     assert_includes @report.summary([]), "1 of these calls had no price."
   ensure
     provider&.close
