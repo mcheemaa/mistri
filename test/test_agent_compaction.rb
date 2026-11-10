@@ -173,7 +173,7 @@ class TestAgentCompaction < Minitest::Test
       @loads = 0
     end
 
-    def load(id)
+    def load(id, from: 0)
       @loads += 1
       super
     end

@@ -68,6 +68,7 @@ jobs:
           ruby-version: "3.4"
           bundler-cache: true
       - run: bundle exec ruby -Itest test/database/test_workspace_mysql.rb
+      - run: bundle exec ruby -Itest test/database/test_session_store_mysql.rb
 
   postgresql:
     runs-on: ubuntu-latest
@@ -97,3 +98,4 @@ jobs:
           ruby-version: "3.4"
           bundler-cache: true
       - run: bundle exec ruby -Itest test/database/test_workspace_postgresql.rb
+      - run: bundle exec ruby -Itest test/database/test_session_store_postgresql.rb

@@ -33,7 +33,7 @@ class TestChildStop < Minitest::Test
         @continue.pop
       end
 
-      def load(id) = @store.load(id)
+      def load(id, from: 0) = @store.load(id, from:)
     end.new
   end
 

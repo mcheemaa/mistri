@@ -67,6 +67,27 @@ class TestStores < Minitest::Test
                  store.load("s")
   end
 
+  def test_load_from_a_position_returns_the_entries_at_it_and_after_through_each_store
+    each_store do |store|
+      %w[a b c].each { |text| store.append("s", { "text" => text }) }
+      whole = store.load("s")
+
+      (0..4).each { |from| assert_equal whole.drop(from), store.load("s", from:) }
+      assert_empty store.load("unknown", from: 2)
+    end
+  end
+
+  def test_jsonl_counts_only_whole_lines_toward_a_position
+    Dir.mktmpdir do |dir|
+      store = Mistri::Stores::JSONL.new(dir)
+      store.append("s", { "n" => 1 })
+      File.write(File.join(dir, "s.jsonl"), '{"n":2', mode: "a")
+      store.append("s", { "n" => 3 })
+
+      assert_equal [{ "n" => 3 }], store.load("s", from: 1)
+    end
+  end
+
   def test_jsonl_creates_session_files_readable_only_by_the_owner
     Dir.mktmpdir do |dir|
       Mistri::Stores::JSONL.new(dir).append("s", { "n" => 1 })
@@ -132,8 +153,12 @@ if defined?(Mistri::Stores::ActiveRecord)
   class FakeEntryModel
     Row = Struct.new(:session_id, :position, :payload)
 
+    # The position ranges the store asked for, in order.
+    attr_reader :filters
+
     def initialize
       @rows = []
+      @filters = []
       @mutex = Mutex.new
       @before_insert = nil
       @caching = false
@@ -165,16 +190,15 @@ if defined?(Mistri::Stores::ActiveRecord)
       @before_insert = block
     end
 
-    def where(session_id:)
+    def where(session_id:, position: nil)
+      @filters << position if position
       if @caching
         @cache ||= {}
-        rows = @cache[session_id] ||=
-          @mutex.synchronize { @rows.select { |row| row.session_id == session_id }.dup }
+        rows = @cache[[session_id, position]] ||= rows_for(session_id, position)
         return Scope.new(rows)
       end
 
-      rows = @mutex.synchronize { @rows.select { |row| row.session_id == session_id }.dup }
-      Scope.new(rows)
+      Scope.new(rows_for(session_id, position))
     end
 
     def create!(session_id:, position:, payload:)
@@ -196,12 +220,26 @@ if defined?(Mistri::Stores::ActiveRecord)
       @rows << Row.new(session_id, position, "{}")
     end
 
+    def delete_at(session_id, position)
+      @rows.reject! { |row| row.session_id == session_id && row.position == position }
+    end
+
     class Scope
       def initialize(rows) = @rows = rows
 
       def maximum(_column) = @rows.map(&:position).max
 
       def pluck(*) = @rows.map { |row| [row.position, row.payload] }
+    end
+
+    private
+
+    def rows_for(session_id, position)
+      @mutex.synchronize do
+        @rows.select do |row|
+          row.session_id == session_id && (position.nil? || position.cover?(row.position))
+        end
+      end
     end
   end
 
@@ -237,6 +275,31 @@ if defined?(Mistri::Stores::ActiveRecord)
       numbers = @store.load("s").map { |entry| entry["n"] }
 
       assert_equal [1, 2], numbers
+    end
+
+    def test_load_from_a_position_filters_rows_in_the_query
+      3.times { |n| @store.append("s", { "n" => n }) }
+
+      numbers = @store.load("s", from: 1).map { |entry| entry["n"] }
+
+      assert_equal [1, 2], numbers
+      assert_equal [2..], @model.filters
+    end
+
+    def test_load_refuses_a_session_with_a_missing_row
+      3.times { |n| @store.append("s", { "n" => n }) }
+      @model.delete_at("s", 2)
+
+      error = assert_raises(Mistri::ConfigurationError) { @store.load("s") }
+
+      assert_match(/missing or repeated entries/, error.message)
+    end
+
+    def test_load_refuses_a_read_that_starts_after_a_missing_row
+      3.times { |n| @store.append("s", { "n" => n }) }
+      @model.delete_at("s", 2)
+
+      assert_raises(Mistri::ConfigurationError) { @store.load("s", from: 1) }
     end
 
     def test_a_losing_writer_retries_at_the_next_position

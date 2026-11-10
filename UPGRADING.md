@@ -65,6 +65,24 @@ could share one file.
 - New session files are created with mode 0600. Existing files keep their
   mode.
 
+### Stores read from a position
+
+`load(session_id)` is now `load(session_id, from: 0)`. A session reads its log
+once and then asks only for the entries appended since, so every read after
+the first stays small as the session grows.
+
+- A custom store must accept the keyword. Returning `load(id).drop(from)` is
+  correct. Filter at the source where you can.
+- The built-in stores need no change. The Active Record store reads by
+  `position`, which the unique index on `[session_id, position]` already
+  serves.
+- The Active Record store raises `Mistri::ConfigurationError` when a session
+  has a missing or repeated `position`. Rows that are only ever appended have
+  positions 1, 2, 3 with no gap. Delete a session's rows together, never some
+  of them.
+- A `Session` object keeps the entries it has read. After a session's rows are
+  deleted, build a new `Session` object.
+
 ### OpenAI tools are no longer strict
 
 Mistri sends `strict: false` with every OpenAI tool. Before, the model wrote a

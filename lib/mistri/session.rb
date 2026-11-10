@@ -3,6 +3,7 @@
 require "json"
 require "securerandom"
 require "time"
+require_relative "session/log"
 
 module Mistri
   # The durable record of a run: an append-only log of typed entries over a
@@ -10,14 +11,16 @@ module Mistri
   # types (reminders, custom host data) ride alongside without the loop
   # knowing their shapes.
   #
-  # A store implements two methods: append(id, entry_hash) and load(id) ->
-  # array of entry hashes in append order. Everything else lives here.
+  # A store implements two methods: append(id, entry_hash) and
+  # load(id, from: 0) -> array of entry hashes in append order, starting at a
+  # position. Everything else lives here.
   class Session # rubocop:disable Metrics/ClassLength -- append-only ordering is the class contract
     attr_reader :id, :store
 
     def initialize(store:, id: nil)
       @store = store
       @id = id || SecureRandom.uuid
+      @log = Log.new(store, @id)
     end
 
     def append_message(message)
@@ -35,6 +38,7 @@ module Mistri
       nil
     end
 
+    # The whole log, read fresh from the store: the caller owns the result.
     def entries = @store.load(@id)
 
     # Every call ID is a session-wide correlation key. Read and validate the
@@ -42,7 +46,7 @@ module Mistri
     # it accepts later turns. Approval control entries are audited in the same
     # ordered pass: they may only advance a prior assistant call.
     def tool_control_state
-      audited = audit_history(entries)
+      audited = audit_history(read_log)
       approvals = audited.fetch(:approvals).map do |approval|
         decision = approval[:decision] && own_json(approval[:decision])
         { call: rebuild_call(approval[:call]), decision: }
@@ -70,14 +74,14 @@ module Mistri
     # brick every later turn with a provider rejection, so unsettled calls
     # get a synthesized interrupted result. Calls parked for human approval
     # stay open; resume owns those.
-    def replay = replay_from(entries)
+    def replay = replay_from(read_log)
 
     # Context accounting ignores provider usage reported before the latest
     # compaction: those prompt counts describe the larger, pre-summary replay.
     # Until a post-compaction assistant turn reports fresh usage, the compacted
     # replay is estimated directly.
     def context_tokens
-      log = entries
+      log = read_log
       replay = replay_from(log)
       compacted_at = log.rindex { |entry| entry["type"] == "compaction" }
       usage_from = if compacted_at
@@ -89,14 +93,15 @@ module Mistri
     end
 
     def last_compaction
-      entries.reverse_each.find { |entry| entry["type"] == "compaction" }
+      entry = read_log.reverse_each.find { |candidate| candidate["type"] == "compaction" }
+      entry && own_json(entry)
     end
 
     # Failed summaries since the last checkpoint, all of them or only those
     # of one trigger (:manual or :automatic). Automatic compaction counts its
     # own failures to stop retrying one that has proven persistent.
     def compaction_failures(trigger: nil)
-      log = entries
+      log = read_log
       since = (log.rindex { |entry| entry["type"] == "compaction" } || -1) + 1
       log.drop(since).count do |entry|
         entry["type"] == "compaction_failed" && (trigger.nil? || entry["trigger"] == trigger.to_s)
@@ -129,7 +134,7 @@ module Mistri
     # for that. Reports normally arrive via SubAgent.run_dispatched; call this
     # directly only from a custom dispatch path.
     def deliver_report(name:, session_id:, status:, text: nil) # rubocop:disable Naming/PredicateMethod
-      already = entries.any? do |entry|
+      already = read_log.any? do |entry|
         entry["type"] == "subagent_report" && entry["session_id"] == session_id
       end
       return false if already
@@ -147,9 +152,10 @@ module Mistri
     # every process. A host that wakes an idle session when a steer arrives
     # should watch this instead: a report deserves the same pickup.
     def pending_inbox
-      log = entries
+      log = read_log
       folded = log.flat_map { |entry| entry.values_at(*INBOX.values) }.compact.to_set
       log.select { |entry| INBOX.key?(entry["type"]) && !folded.include?(entry["id"]) }
+         .map { |entry| own_json(entry) }
     end
 
     # The steer-only slice of the inbox, oldest first.
@@ -161,7 +167,7 @@ module Mistri
     # per link entry, each reading the child's own session. Derived from the
     # log alone, like everything else here.
     def children
-      entries.filter_map do |entry|
+      read_log.filter_map do |entry|
         next unless entry["type"] == "subagent"
 
         Child.new(name: entry["name"], session_id: entry["session_id"], store: @store,
@@ -193,6 +199,10 @@ module Mistri
     def open_approvals = tool_control_state.fetch(:approvals)
 
     private
+
+    # The log as this session has read it, brought up to date. Its entries
+    # are frozen and shared, so a public reader returns copies its caller owns.
+    def read_log = @log.entries
 
     def tool_calls_from(entry)
       Array(entry.dig("message", "content")).select do |block|
@@ -761,7 +771,7 @@ module Mistri
     end
 
     def recorded_approval_decision(call_id)
-      state = audit_history(entries).fetch(:call_states)[call_id]
+      state = audit_history(read_log).fetch(:call_states)[call_id]
       return nil if state&.fetch(:ambiguous_approval, false)
 
       state&.dig(:approval, :decision)

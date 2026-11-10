@@ -1,6 +1,7 @@
 # frozen_string_literal: true
 
 require "json"
+require_relative "../errors"
 
 module Mistri
   module Stores
@@ -57,12 +58,25 @@ module Mistri
       # a cached read would never see a child's report land. Read past it.
       # Only past Rails' cache: an open REPEATABLE READ transaction still
       # pins its snapshot, so never poll from inside one.
-      def load(id)
+      def load(id, from: 0)
         @model.uncached do
-          @model.where(session_id: id).pluck(:position, :payload)
-                .sort_by(&:first)
-                .map { |_position, payload| JSON.parse(payload) }
+          rows = @model.where(session_id: id, position: (from + 1)..)
+                       .pluck(:position, :payload).sort_by(&:first)
+          verify_positions(id, rows, from)
+          rows.map { |_position, payload| JSON.parse(payload) }
         end
+      end
+
+      private
+
+      # An entry's place in the log is its position minus one. A missing or
+      # repeated row would move every entry after it, so the read fails.
+      def verify_positions(id, rows, from)
+        return if rows.empty?
+        return if rows.first.first == from + 1 && rows.last.first == from + rows.length
+
+        raise ConfigurationError, "session #{id.inspect} has missing or repeated entries in " \
+                                  "the store"
       end
     end
   end

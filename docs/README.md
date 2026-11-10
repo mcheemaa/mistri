@@ -34,7 +34,8 @@ agent becomes part of a real application.
 ### Add a durable conversation
 
 Use [`Mistri::Session`](sessions.md#sessions) with a built-in store or a host
-adapter. The store contract is two methods: `append(id, entry)` and `load(id)`.
+adapter. The store contract is two methods: `append(id, entry)` and
+`load(id, from: 0)`.
 
 ### Put a human before a write
 

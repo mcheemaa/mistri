@@ -30,14 +30,16 @@ module Mistri
       end
 
       # A partial line from a crash mid-write must not block every later load.
-      def load(id)
+      # It is not an entry, so every line is parsed to count the ones before from.
+      def load(id, from: 0)
         return [] unless File.exist?(path(id))
 
-        File.readlines(path(id)).filter_map do |line|
+        entries = File.readlines(path(id)).filter_map do |line|
           JSON.parse(line)
         rescue JSON::ParserError
           nil
         end
+        entries.drop(from)
       end
 
       private

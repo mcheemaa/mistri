@@ -45,11 +45,17 @@ A store implements:
 
 ```ruby
 append(session_id, entry_hash) # append one JSON-shaped entry
-load(session_id)               # return entries in append order
+load(session_id, from: 0)      # return entries in append order, from a position
 ```
 
 The store must preserve each append as one entry, provide a stable total order
-per session, and make a successful append visible to subsequent loads. Values
+per session, and make a successful append visible to subsequent loads. An
+entry's position is the number of entries appended before it, and it never
+changes. `load(id, from: n)` returns the entries at position `n` and after, so
+it equals `load(id).drop(n)`. A session reads its log once and then asks only
+for what was appended since, so a store that answers `from` at the source
+keeps a read small however long the session grows. A store that cannot may
+drop the first `n` entries after a full read. Values
 returned by `load` must not let caller mutation rewrite durable history: return
 fresh decoded copies or deeply immutable snapshots. Mistri does not rely on
 Ruby object identity. `Session#append` normalizes entries through JSON, so store
@@ -66,9 +72,10 @@ JSONL names each file after the session id, so the id must match
 file with mode 0600 and closes each append, so completed lines survive an
 ordinary process restart. A partial last line left by a crash mid-write is
 skipped on load and the next append starts on a fresh line. Load skips any
-line it cannot parse, so it does not detect damage to a complete line. It does
-not call `fsync`, provide a database transaction, or promise power-loss
-durability. Use a database or host store when that distinction matters.
+line it cannot parse, so it does not detect damage to a complete line. Every
+load reads the whole file, whatever `from` is. It does not call `fsync`,
+provide a database transaction, or promise power-loss durability. Use a
+database or host store when either distinction matters.
 
 ### Active Record
 
@@ -88,7 +95,10 @@ $ bin/rails generate mistri:install AgentEntry
 
 The table needs `session_id`, `position`, and `payload`, plus a unique index on
 `[session_id, position]`. The unique index is the optimistic append boundary for
-independent writers.
+independent writers, and it serves every read: a load from a position is one
+range read on it. Positions run 1, 2, 3 with no gap because rows are only ever
+appended. A session with a missing or repeated position raises
+`Mistri::ConfigurationError`, so delete a session's rows together.
 
 On MySQL and Trilogy, `payload` must be LONGTEXT because one legal parallel
 tool turn can exceed MEDIUMTEXT even while each call stays inside its own
