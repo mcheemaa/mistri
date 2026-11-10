@@ -1,6 +1,7 @@
 # frozen_string_literal: true
 
 require "json"
+require_relative "../errors"
 
 module Mistri
   module Stores
@@ -57,12 +58,38 @@ module Mistri
       # a cached read would never see a child's report land. Read past it.
       # Only past Rails' cache: an open REPEATABLE READ transaction still
       # pins its snapshot, so never poll from inside one.
-      def load(id)
+      def load(id, from: 0)
         @model.uncached do
-          @model.where(session_id: id).pluck(:position, :payload)
-                .sort_by(&:first)
-                .map { |_position, payload| JSON.parse(payload) }
+          rows = @model.where(session_id: id, position: (from + 1)..)
+                       .pluck(:position, :payload).sort_by(&:first)
+          verify_positions(id, rows, from)
+          rows.map { |_position, payload| JSON.parse(payload) }
         end
+      end
+
+      # Inside a transaction a read can be rolled back or pinned to an older
+      # snapshot, so a session reads the whole log there and holds nothing.
+      # with_connection borrows a connection for the question; connection would
+      # keep one checked out for the rest of the run.
+      def settled?
+        open = if @model.respond_to?(:with_connection)
+                 @model.with_connection(&:transaction_open?)
+               else
+                 @model.connection.transaction_open?
+               end
+        !open
+      end
+
+      private
+
+      # An entry's place in the log is its position minus one, so the rows of
+      # one read must sit at consecutive positions from the one asked for.
+      def verify_positions(id, rows, from)
+        return if rows.empty?
+        return if rows.first.first == from + 1 && rows.last.first == from + rows.length
+
+        raise ConfigurationError, "session #{id.inspect} has entries that are not at " \
+                                  "consecutive positions in the store"
       end
     end
   end

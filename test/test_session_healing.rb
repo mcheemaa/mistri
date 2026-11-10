@@ -79,9 +79,9 @@ class TestSessionHealing < Minitest::Test
     counter = Class.new(SimpleDelegator) do
       def loads = @loads || 0
 
-      def load(id)
+      def load(id, from: 0)
         @loads = loads + 1
-        __getobj__.load(id)
+        __getobj__.load(id, from:)
       end
     end
     store = counter.new(Mistri::Stores::Memory.new)

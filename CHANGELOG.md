@@ -5,6 +5,13 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+- A session reads its log from the store once and then only the entries
+  appended since, where each turn used to load the whole log three times. The
+  built-in stores support it through `load(session_id, from: 0)` and
+  `settled?`. A custom store without them is read whole as before, and so is
+  every read inside an open database transaction. The Active Record store
+  raises `ConfigurationError` when the rows it reads are not at consecutive
+  positions.
 - The JSONL store creates session files with mode 0600; existing files keep
   their mode. A partial last line left by a crash no longer blocks loading,
   and the next append starts on a fresh line.

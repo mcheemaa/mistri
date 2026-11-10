@@ -65,6 +65,30 @@ could share one file.
 - New session files are created with mode 0600. Existing files keep their
   mode.
 
+### A session reads only what is new
+
+A session reads its log from the store once and then asks only for the entries
+appended since. The built-in stores support this. A custom store keeps working
+unchanged: without `settled?` it is read whole on every read, as before.
+
+- To let a session read a custom store in part, add `load(id, from: 0)` and
+  `settled?` as [Sessions and control](docs/sessions.md#reading-only-what-is-new)
+  describes.
+- A subclass of a built-in store, or a wrapper that forwards every method,
+  already answers `settled?`. Its own `load` must take `from:`.
+- Inside a transaction that Active Record opened, a session reads the whole
+  log and holds nothing, so what it answers there is unchanged. A transaction
+  begun with raw SQL is invisible to the store; do not read a session inside
+  one.
+- The Active Record store raises `Mistri::ConfigurationError` when the rows it
+  reads are not at consecutive positions. Rows that are only ever appended sit
+  at positions 1, 2, 3. Delete a session's rows together, never some of them.
+- The Active Record store needs READ COMMITTED or a stronger isolation level
+  on the connection that reads. MySQL and PostgreSQL have that by default.
+- A `Session` object holds every entry it has read in memory, image data
+  included, for as long as the object lives. After a session's rows are
+  deleted, build a new `Session` object.
+
 ### OpenAI tools are no longer strict
 
 Mistri sends `strict: false` with every OpenAI tool. Before, the model wrote a

@@ -55,6 +55,33 @@ fresh decoded copies or deeply immutable snapshots. Mistri does not rely on
 Ruby object identity. `Session#append` normalizes entries through JSON, so store
 implementations see string keys and JSON values.
 
+### Reading only what is new
+
+A session that loads its whole log on every turn costs more as it ages. A
+store lets a session read each entry once by answering two more things:
+
+```ruby
+load(session_id, from: 0) # the entries at position `from` and after
+settled?                  # true when a load returns only committed entries
+```
+
+An entry's position is the number of entries appended before it, and it never
+changes. While `settled?` is true, a `Session` object holds the entries it has
+read, image data included, and asks only for the ones after them. When it is
+false, or the store does not answer it, the session reads the whole log with
+`load(session_id)` and holds nothing.
+
+Answer true only when the load that follows returns committed entries that
+can no longer change or disappear. Entries must also become visible in order:
+a load never shows an entry before one that was appended earlier. On a
+database, answer false while a transaction is open on the connection that
+reads: its own rows can be rolled back, and it expects to read its own
+snapshot. The answer has to hold for the load that follows it and for the
+place that load reads from, so a subclass or a wrapper that reads from
+somewhere else must answer for itself and not inherit the answer. When in
+doubt answer false. A session then reads the whole log, which is always
+correct. The built-in stores answer both.
+
 Built-in stores are:
 
 - `Mistri::Stores::Memory` for one process and tests;
@@ -66,9 +93,10 @@ JSONL names each file after the session id, so the id must match
 file with mode 0600 and closes each append, so completed lines survive an
 ordinary process restart. A partial last line left by a crash mid-write is
 skipped on load and the next append starts on a fresh line. Load skips any
-line it cannot parse, so it does not detect damage to a complete line. It does
-not call `fsync`, provide a database transaction, or promise power-loss
-durability. Use a database or host store when that distinction matters.
+line it cannot parse, so it does not detect damage to a complete line. Every
+load reads the whole file, whatever `from` is. It does not call `fsync`,
+provide a database transaction, or promise power-loss durability. Use a
+database or host store when either distinction matters.
 
 ### Active Record
 
@@ -88,7 +116,15 @@ $ bin/rails generate mistri:install AgentEntry
 
 The table needs `session_id`, `position`, and `payload`, plus a unique index on
 `[session_id, position]`. The unique index is the optimistic append boundary for
-independent writers.
+independent writers, and it serves every read: a load from a position is one
+range read on it. Positions run 1, 2, 3 with no gap because rows are only ever
+appended. A read whose rows are not at consecutive positions raises
+`Mistri::ConfigurationError`, which is what deleting a row from the middle of
+a session causes. Delete a session's rows together. The reading connection
+needs READ COMMITTED or a stronger isolation level, which MySQL and PostgreSQL
+have by default. The store knows about a transaction that Active Record
+opened. One begun with raw SQL is invisible to it, so do not read a session
+inside one.
 
 On MySQL and Trilogy, `payload` must be LONGTEXT because one legal parallel
 tool turn can exceed MEDIUMTEXT even while each call stays inside its own
