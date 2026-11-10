@@ -85,7 +85,8 @@ module SessionStores
   end
 
   # Holds one approval decision just before it is appended, as a decision
-  # that passed its check and is slow to write.
+  # that passed its check and is slow to write. It lands on release, or
+  # right after the entry release_after picks.
   class HeldDecision < Mistri::Stores::Memory
     attr_reader :entered
 
@@ -93,19 +94,30 @@ module SessionStores
       super
       @entered = Queue.new
       @gate = Queue.new
+      @landed = Queue.new
     end
 
     def hold_next_decision = @hold = true
 
+    def release_after(&entry) = @release_after = entry
+
     def release = @gate << true
 
     def append(id, entry)
-      if @hold && entry["type"] == "approval_decision"
+      held = @hold && entry["type"] == "approval_decision"
+      if held
         @hold = false
         @entered << true
         @gate.pop
       end
       super
+      @landed << true if held
+      return unless !held && @release_after&.call(entry)
+
+      @release_after = nil
+      release
+      @landed.pop
+      nil
     end
   end
 

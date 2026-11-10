@@ -134,29 +134,33 @@ class TestSessionCheckpointGenerated < Minitest::Test
   end
 
   # A turn as releases before 0.6.0 wrote it: a call_N id that repeats, here
-  # with an approval, settled or left with only its decision.
+  # with an approval, settled or left with only its decision. A late decision
+  # for an earlier use of the id may land before the request is written.
   def legacy
     call = Mistri::ToolCall.new(id: "call_#{@random.rand(1..2)}", name: "gated", arguments: {})
     @held.append_message(Mistri::Message.user("legacy #{@count}"))
     @held.append_message(Mistri::Message.assistant(tool_calls: [call], stop_reason: :tool_use,
                                                    provider: :gemini))
+    late(call.id) if @random.rand(3).zero?
     @held.append("approval_request", "call" => call.to_h)
     @held.append("approval_decision", "call_id" => call.id, "approved" => true)
     return if @random.rand(3).zero?
 
     @held.append_message(Mistri::Message.tool(content: "ran", tool_call_id: call.id,
                                               tool_name: "gated"))
-    @settled << [call.id, nil]
+    @settled << [call.id, request_position(call.id)]
   end
 
-  # A decision that lost its race and is written long after its call settled,
-  # naming its request the way this version does, or not, as older ones did.
-  def late
-    id, request = @settled.sample(random: @random)
+  # A decision that lost its race and is written long after its call settled.
+  # It names its request, as this version writes it. Between turns it may
+  # also come without one, as older versions wrote it.
+  def late(inside = nil)
+    settled = inside ? @settled.select { |id, _| id == inside } : @settled
+    id, request = settled.sample(random: @random)
     return unless id
 
     decision = { "call_id" => id, "approved" => @random.rand(2).zero? }
-    decision["request"] = request if request
+    decision["request"] = request if inside || @random.rand(2).zero?
     @held.append("approval_decision", decision)
   end
 

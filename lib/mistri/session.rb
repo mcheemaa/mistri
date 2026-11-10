@@ -571,9 +571,6 @@ module Mistri
                                 "same-name tool result"
     end
 
-    # A decision can land after its settled call was compacted away. The
-    # window cannot tell it from a stray one, and neither can authorize
-    # anything, so past a checkpoint a decision for an unknown call is skipped.
     def record_approval_decision(entry, calls, late:)
       id = entry["call_id"]
       problem = required_string_problem(id, "approval decision call IDs")
@@ -585,21 +582,36 @@ module Mistri
       end
 
       state = calls[id]
-      return if state.nil? && late
+      approval = answered_approval(entry, state, late:)
+      # Store order is the write-once register. A stale loser can append after
+      # execution, so it must not revoke the winner or corrupt the real result.
+      return if approval.nil? || approval[:decision]
 
-      unless state && state[:approval]
+      approval[:decision] = entry
+      state[:status] = :decided
+    end
+
+    # A decision names the request it answers and decides no other. One from
+    # before decisions did that goes by its call id, and past a checkpoint
+    # its call may be gone, so there it is skipped.
+    def answered_approval(entry, state, late:)
+      approval = state && state[:approval]
+      if entry.key?("request")
+        approval if approval&.fetch(:request) == named_request(entry)
+      elsif approval || (state.nil? && late)
+        approval
+      else
         raise ConfigurationError, "session contains an approval decision without a prior " \
                                   "matching approval request"
       end
-      # A decision names the request it answers. One written for an earlier
-      # request with the same call id does not decide this one.
-      return if entry.key?("request") && entry["request"] != state[:approval][:request]
-      # Store order is the write-once register. A stale loser can append after
-      # execution, so it must not revoke the winner or corrupt the real result.
-      return if state[:approval][:decision]
+    end
 
-      state[:approval][:decision] = entry
-      state[:status] = :decided
+    def named_request(entry)
+      request = entry["request"]
+      return request if request.is_a?(Integer) && request >= 0
+
+      raise ConfigurationError, "session contains an approval decision whose request is not " \
+                                "a position in the log"
     end
 
     # An old decision names only call_N. Once that ID has already participated
@@ -903,7 +915,7 @@ module Mistri
 
       # The two-method Store contract cannot combine the precheck and append.
       # Re-read its total order so a racing conflicting caller learns it lost.
-      winner = recorded_approval_decision(call_id)
+      winner = decision_on(open[:request])
       return nil if winner && winner["approved"] == approved
 
       raise ConfigurationError, "approval for #{call_id.inspect} has already been decided"
@@ -914,6 +926,14 @@ module Mistri
       return nil if state&.fetch(:ambiguous_approval, false)
 
       state&.dig(:approval, :decision)
+    end
+
+    # A request the window no longer holds was settled before the newest
+    # checkpoint, by a decision that cannot be seen from here.
+    def decision_on(request)
+      audit_history(window).fetch(:states)
+                           .find { |state| state.dig(:approval, :request) == request }
+                           &.dig(:approval, :decision)
     end
 
     def rebuild_call(hash)
