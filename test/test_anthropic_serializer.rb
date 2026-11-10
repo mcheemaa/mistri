@@ -91,6 +91,20 @@ class TestAnthropicSerializer < Minitest::Test
     assert_equal [{ type: "text", text: "why" }], wire[:content]
   end
 
+  def test_an_openai_reasoning_item_never_reaches_the_messages_wire
+    item = { "id" => "rs_0123", "type" => "reasoning", "summary" => [],
+             "encrypted_content" => "not-an-anthropic-signature" }
+    thinking = Mistri::Content::Thinking.new(thinking: "Checking the clock.",
+                                             signature: JSON.generate(item))
+    answer = Mistri::Content::Text.new(text: "It is noon.")
+    wire = SERIALIZER.message(Mistri::Message.assistant(content: [thinking, answer],
+                                                        model: "gpt-6.1-terra", provider: :openai))
+
+    assert_equal [{ type: "text", text: "Checking the clock." },
+                  { type: "text", text: "It is noon." }], wire[:content]
+    refute_includes JSON.generate(wire), "not-an-anthropic-signature"
+  end
+
   def test_cache_marks_the_system_tail_and_the_last_user_turn
     history = [Mistri::Message.user("first"), Mistri::Message.assistant(content: "hi"),
                Mistri::Message.user("second")]
