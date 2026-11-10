@@ -52,7 +52,6 @@ module Mistri
         @mutex = Mutex.new
       end
 
-      # A module to prepend to a provider class.
       def recorder(vendor)
         report = self
         billed = @billed

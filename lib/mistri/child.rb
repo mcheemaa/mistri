@@ -38,7 +38,7 @@ module Mistri
       @parent_session_id = parent_session_id
     end
 
-    # A copy, so a caller cannot change which child this window reads.
+    # A string id is copied, so a caller cannot change which child this window reads.
     def session_id = @session_id.is_a?(String) ? @session_id.dup : @session_id
 
     def status
