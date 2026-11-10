@@ -8,7 +8,8 @@ module Mistri
     # One JSONL file per session under a directory: durable sessions without
     # a database, and a transcript any tool can read line by line.
     class JSONL
-      SAFE_ID = /\A[A-Za-z0-9_-]{1,64}\z/
+      # 249 characters and the extension fill a 255-byte filename.
+      SAFE_ID = /\A[A-Za-z0-9_-]{1,249}\z/
       private_constant :SAFE_ID
 
       def initialize(dir)
@@ -44,7 +45,7 @@ module Mistri
       # Session ids become filenames; a sanitized id would alias two sessions
       # onto one file.
       def path(id)
-        raise ArgumentError, "unsafe session id #{id.inspect}" unless SAFE_ID.match?(id)
+        raise ArgumentError, "unsafe session id #{id.inspect}" unless SAFE_ID.match?(id.to_s)
 
         File.join(@dir, "#{id}.jsonl")
       end

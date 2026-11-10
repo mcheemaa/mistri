@@ -98,12 +98,22 @@ class TestStores < Minitest::Test
   def test_jsonl_rejects_ids_that_are_not_safe_filenames
     Dir.mktmpdir do |dir|
       store = Mistri::Stores::JSONL.new(dir)
-      store.append("a" * 64, { "n" => 1 })
+      store.append("a" * 249, { "n" => 1 })
 
-      ["", "a" * 65, "a/b"].each do |id|
+      ["", "a" * 250, "a/b"].each do |id|
         assert_raises(ArgumentError, id.inspect) { store.append(id, { "n" => 1 }) }
       end
       assert_raises(ArgumentError) { store.load("a/b") }
+    end
+  end
+
+  def test_jsonl_takes_an_id_that_is_not_a_string
+    Dir.mktmpdir do |dir|
+      store = Mistri::Stores::JSONL.new(dir)
+      store.append(42, { "n" => 1 })
+
+      assert_equal [{ "n" => 1 }], store.load(42)
+      assert_path_exists File.join(dir, "42.jsonl")
     end
   end
 
