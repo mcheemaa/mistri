@@ -4,9 +4,10 @@ require "minitest"
 
 module Mistri
   module Test
-    # What a run spent on real provider calls: for each model the calls, the
-    # seconds waited, the tokens and the dollars, then the slowest tests.
-    # A call to a stub server costs nothing and is not counted.
+    # What a run's calls to the vendors cost: for each model the calls, the
+    # seconds waited, the tokens and the dollars at catalog prices, then the
+    # slowest tests. It is an estimate from the usage each call reported, not
+    # a bill. A call to a stub server is not counted.
     class LiveReport
       SLOWEST = 10
       HEADINGS = ["model", "calls", "seconds", "input", "cache read", "cache write",
@@ -72,13 +73,18 @@ module Mistri
         end
       end
 
+      # A call that raises, as when a test's own block does, was still sent:
+      # it is kept, with no usage.
       def timed(provider, model)
         return yield unless @billed.key?(provider)
 
         started = Process.clock_gettime(Process::CLOCK_MONOTONIC)
-        yield.tap do |message|
+        usage = Usage.new
+        begin
+          yield.tap { |message| usage = message.usage }
+        ensure
           seconds = Process.clock_gettime(Process::CLOCK_MONOTONIC) - started
-          @mutex.synchronize { @calls << Call.new(model:, seconds:, usage: message.usage) }
+          @mutex.synchronize { @calls << Call.new(model:, seconds:, usage:) }
         end
       end
 
@@ -112,10 +118,14 @@ module Mistri
          count(usage.output), format("%.4f", dollars(calls))]
       end
 
-      def dollars(calls) = calls.sum { |call| call.usage.cost.total }
+      # Only a known cost counts. A call cut short keeps a partial figure
+      # its provider no longer vouches for.
+      def dollars(calls)
+        calls.sum { |call| call.usage.cost.known? ? call.usage.cost.total : 0.0 }
+      end
 
-      # A call that failed or was cut short has no final usage and so no
-      # price, which makes the dollars a floor.
+      # A call that failed, was cut short or raised has no known cost, which
+      # makes the dollars a floor.
       def unpriced(recorded)
         missing = recorded.count { |call| !call.usage.cost.known? }
         return [] if missing.zero?

@@ -500,9 +500,10 @@ $ MISTRI_INTEGRATION_MODELS=claude-opus-5-5 bundle exec rake integration
 Keys load from the gitignored `.env.development.local`. A missing key skips that
 provider; inspect the test output before claiming a full three-provider run.
 
-A run that made real provider calls ends with what it spent: the calls, the
-seconds waited, the tokens and the dollars for each model, then the slowest
-tests.
+A run that called a vendor ends with a report of those calls: for each model
+the calls, the seconds waited, the tokens and their cost at catalog prices,
+then the slowest tests. The cost is an estimate from the usage each call
+reported, not a bill.
 
 ## Related guides
 

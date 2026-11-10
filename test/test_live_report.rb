@@ -7,8 +7,13 @@ require_relative "support/stub_server"
 class TestLiveReport < Minitest::Test
   MESSAGES = [Mistri::Message.user("hi")].freeze
 
+  ENDING = [{ "type" => "message_delta", "delta" => { "stop_reason" => "end_turn" },
+              "usage" => { "output_tokens" => 340 } },
+            { "type" => "message_stop" }].freeze
+
   def setup
     @report = Mistri::Test::LiveReport.new
+    @ending = ENDING
     @server = Mistri::Test::StubServer.new { |socket, _request| answer(socket) }
   end
 
@@ -69,6 +74,34 @@ class TestLiveReport < Minitest::Test
     provider&.close
   end
 
+  def test_a_call_whose_callback_raises_is_still_counted
+    provider = vendor(model: "claude-haiku-5-5", catalog_pricing: true)
+
+    assert_raises(RuntimeError) do
+      provider.stream(messages: MESSAGES) { |event| raise "stop here" if event.type == :done }
+    end
+
+    assert_equal ["claude-haiku-5-5"], @report.calls.map(&:model)
+    assert_includes @report.summary([]), "1 of these calls had no price."
+  ensure
+    provider&.close
+  end
+
+  def test_a_cost_that_is_not_known_adds_no_dollars
+    @ending = []
+    provider = vendor(model: "claude-haiku-5-5", catalog_pricing: true)
+
+    message = provider.stream(messages: MESSAGES)
+    summary = @report.summary([])
+
+    assert_predicate message.usage.cost.total, :positive?
+    refute_predicate message.usage.cost, :known?
+    assert_match(/claude-haiku-5-5 +1 +\d+\.\d +1,200 +0 +0 +0 +0\.0000$/, summary)
+    assert_includes summary, "1 of these calls had no price. The dollars leave them out."
+  ensure
+    provider&.close
+  end
+
   def test_the_summary_lists_the_slowest_tests_first
     provider = vendor
     provider.stream(messages: MESSAGES)
@@ -109,10 +142,7 @@ class TestLiveReport < Minitest::Test
     @server.sse_data(socket, { "type" => "message_start",
                                "message" => { "usage" => { "input_tokens" => 1_200,
                                                            "service_tier" => "standard" } } })
-    @server.sse_data(socket, { "type" => "message_delta",
-                               "delta" => { "stop_reason" => "end_turn" },
-                               "usage" => { "output_tokens" => 340 } })
-    @server.sse_data(socket, { "type" => "message_stop" })
+    @ending.each { |record| @server.sse_data(socket, record) }
     @server.finish_sse(socket)
   end
 end

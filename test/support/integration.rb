@@ -10,7 +10,7 @@ Mistri::Test::LiveReport.install
 # once per model in the matrix. Scenarios pair generated values with structural
 # assertions. Opaque markers prove exact data flow; pronounceable synthetic
 # names keep entity prompts natural without relying on a real company or person.
-# A run ends with what it spent: calls, seconds, tokens and dollars per model.
+# A run ends with a report per model: calls, seconds, tokens and their cost.
 #
 #   bundle exec rake integration
 #   MISTRI_INTEGRATION_STRICT=1 bundle exec rake integration
