@@ -15,13 +15,18 @@ module Mistri
   # array of entry hashes in append order. One that also answers settled? and
   # takes load(id, from: position) is read in part. Everything else lives here.
   class Session # rubocop:disable Metrics/ClassLength -- append-only ordering is the class contract
-    attr_reader :id, :store
+    attr_reader :store
 
     def initialize(store:, id: nil)
       @store = store
-      @id = id || SecureRandom.uuid
-      @log = Log.new(store, @id)
+      @log = Log.new(store, id || SecureRandom.uuid)
+      @id = @log.id
     end
+
+    # A string id comes back as a copy. The id a session was built with is
+    # fixed: changing the string it was given, or the one returned here, does
+    # not move the session.
+    def id = @id.is_a?(String) ? @id.dup : @id
 
     def append_message(message)
       append("message", "message" => message.to_h)

@@ -5,6 +5,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+- A session's string id is fixed when the Session is built. `Session.new`
+  keeps its own copy of it and `Session#id` returns a copy. Changing the string
+  a session was given used to redirect it, and could mix two sessions' entries
+  once a session held what it had read.
 - The install generator creates the session table with one index, the unique
   index on `[session_id, position]`. The index on `session_id` alone was
   redundant. An existing table is unaffected.
