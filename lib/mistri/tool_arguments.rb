@@ -81,7 +81,7 @@ module Mistri
     # under MAX_NODES while stopping wide hostile inputs before JSON.parse.
     # This byte-state machine must branch on JSON token starts without building a tree.
     # rubocop:disable-next Metrics/CyclomaticComplexity, Metrics/MethodLength, Metrics/PerceivedComplexity
-    def raw_json_resource_error(raw)
+    def raw_json_resource_error(raw, max_tokens: MAX_LEXICAL_TOKENS)
       tokens = 0
       depth = 0
       index = 0
@@ -90,12 +90,12 @@ module Mistri
         case byte
         when 34
           tokens += 1
-          return "too_many_nodes" if tokens > MAX_LEXICAL_TOKENS
+          return "too_many_nodes" if tokens > max_tokens
 
           index = string_end(raw, index + 1)
         when 91, 123
           tokens += 1
-          return "too_many_nodes" if tokens > MAX_LEXICAL_TOKENS
+          return "too_many_nodes" if tokens > max_tokens
 
           depth += 1
           return "too_deep" if depth > MAX_DEPTH + 1
@@ -106,24 +106,24 @@ module Mistri
           index += 1
         when 45, 48..57
           tokens += 1
-          return "too_many_nodes" if tokens > MAX_LEXICAL_TOKENS
+          return "too_many_nodes" if tokens > max_tokens
 
           number_start = index
           index = number_end(raw, index + 1)
           return "number_too_large" if index - number_start > MAX_NUMBER_BYTES
         when 116
           tokens += 1
-          return "too_many_nodes" if tokens > MAX_LEXICAL_TOKENS
+          return "too_many_nodes" if tokens > max_tokens
 
           index += raw.byteslice(index, 4) == "true" ? 4 : 1
         when 102
           tokens += 1
-          return "too_many_nodes" if tokens > MAX_LEXICAL_TOKENS
+          return "too_many_nodes" if tokens > max_tokens
 
           index += raw.byteslice(index, 5) == "false" ? 5 : 1
         when 110
           tokens += 1
-          return "too_many_nodes" if tokens > MAX_LEXICAL_TOKENS
+          return "too_many_nodes" if tokens > max_tokens
 
           index += raw.byteslice(index, 4) == "null" ? 4 : 1
         else

@@ -46,12 +46,12 @@ module Mistri
         assembler = OpenAI::Assembler.new(model: model, catalog_pricing: @catalog_pricing)
         assembler.start(&delivery)
         body = build_body(model, messages, system, tools, overrides)
-        outcome = @transport.stream_post("/v1/responses", body: body, headers: headers,
-                                                          signal: signal) do |record|
-          assembler.feed(
-            record, &delivery
-          )
-        end
+        # The Responses stream echoes the request in its own events, tool
+        # definitions included, so a record's tokens follow what the host
+        # sent. Its bytes, depth and numbers stay bounded.
+        outcome = @transport.stream_post(
+          "/v1/responses", body:, headers:, signal:, max_record_tokens: Float::INFINITY
+        ) { |record| assembler.feed(record, &delivery) }
         outcome == :aborted ? assembler.abort(&delivery) : assembler.finish(&delivery)
       rescue EventDelivery::Failure => e
         raise EventDelivery.unwrap(e, delivery)

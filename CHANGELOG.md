@@ -5,6 +5,12 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+- A large tool list no longer ends every OpenAI run. The Responses stream
+  echoes the request's tool definitions in its own events, and the 20,001
+  token ceiling on a stream record refused that echo once the list was large
+  enough. An OpenAI stream record is no longer held to that ceiling. Its byte,
+  depth and number limits stay, and Anthropic, Gemini and MCP records are
+  checked as before.
 - A session starts at its newest checkpoint. A compaction entry carries the
   sub-agent links, the delivered reports and the old-style call ids with an
   approval from before it, and a session reads, replays and audits from its

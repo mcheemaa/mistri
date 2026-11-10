@@ -99,10 +99,13 @@ module Mistri
 
     # POST and stream the SSE response, yielding each decoded data record.
     # Returns :aborted when the signal cancelled the stream, else nil.
-    def stream_post(path, body:, headers: {}, signal: nil, &block)
+    def stream_post(path, body:, headers: {}, signal: nil,
+                    max_record_tokens: ToolArguments::MAX_LEXICAL_TOKENS, &block)
       return :aborted if signal&.aborted?
 
-      @mutex.synchronize { stream_locked(path, body, headers, signal, &block) }
+      @mutex.synchronize do
+        stream_locked(path, body, headers, signal, max_record_tokens, &block)
+      end
     end
 
     # POST for Streamable-HTTP endpoints (the MCP shape) that answer either
@@ -160,7 +163,7 @@ module Mistri
       end
     end
 
-    def stream_locked(path, body, headers, signal, &block)
+    def stream_locked(path, body, headers, signal, max_record_tokens, &block)
       retried = false
       begin
         started = false
@@ -174,7 +177,7 @@ module Mistri
           conn.request(build_request(path, body, headers, streaming: true)) do |response|
             started = true
             raise_for_status(response)
-            aborted = read_stream(response, signal, &block)
+            aborted = read_stream(response, signal, max_record_tokens, &block)
           end
         ensure
           signal&.remove_callback(closer) if closer
@@ -200,8 +203,8 @@ module Mistri
       end
     end
 
-    def read_stream(response, signal, &block)
-      sse = SSE.new(max_record_bytes: @max_record_bytes)
+    def read_stream(response, signal, max_record_tokens, &block)
+      sse = SSE.new(max_record_bytes: @max_record_bytes, max_record_tokens:)
       aborted = false
       response.read_body do |fragment|
         if signal&.aborted?
