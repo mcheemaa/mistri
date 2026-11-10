@@ -9,6 +9,16 @@ module Mistri
     # nothing is held. The entries are frozen: every reader of one Session
     # shares them, from any thread.
     class Log
+      # A copy of a held value that its caller may change.
+      def self.owned(value)
+        case value
+        when Hash then value.to_h { |key, nested| [owned(key), owned(nested)] }
+        when Array then value.map { |nested| owned(nested) }
+        when String then value.dup
+        else value
+        end
+      end
+
       attr_reader :id
 
       # A String id is the caller's object and can be changed in place. The

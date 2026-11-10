@@ -38,7 +38,7 @@ module Mistri
     end
 
     def status
-      log = session.entries
+      log = read_log
       terminal = log.reverse_each.find { |entry| entry["type"] == TERMINAL }
       return terminal["status"].to_sym if terminal
       if log.any? { |entry| entry["type"] == DISPATCHED } &&
@@ -58,21 +58,21 @@ module Mistri
     end
 
     def report
-      terminal_entry&.fetch("report", nil)
+      Session::Log.owned(terminal_entry&.fetch("report", nil))
     end
 
     # The terminal entry's error string, once failed.
     def error
-      terminal_entry&.fetch("error", nil)
+      Session::Log.owned(terminal_entry&.fetch("error", nil))
     end
 
     # Recent entries, oldest first, with inline image bytes replaced by a
     # marker: transcripts are for reading and re-sending, not for hauling
     # screenshots back into a context window.
     def transcript(tail: 20)
-      entries = session.entries
+      entries = read_log
       entries = entries.last(tail) if tail
-      entries.map { |entry| self.class.strip_images(entry) }
+      entries.map { |entry| Session::Log.owned(self.class.strip_images(entry)) }
     end
 
     # Queue a message the child folds at its next turn boundary. Delivery is
@@ -130,7 +130,7 @@ module Mistri
       return :contended unless lease
 
       begin
-        log = session.entries
+        log = read_log
         terminal = log.reverse_each.find { |entry| entry["type"] == TERMINAL }
         dispatched = log.any? { |entry| entry["type"] == DISPATCHED }
         if terminal
@@ -154,7 +154,7 @@ module Mistri
     # grant; legacy children fall back to the parent link because their
     # dispatched entry did not retain a spec.
     def deliver_cancellation
-      dispatched = session.entries.find { |entry| entry["type"] == DISPATCHED }
+      dispatched = read_log.find { |entry| entry["type"] == DISPATCHED }
       return unless dispatched
 
       spec = dispatched["spec"]
@@ -179,8 +179,14 @@ module Mistri
       @session ||= Session.new(store: @store, id: @session_id)
     end
 
+    # The child's log as this window has read it, brought up to date: a wait
+    # reads it once and then only what was appended since.
+    def read_log
+      (@log ||= Session::Log.new(@store, @session_id)).entries
+    end
+
     def terminal_entry
-      session.entries.reverse_each.find { |entry| entry["type"] == TERMINAL }
+      read_log.reverse_each.find { |entry| entry["type"] == TERMINAL }
     end
   end
 end
