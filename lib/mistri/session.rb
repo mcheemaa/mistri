@@ -103,9 +103,8 @@ module Mistri
 
     # Write a compaction: replay starts at kept_from behind the summary. The
     # entry carries what the loop needs from before it, so a later read can
-    # start there. The start may only move forward, to a place that keeps
-    # every open approval, every steer or report not folded in yet, and each
-    # tool call together with its result.
+    # start there. The start may only move forward, to a turn boundary that
+    # keeps every open approval and every steer or report not folded in yet.
     def checkpoint(summary:, kept_from:, model: nil, tokens_before: nil)
       held = window
       validate_cut!(held, kept_from)
@@ -244,7 +243,8 @@ module Mistri
                   "approvals" => state.fetch("approvals", []) | legacy_approvals_in(before))
     end
 
-    # Only an old call_N id can come back, so only those are remembered.
+    # A decision written before decisions named their request is told apart
+    # only by its call id, and in such logs only an old call_N id repeats.
     def legacy_approvals_in(entries)
       entries.select { |entry| entry["type"] == "approval_request" }
              .filter_map { |entry| entry.dig("call", "id") }.grep(LEGACY_CALL_ID)
@@ -269,10 +269,22 @@ module Mistri
         raise ConfigurationError, "a compaction cannot cut past a steer or report that is " \
                                   "not folded in"
       end
-      return unless splits_call?(audit.fetch(:states), cut)
+      return if turn_boundary?(log, cut)
 
-      raise ConfigurationError, "a compaction cannot start at a boundary that splits a tool " \
-                                "call from its result"
+      raise ConfigurationError, "a compaction must start at a user message, at an assistant " \
+                                "turn that calls tools, or at the end of the log"
+    end
+
+    # Everything a tool call leads to (its request, decision and result)
+    # follows it within its turn, so a start on a turn parts none of them.
+    def turn_boundary?(log, cut)
+      return true if cut == log.length
+
+      entry = log[cut]
+      return false unless entry["type"] == "message"
+
+      role = entry.dig("message", "role")
+      role == "user" || (role == "assistant" && tool_calls_from(entry).any?)
     end
 
     def splits_call?(states, cut)
@@ -396,7 +408,7 @@ module Mistri
           close_unsettled_calls(calls, unresolved)
           record_assistant_calls(entry, message, index, audit) if message.assistant?
         elsif entry["type"] == "approval_request"
-          record_approval_call(entry, calls, audit)
+          record_approval_call(entry, held.position(index), calls, audit)
         elsif entry["type"] == "approval_decision"
           record_approval_decision(entry, calls, late: held.offset.positive?)
         elsif entry["type"] == "compaction"
@@ -489,7 +501,7 @@ module Mistri
       unresolved.clear
     end
 
-    def record_approval_call(entry, calls, audit)
+    def record_approval_call(entry, position, calls, audit)
       call = entry["call"]
       unless call.is_a?(Hash)
         raise ConfigurationError, "session contains an invalid approval request"
@@ -522,7 +534,8 @@ module Mistri
       advance_call_order!(state, :approval_request_position, "approval requests")
       state[:batch][:approval_phase_started] = true
       state[:status] = :approval_requested
-      state[:approval] = { call:, decision: nil, source_index: state[:source_index] }
+      state[:approval] = { call:, decision: nil, source_index: state[:source_index],
+                           request: position }
       state[:ambiguous_approval] = state[:reused] && audit.fetch(:approval_ids).include?(id)
       audit.fetch(:approval_ids) << id
     end
@@ -578,6 +591,9 @@ module Mistri
         raise ConfigurationError, "session contains an approval decision without a prior " \
                                   "matching approval request"
       end
+      # A decision names the request it answers. One written for an earlier
+      # request with the same call id does not decide this one.
+      return if entry.key?("request") && entry["request"] != state[:approval][:request]
       # Store order is the write-once register. A stale loser can append after
       # execution, so it must not revoke the winner or corrupt the real result.
       return if state[:approval][:decision]
@@ -863,7 +879,8 @@ module Mistri
     end
 
     def decide(call_id, approved:, note:)
-      open = open_approvals.find { |approval| approval[:call].id == call_id }
+      open = audit_history(window).fetch(:approvals)
+                                  .find { |approval| approval[:call]["id"] == call_id }
       unless open
         winner = recorded_approval_decision(call_id)
         return nil if winner && winner["approved"] == approved
@@ -880,7 +897,7 @@ module Mistri
         raise ConfigurationError, "approval for #{call_id.inspect} has already been decided"
       end
 
-      entry = { "call_id" => call_id, "approved" => approved }
+      entry = { "call_id" => call_id, "approved" => approved, "request" => open[:request] }
       entry["note"] = note if note
       append("approval_decision", entry)
 

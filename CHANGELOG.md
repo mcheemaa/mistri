@@ -14,7 +14,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   writes a compaction and refuses an unsafe start, and `Session#open_from` is
   the earliest position replay must keep. A tool call id is unique within the
   window, a decision repeated for a call older than it raises, and a
-  compaction never cuts past a steer or report that is not folded in.
+  compaction never cuts past a steer or report that is not folded in. An
+  approval decision records the request it answers and applies only to it.
 - A wait on a worker reads the worker's log once and then only what was
   appended since. `read_agent` with `wait` used to load the whole log twice on
   every poll. A `Child` keeps its own copy of a string `session_id` and

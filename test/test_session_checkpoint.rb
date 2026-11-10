@@ -99,9 +99,9 @@ class TestSessionCheckpoint < Minitest::Test
     assert @session.deliver_report(**report)
     fold(@session.pending_inbox.first)
     exchange("after")
-    @session.checkpoint(summary: "One.", kept_from: 4)
+    @session.checkpoint(summary: "One.", kept_from: 5)
     exchange("later")
-    @session.checkpoint(summary: "Two.", kept_from: 7)
+    @session.checkpoint(summary: "Two.", kept_from: 8)
     before = @store.size("s")
 
     refute fresh.deliver_report(**report)

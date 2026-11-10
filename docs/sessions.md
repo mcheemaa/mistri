@@ -108,7 +108,8 @@ load(session_id, from: 0, to: nil) # the entries from `from` up to, not includin
 ```
 
 The session reads back from the end in growing chunks until one holds a
-compaction, then from that compaction's `kept_from`. A store without `size` is
+compaction. When that compaction is a checkpoint it reads from its
+`kept_from`; when it is not, it reads the whole log. A store without `size` is
 read whole and the same window is used in memory, so every store answers the
 same. The memory and Active Record stores answer both. The JSONL store does
 not, because a file is read from its start either way.
@@ -119,12 +120,18 @@ was settled before the newest checkpoint raises "no open approval". An entry
 older than the window is no longer replayed or audited as a message, though a
 store may still decode it on the way to finding the window.
 
+Because a call id can come back after a checkpoint, an approval decision
+records the position of the request it answers and applies only to that
+request. A decision that arrives late never decides a newer request that
+happens to carry the same call id.
+
 A compaction entry written by hand, or by a version before checkpoints,
 carries nothing. While it is the newest compaction the session is read whole.
-Write one with `Session#checkpoint(summary:, kept_from:)`. It raises
-`Mistri::ConfigurationError` for a start that would move back, pass an open
-approval or a steer or report not folded in yet, or part a tool call from its
-result.
+Write one with `Session#checkpoint(summary:, kept_from:)`. The start must be
+a turn boundary: a user message, an assistant turn that calls tools, or the
+end of the log. It raises `Mistri::ConfigurationError` for any other start,
+and for one that would move back or pass an open approval or a steer or report
+not folded in yet.
 
 Built-in stores are:
 

@@ -111,13 +111,17 @@ read whole until its next compaction.
 - A subclass of the memory or Active Record store, or a wrapper that forwards
   every method, already answers `size`. Its own `load` must take `to:` as
   well as `from:`.
+- An `approval_decision` entry now records `request`, the position of the
+  approval request it answers, and applies only to that request. Decisions
+  written earlier have no `request` and keep working as before.
 - Code that appends a compaction entry itself should call
   `Session#checkpoint(summary:, kept_from:)`, so the entry carries what is
-  needed from before it. It raises `Mistri::ConfigurationError` for a start
-  that would move back, pass an open approval or a steer or report not folded
-  in yet, or part a tool call from its result. A compaction appended with
-  `Session#append` still replays correctly, and the session is read whole
-  while it is the newest one.
+  needed from before it. The start must be a user message, an assistant turn
+  that calls tools, or the end of the log. It raises
+  `Mistri::ConfigurationError` for any other start, and for one that would
+  move back or pass an open approval or a steer or report not folded in yet.
+  A compaction appended with `Session#append` still replays correctly, and
+  the session is read whole while it is the newest one.
 
 ### A session's string id is fixed
 

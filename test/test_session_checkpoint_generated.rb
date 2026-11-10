@@ -130,7 +130,7 @@ class TestSessionCheckpointGenerated < Minitest::Test
       @random.rand(2).zero? ? @held.approve(id) : @held.deny(id)
     end
     agent({ text: "after the decision #{@count}" }).resume
-    @settled << id
+    @settled << [id, request_position(id)]
   end
 
   # A turn as releases before 0.6.0 wrote it: a call_N id that repeats, here
@@ -146,13 +146,24 @@ class TestSessionCheckpointGenerated < Minitest::Test
 
     @held.append_message(Mistri::Message.tool(content: "ran", tool_call_id: call.id,
                                               tool_name: "gated"))
-    @settled << call.id
+    @settled << [call.id, nil]
   end
 
-  # A decision that lost its race and is written long after its call settled.
+  # A decision that lost its race and is written long after its call settled,
+  # naming its request the way this version does, or not, as older ones did.
   def late
-    id = @settled.sample(random: @random)
-    @held.append("approval_decision", "call_id" => id, "approved" => false) if id
+    id, request = @settled.sample(random: @random)
+    return unless id
+
+    decision = { "call_id" => id, "approved" => @random.rand(2).zero? }
+    decision["request"] = request if request
+    @held.append("approval_decision", decision)
+  end
+
+  def request_position(id)
+    @store.load("s").rindex do |entry|
+      entry["type"] == "approval_request" && entry.dig("call", "id") == id
+    end
   end
 
   # A compaction as an older release or a host writes it: it carries nothing.
