@@ -20,6 +20,13 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   out. On Rails 7.2 and later, the first atomic edit of a job held one until
   the job ended. The single-value workspace recipe in the guide now borrows
   its connection the same way.
+- With `Mistri.locks` set, `run`, `resume`, `task`, and `compact` lease the
+  session; a second runner raises `Mistri::SessionBusyError` (with
+  `session_id`) before appending. Acquire failures fail the run. After a
+  failed release the session stays busy until the lease expires.
+- A failed lease renewal warns and retries; it used to stop renewing.
+- `Locks::RailsCache` raises `Mistri::Error` when a cache write fails; an
+  outage used to read as a held lease.
 - A session reads its log from the store once and then only the entries
   appended since, where each turn used to load the whole log three times. The
   built-in stores support it through `load(session_id, from: 0)` and

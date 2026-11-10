@@ -24,6 +24,8 @@ module Mistri
           end
         rescue StandardError => e
           primary_error = e
+          raise if busy_child?(e, child)
+
           reported = EventDelivery.original(e)
           child.append(Child::TERMINAL, "status" => "failed",
                                         "error" => "#{reported.class}: #{reported.message}")
@@ -74,7 +76,12 @@ module Mistri
         emit.call(event.with(origin: tagged))
       end
 
-      private :abort_before_child_start!, :execute_child, :forward,
+      # Its own session busy means the child never ran, so a retry is safe.
+      def busy_child?(error, child)
+        error.is_a?(SessionBusyError) && error.session_id == child.id
+      end
+
+      private :abort_before_child_start!, :busy_child?, :execute_child, :forward,
               :release_inline_lease, :run_child_agent
     end
   end

@@ -148,7 +148,8 @@ class TestChildStop < Minitest::Test
   def test_inline_lease_setup_failure_still_writes_a_failed_terminal
     broken = Class.new do
       def held?(_key) = false
-      def acquire(*) = raise("lock backend down")
+      def acquire(key, **) = key.start_with?("child:") ? raise("lock backend down") : true
+      def release(_key) = nil
       def clear_flag(_key) = nil
     end.new
     Mistri.locks = broken

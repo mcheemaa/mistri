@@ -15,11 +15,11 @@ module Mistri
       end
 
       def acquire(key, ttl:)
-        @cache.write(scoped(key), true, unless_exist: true, expires_in: ttl)
+        write(key, unless_exist: true, expires_in: ttl)
       end
 
       def renew(key, ttl:)
-        @cache.write(scoped(key), true, expires_in: ttl)
+        write(key, expires_in: ttl)
         nil
       end
 
@@ -41,6 +41,14 @@ module Mistri
       def clear_flag(key) = release(key)
 
       private
+
+      # Redis and Memcache stores answer nil, not false, when the backend is down.
+      def write(key, **)
+        written = @cache.write(scoped(key), true, **)
+        raise Error, "lock cache write failed for #{scoped(key)}" if written.nil?
+
+        written
+      end
 
       def scoped(key) = "#{@namespace}:#{key}"
     end

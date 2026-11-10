@@ -10,6 +10,19 @@ class TestLocks < Minitest::Test
     Mistri.locks = nil
   end
 
+  def fails_once(method)
+    failed = false
+    Class.new(Mistri::Locks::Memory) do
+      define_method(method) do |*args, **opts|
+        unless failed
+          failed = true
+          raise "lock backend blip"
+        end
+        super(*args, **opts)
+      end
+    end.new
+  end
+
   def test_memory_leases_acquire_once_and_expire
     locks = Mistri::Locks::Memory.new
 
@@ -54,6 +67,29 @@ class TestLocks < Minitest::Test
     sleep 0.1
 
     refute Mistri.locks.held?("child:x"), "no tick re-stamps a released lease"
+  end
+
+  def test_a_failed_renewal_is_retried_on_the_next_heartbeat
+    Mistri.locks = fails_once(:renew)
+    hold = nil
+
+    assert_output(nil, /renewing lease child:x failed/) do
+      hold = Mistri::Locks.hold("child:x", ttl: 0.2, heartbeat: 0.05)
+      sleep 0.3
+    end
+    assert Mistri.locks.held?("child:x"), "a later heartbeat renewed the lease"
+    hold.release
+  end
+
+  def test_a_failed_stop_check_is_retried_on_the_next_tick
+    Mistri.locks = fails_once(:flag?)
+    signal = Mistri::AbortSignal.new
+    Mistri.locks.set_flag("stop:x")
+    hold = Mistri::Locks.hold("child:x", ttl: 1, heartbeat: 0.05, stop_key: "stop:x", signal:)
+    sleep 0.2
+    hold.release
+
+    assert_predicate signal, :aborted?
   end
 
   def test_hold_is_a_no_op_without_an_adapter
@@ -165,5 +201,15 @@ class TestLocks < Minitest::Test
 
     refute locks.held?("run:1")
     refute locks.flag?("stop:1")
+  end
+
+  def test_rails_cache_raises_when_a_cache_write_fails
+    require "mistri/locks/rails_cache"
+    # Redis and Memcache stores answer nil when the backend is down.
+    down = Class.new { def write(*, **) = nil }.new
+    locks = Mistri::Locks::RailsCache.new(cache: down)
+
+    assert_raises(Mistri::Error) { locks.acquire("run:1", ttl: 60) }
+    assert_raises(Mistri::Error) { locks.renew("run:1", ttl: 60) }
   end
 end

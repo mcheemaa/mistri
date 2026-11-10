@@ -129,6 +129,18 @@ page.class.connection_pool.with_connection(&:transaction_open?)
 
 The Active Record workspace and session store need no change in your code.
 
+### One runner per session is checked
+
+Only when `Mistri.locks` is set:
+
+- A second concurrent `run`, `resume`, `task`, or `compact` raises
+  `Mistri::SessionBusyError`. Retry, or report the session busy.
+- So does a tool or event subscriber that calls back into its own agent.
+- After a crash, runs can raise it for up to three minutes. A child job raises
+  it when its own session is busy and stays retryable.
+- An adapter that raises on acquire fails the run. After a failed release
+  the session stays busy for up to three minutes.
+
 ### OpenAI tools are no longer strict
 
 Mistri sends `strict: false` with every OpenAI tool. Before, the model wrote a
