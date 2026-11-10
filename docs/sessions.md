@@ -72,13 +72,15 @@ false, or the store does not answer it, the session reads the whole log with
 `load(session_id)` and holds nothing.
 
 Answer true only when the load that follows returns committed entries that
-can no longer change or disappear. On a database, answer false while a
-transaction is open on the connection that reads: its own rows can be rolled
-back, and it expects to read its own snapshot. The answer has to hold for the
-load that follows it and for the place that load reads from, so a subclass or
-a wrapper that reads from somewhere else must answer for itself and not
-inherit the answer. When in doubt answer false. A session then reads the whole
-log, which is always correct. The built-in stores answer both.
+can no longer change or disappear. Entries must also become visible in order:
+a load never shows an entry before one that was appended earlier. On a
+database, answer false while a transaction is open on the connection that
+reads: its own rows can be rolled back, and it expects to read its own
+snapshot. The answer has to hold for the load that follows it and for the
+place that load reads from, so a subclass or a wrapper that reads from
+somewhere else must answer for itself and not inherit the answer. When in
+doubt answer false. A session then reads the whole log, which is always
+correct. The built-in stores answer both.
 
 Built-in stores are:
 
