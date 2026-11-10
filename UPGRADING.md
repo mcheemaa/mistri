@@ -76,19 +76,52 @@ unchanged: without `settled?` it is read whole on every read, as before.
   describes.
 - A subclass of a built-in store, or a wrapper that forwards every method,
   already answers `settled?`. Its own `load` must take `from:`.
-- Inside a transaction that Active Record opened, a session reads the whole
-  log and holds nothing, so what it answers there is unchanged. A transaction
-  begun with raw SQL is invisible to the store; do not read a session inside
-  one.
+- Inside a transaction that Active Record opened, a session reads fresh and
+  holds nothing, so what it answers there is unchanged. A transaction begun
+  with raw SQL is invisible to the store; do not read a session inside one.
 - The Active Record store raises `Mistri::ConfigurationError` when the rows it
   reads are not at consecutive positions. Rows that are only ever appended sit
   at positions 1, 2, 3. Delete a session's rows together, never some of them.
 - The Active Record store needs READ COMMITTED or a stronger isolation level
   on the connection that reads. MySQL and PostgreSQL have that by default.
-- A `Session` object holds every entry it has read in memory, image data
+- A `Session` object holds the entries of its window in memory, image data
   included, for as long as the object lives. After a session's rows are
-  deleted, build a new `Session` object. A `Child` holds the entries of its
+  deleted, build a new `Session` object. A `Child` holds every entry of its
   worker's log the same way.
+
+### A session starts at its newest checkpoint
+
+A compaction now carries what a turn needs from before it, and a session
+reads, replays and audits from the newest one on, however long its log is. A
+compaction written before this release carries nothing, so such a session is
+read whole until its next compaction.
+
+- A tool call id must be unique within the session's window, the entries from
+  the newest checkpoint's `kept_from` on. It used to be unique over the whole
+  session.
+- `approve` and `deny` repeated for a call that was settled before the newest
+  checkpoint raise `Mistri::ConfigurationError` ("no open approval"). They
+  used to return nil.
+- An entry older than the window is no longer replayed or audited as a
+  message. A store may still decode it while the window is being found.
+- To let a session find its window in a custom store without loading the
+  rest, add `size(id)` and take `to:` in `load`, as
+  [Sessions and control](docs/sessions.md#starting-at-the-newest-checkpoint)
+  describes. Without them the store is read whole, as before.
+- A subclass of the memory or Active Record store, or a wrapper that forwards
+  every method, already answers `size`. Its own `load` must take `to:` as
+  well as `from:`.
+- An `approval_decision` entry now records `request`, the position of the
+  approval request it answers, and applies only to that request. Decisions
+  written earlier have no `request` and keep working as before.
+- Code that appends a compaction entry itself should call
+  `Session#checkpoint(summary:, kept_from:)`, so the entry carries what is
+  needed from before it. The start must be a user message, an assistant turn
+  that calls tools, or the end of the log. It raises
+  `Mistri::ConfigurationError` for any other start, and for one that would
+  move back or pass an open approval or a steer or report not folded in yet.
+  A compaction appended with `Session#append` still replays correctly, and
+  the session is read whole while it is the newest one.
 
 ### A session's string id is fixed
 

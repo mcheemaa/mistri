@@ -18,7 +18,7 @@ module SessionStores
       id ? @reads.select { |read| read.id == id } : @reads
     end
 
-    def load(id, from: 0)
+    def load(id, from: 0, to: nil)
       super.tap do |entries|
         @reads << Read.new(id:, from:, entries: entries.length)
         @loaded << true
@@ -54,11 +54,16 @@ module SessionStores
 
     def settled? = Thread.current.thread_variable_get(:pinned).nil?
 
-    def load(id, from: 0)
+    def size(id)
+      pinned = Thread.current.thread_variable_get(:pinned)
+      pinned ? pinned.fetch(id, []).length : super
+    end
+
+    def load(id, from: 0, to: nil)
       pinned = Thread.current.thread_variable_get(:pinned)
       return super unless pinned
 
-      pinned.fetch(id, []).drop(from).map { |entry| json_copy(entry, freeze: false) }
+      pinned.fetch(id, [])[from...to].to_a.map { |entry| json_copy(entry, freeze: false) }
     end
   end
 
@@ -79,6 +84,44 @@ module SessionStores
     end
   end
 
+  # Holds one approval decision just before it is appended, as a decision
+  # that passed its check and is slow to write. It lands on release, or
+  # right after the entry release_after picks.
+  class HeldDecision < Mistri::Stores::Memory
+    attr_reader :entered
+
+    def initialize
+      super
+      @entered = Queue.new
+      @gate = Queue.new
+      @landed = Queue.new
+    end
+
+    def hold_next_decision = @hold = true
+
+    def release_after(&entry) = @release_after = entry
+
+    def release = @gate << true
+
+    def append(id, entry)
+      held = @hold && entry["type"] == "approval_decision"
+      if held
+        @hold = false
+        @entered << true
+        @gate.pop
+      end
+      super
+      @landed << true if held
+      return unless !held && @release_after&.call(entry)
+
+      @release_after = nil
+      release
+      raise "the held decision never landed" unless @landed.pop(timeout: 5)
+
+      nil
+    end
+  end
+
   # Holds one load inside the store until the test lets it go.
   class Gated < Mistri::Stores::Memory
     attr_reader :entered, :starts
@@ -94,7 +137,7 @@ module SessionStores
 
     def release = @gate << true
 
-    def load(id, from: 0)
+    def load(id, from: 0, to: nil)
       @starts << from
       if @hold
         @hold = false

@@ -5,6 +5,17 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+- A session starts at its newest checkpoint. A compaction entry carries the
+  sub-agent links, the delivered reports and the old-style call ids with an
+  approval from before it, and a session reads, replays and audits from its
+  `kept_from` on, however long the log is. A new `Session` on the memory or
+  Active Record store reads back from the end to find it; `size` and
+  `load(..., to:)` are the opt-in for a custom store. `Session#checkpoint`
+  writes a compaction and refuses an unsafe start, and `Session#open_from` is
+  the earliest position replay must keep. A tool call id is unique within the
+  window, a decision repeated for a call older than it raises, and a
+  compaction never cuts past a steer or report that is not folded in. An
+  approval decision records the request it answers and applies only to it.
 - A compaction is no longer declined when the recent turns end on a tool call
   whose result was never recorded. The keep budget was measured to the start
   of the session in that case, so nothing was left to summarize. A kept tail

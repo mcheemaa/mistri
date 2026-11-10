@@ -137,6 +137,30 @@ class TestLegacyToolCallIdentity < Minitest::Test
     assert_predicate agent.run("continue"), :completed?
   end
 
+  def test_a_compaction_between_two_uses_of_an_id_does_not_revive_a_stale_approval
+    session = new_session
+    first = append_legacy_call(session, "call_1")
+    session.append("approval_request", "call" => first.to_h)
+    session.append("approval_decision", "call_id" => first.id, "approved" => true)
+    append_result(session, first, "first")
+    second = append_legacy_call(session, "call_1")
+    session.append("approval_request", "call" => second.to_h)
+    session.append("approval_decision", "call_id" => second.id, "approved" => true)
+    summarizer = Mistri::Providers::Fake.new(turns: [{ text: "Summary." }])
+    Mistri::Compactor.call(session:, provider: summarizer,
+                           settings: Mistri::Compaction.new(keep_recent: 34))
+    ran = false
+    tool = Mistri::Tool.define("write", "Write.", needs_approval: true) { ran = true }
+    provider = Mistri::Providers::Fake.new(turns: [{ text: "I will verify first." }])
+    resumed = Mistri::Session.new(store: session.store, id: session.id)
+
+    assert_equal 4, session.last_compaction["kept_from"]
+    assert_empty resumed.open_approvals
+    assert_predicate Mistri::Agent.new(provider:, tools: [tool], session: resumed).resume,
+                     :completed?
+    refute ran
+  end
+
   def test_same_turn_duplicate_ids_still_fail_closed
     session = new_session
     calls = Array.new(2) { Mistri::ToolCall.new(id: "call_1", name: "write", arguments: {}) }

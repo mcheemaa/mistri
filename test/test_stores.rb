@@ -77,6 +77,23 @@ class TestStores < Minitest::Test
     end
   end
 
+  def test_the_memory_store_answers_its_size_and_a_read_between_two_positions
+    store = Mistri::Stores::Memory.new
+    %w[a b c d e].each { |text| store.append("s", { "text" => text }) }
+    whole = store.load("s")
+
+    assert_equal [5, 0], [store.size("s"), store.size("unknown")]
+    (0..5).each do |from|
+      (from..6).each { |to| assert_equal whole[from...to], store.load("s", from:, to:) }
+    end
+  end
+
+  def test_the_jsonl_store_does_not_answer_size_so_it_is_read_whole
+    Dir.mktmpdir do |dir|
+      refute_respond_to Mistri::Stores::JSONL.new(dir), :size
+    end
+  end
+
   def test_jsonl_counts_only_whole_lines_toward_a_position
     Dir.mktmpdir do |dir|
       store = Mistri::Stores::JSONL.new(dir)
@@ -309,6 +326,22 @@ if defined?(Mistri::Stores::ActiveRecord)
 
       assert_equal [1, 2], numbers
       assert_equal [2..], @model.filters
+    end
+
+    def test_load_between_two_positions_filters_rows_on_both_sides
+      4.times { |n| @store.append("s", { "n" => n }) }
+
+      numbers = @store.load("s", from: 1, to: 3).map { |entry| entry["n"] }
+
+      assert_equal [1, 2], numbers
+      assert_equal [2..3], @model.filters
+    end
+
+    def test_size_is_the_position_of_the_newest_entry
+      assert_equal 0, @store.size("s")
+      3.times { |n| @store.append("s", { "n" => n }) }
+
+      assert_equal 3, @store.size("s")
     end
 
     def test_load_refuses_a_session_with_a_missing_row
