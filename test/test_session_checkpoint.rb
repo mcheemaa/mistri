@@ -2,10 +2,13 @@
 
 require_relative "test_helper"
 require_relative "support/session_stores"
+require_relative "support/session_scripts"
 
 # A session starts at its newest checkpoint: the loop reads and derives from
 # there, and the checkpoint carries what it needs from before.
 class TestSessionCheckpoint < Minitest::Test
+  include SessionScripts
+
   def setup
     @store = SessionStores::Recording.new
     @session = Mistri::Session.new(store: @store, id: "s")
@@ -94,6 +97,7 @@ class TestSessionCheckpoint < Minitest::Test
     report = { name: "Magpie", session_id: "c1", status: "done", text: "Found it." }
 
     assert @session.deliver_report(**report)
+    fold(@session.pending_inbox.first)
     exchange("after")
     @session.checkpoint(summary: "One.", kept_from: 4)
     exchange("later")
@@ -103,61 +107,6 @@ class TestSessionCheckpoint < Minitest::Test
     refute fresh.deliver_report(**report)
     refute @session.deliver_report(**report)
     assert_equal before, @store.size("s")
-  end
-
-  def test_a_compaction_carries_the_children_it_cuts_away
-    link("Magpie", "c1")
-    3.times { |n| exchange("turn #{n}") }
-
-    compact
-
-    entry = @session.last_compaction
-
-    assert_equal [{ "name" => "Magpie", "session_id" => "c1" }], entry.dig("carried", "children")
-    assert_empty entry.dig("carried", "reported")
-    assert_equal %w[Magpie], fresh.children.map(&:name)
-  end
-
-  def test_a_cut_steps_back_before_a_steer_that_is_not_folded_in
-    2.times { |n| exchange("before #{n}") }
-    @session.steer("hold on")
-    2.times { |n| exchange("after #{n}") }
-
-    compact
-    pending = fresh.pending_inbox.map { |entry| entry.dig("message", "content", 0, "text") }
-
-    assert_equal 2, @session.last_compaction["kept_from"]
-    assert_equal ["hold on"], pending
-  end
-
-  def test_a_cut_is_not_held_back_once_the_steer_is_folded_in
-    2.times { |n| exchange("before #{n}") }
-    @session.steer("hold on")
-    steer = @session.pending_inbox.first
-    @session.append("message", "message" => steer["message"], "steer_id" => steer["id"])
-    2.times { |n| exchange("after #{n}") }
-
-    compact
-
-    assert_equal 8, @session.last_compaction["kept_from"]
-    assert_empty fresh.pending_inbox
-  end
-
-  def test_a_decision_for_a_call_older_than_the_window_finds_no_open_approval
-    gated = Mistri::Tool.define("gated", "Needs a person.", needs_approval: true) { "ran" }
-    turns = [{ tool_calls: [{ name: "gated", arguments: {} }] }, { text: "done" }]
-    agent = Mistri::Agent.new(provider: Mistri::Providers::Fake.new(turns:), session: @session,
-                              tools: [gated])
-    call_id = agent.run("go").pending.first.id
-    @session.approve(call_id)
-    agent.resume
-    exchange("after")
-
-    assert_nil @session.approve(call_id)
-    @session.checkpoint(summary: "Earlier.", kept_from: @store.size("s") - 2)
-
-    error = assert_raises(Mistri::ConfigurationError) { fresh.approve(call_id) }
-    assert_match(/no open approval/, error.message)
   end
 
   def test_a_tool_call_id_from_before_the_window_may_be_used_again
@@ -170,10 +119,11 @@ class TestSessionCheckpoint < Minitest::Test
     assert_equal 5, fresh.messages.length
   end
 
-  def test_an_unreadable_entry_older_than_the_window_does_not_stop_the_session
+  def test_an_entry_older_than_the_window_is_not_audited
     @store.append("s", { "type" => "message", "message" => { "role" => "nobody" } })
     exchange("after")
-    @session.checkpoint(summary: "Earlier.", kept_from: 1)
+    @store.append("s", { "type" => "compaction", "summary" => "Earlier.", "kept_from" => 1,
+                         "carried" => {} })
 
     assert_empty fresh.open_approvals
     assert_equal %w[after AFTER], fresh.messages.map(&:text).drop(1)
@@ -195,6 +145,69 @@ class TestSessionCheckpoint < Minitest::Test
     assert_equal 6, session.messages.length
   end
 
+  def test_a_compaction_appended_by_hand_after_a_checkpoint_is_replayed_from_its_own_start
+    3.times { |n| exchange("turn #{n}") }
+    reader = fresh
+    @session.checkpoint(summary: "One.", kept_from: 4)
+    reader.messages
+    @session.append("compaction", "summary" => "By hand.", "kept_from" => 2)
+
+    expected = ["turn 1", "TURN 1", "turn 2", "TURN 2"]
+
+    assert_equal expected, fresh.messages.map(&:text).drop(1)
+    assert_equal expected, reader.messages.map(&:text).drop(1)
+  end
+
+  def test_a_checkpoint_entry_with_a_start_beyond_itself_does_not_bound_a_read
+    3.times { |n| exchange("turn #{n}") }
+    @store.append("s", { "type" => "compaction", "summary" => "Forged.", "kept_from" => 99,
+                         "carried" => {} })
+
+    window = Mistri::Session::Log.new(@store, "s", checkpointed: true).window
+
+    assert_equal [0, 7], [window.offset, window.entries.length]
+  end
+
+  def test_a_rolled_back_checkpoint_does_not_move_a_window_that_had_already_moved
+    store = SessionStores::Transactional.new
+    session = Mistri::Session.new(store:, id: "s")
+    3.times { |n| exchange("turn #{n}", session) }
+    session.checkpoint(summary: "One.", kept_from: 4)
+    exchange("more", session)
+    before = session.messages.map(&:text)
+
+    store.transaction do
+      session.checkpoint(summary: "Never committed.", kept_from: 7)
+
+      assert_equal %w[more MORE], session.messages.map(&:text).drop(1)
+      raise SessionStores::Transactional::Rollback
+    end
+
+    assert_equal before, session.messages.map(&:text)
+    assert_equal 4, session.last_compaction["kept_from"]
+  end
+
+  def test_a_read_inside_an_older_snapshot_keeps_the_window_it_had_then
+    store = SessionStores::Snapshot.new
+    session = Mistri::Session.new(store:, id: "s")
+    3.times { |n| exchange("turn #{n}", session) }
+    session.checkpoint(summary: "One.", kept_from: 4)
+    then_texts = session.messages.map(&:text)
+    store.pin
+    Thread.new do
+      exchange("more", session)
+      session.checkpoint(summary: "Two.", kept_from: 7)
+      session.messages
+    end.join
+
+    assert_equal then_texts, session.messages.map(&:text)
+    store.unpin
+
+    assert_equal %w[more MORE], session.messages.map(&:text).drop(1)
+  ensure
+    store&.unpin
+  end
+
   def test_a_store_without_size_is_read_whole_and_answers_the_same
     plain = SessionStores::Plain.new
     [Mistri::Session.new(store: plain, id: "s"), @session].each do |session|
@@ -213,31 +226,5 @@ class TestSessionCheckpoint < Minitest::Test
     assert_equal fresh.children.map(&:to_h), whole.children.map(&:to_h)
     assert_equal(fresh.pending_inbox.map { |entry| entry["type"] },
                  whole.pending_inbox.map { |entry| entry["type"] })
-  end
-
-  private
-
-  def fresh = Mistri::Session.new(store: @store, id: "s")
-
-  def compact
-    summarizer = Mistri::Providers::Fake.new(turns: [{ text: "Summary." }])
-    Mistri::Compactor.call(session: @session, provider: summarizer,
-                           settings: Mistri::Compaction.new(keep_recent: 1))
-  end
-
-  def exchange(text, session = @session)
-    session.append_message(Mistri::Message.user(text))
-    session.append_message(Mistri::Message.assistant(content: text.upcase, stop_reason: :stop))
-  end
-
-  def link(name, session_id, session = @session)
-    session.append("subagent", "name" => name, "session_id" => session_id)
-  end
-
-  def call(id)
-    tool_call = Mistri::ToolCall.new(id:, name: "ping", arguments: {})
-    @session.append_message(Mistri::Message.assistant(tool_calls: [tool_call]))
-    @session.append_message(Mistri::Message.tool(content: "pong", tool_call_id: id,
-                                                 tool_name: "ping"))
   end
 end

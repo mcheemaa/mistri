@@ -54,6 +54,11 @@ module SessionStores
 
     def settled? = Thread.current.thread_variable_get(:pinned).nil?
 
+    def size(id)
+      pinned = Thread.current.thread_variable_get(:pinned)
+      pinned ? pinned.fetch(id, []).length : super
+    end
+
     def load(id, from: 0, to: nil)
       pinned = Thread.current.thread_variable_get(:pinned)
       return super unless pinned
@@ -76,6 +81,31 @@ module SessionStores
     def load(id)
       @loads += 1
       @store.load(id)
+    end
+  end
+
+  # Holds one approval decision just before it is appended, as a decision
+  # that passed its check and is slow to write.
+  class HeldDecision < Mistri::Stores::Memory
+    attr_reader :entered
+
+    def initialize
+      super
+      @entered = Queue.new
+      @gate = Queue.new
+    end
+
+    def hold_next_decision = @hold = true
+
+    def release = @gate << true
+
+    def append(id, entry)
+      if @hold && entry["type"] == "approval_decision"
+        @hold = false
+        @entered << true
+        @gate.pop
+      end
+      super
     end
   end
 

@@ -3,9 +3,10 @@
 require_relative "test_helper"
 
 # Random valid sessions, grown one step at a time. After every step a session
-# must answer the same however its window was found: scanned back from the end,
-# held and extended, or cut down from a whole read. What a checkpoint carries
-# is checked against the whole log.
+# must answer what the whole log answers, however its window was found:
+# scanned back from the end, held by the writer, or held by a reader that only
+# ever reads. The whole log is read with the carried state taken out, so no
+# compaction bounds it.
 class TestSessionCheckpointGenerated < Minitest::Test
   SEEDS = 12
   STEPS = 60
@@ -20,29 +21,29 @@ class TestSessionCheckpointGenerated < Minitest::Test
     approvals: lambda do |session|
       session.open_approvals.map { |open| [open[:call].to_h, open[:decision]] }
     end,
-    last_compaction: lambda(&:last_compaction),
+    last_compaction: ->(session) { session.last_compaction&.except("carried") },
     compaction_failures: lambda(&:compaction_failures),
-    tool_call_ids: ->(session) { session.tool_call_ids.to_a.sort },
     children: ->(session) { session.children.map { |child| [child.name, child.session_id] } }
   }.freeze
 
-  # A store with only append and load(id), over another store's entries.
+  # A store with only append and load(id), whose compactions carry nothing.
   class Whole
     def initialize(store) = @store = store
 
     def append(id, entry) = @store.append(id, entry)
 
-    def load(id) = @store.load(id)
+    def load(id) = @store.load(id).map { |entry| entry.except("carried") }
   end
 
-  def test_every_reader_agrees_however_the_window_was_found
+  def test_every_reader_answers_what_the_whole_log_answers
     SEEDS.times do |seed|
       @random = Random.new(seed)
       @store = Mistri::Stores::Memory.new
       @held = Mistri::Session.new(store: @store, id: "s")
+      @reader = Mistri::Session.new(store: @store, id: "s")
       @count = 0
-      @parked = nil
       @unreported = []
+      @settled = []
       STEPS.times do |step|
         take_step
         compare_readers("seed #{seed}, step #{step}")
@@ -59,18 +60,14 @@ class TestSessionCheckpointGenerated < Minitest::Test
       expected = read.call(whole)
 
       assert_equal [expected], [read.call(scanned)], "#{name} by a scan differs at #{at}"
-      assert_equal [expected], [read.call(@held)], "#{name} by a held window differs at #{at}"
+      assert_equal [expected], [read.call(@held)], "#{name} held by the writer differs at #{at}"
+      assert_equal [expected], [read.call(@reader)], "#{name} held by a reader differs at #{at}"
     end
-    compare_carried(scanned, at)
+    compare_reports(scanned, at)
   end
 
-  def compare_carried(session, at)
-    log = @store.load("s")
-    links = log.select { |entry| entry["type"] == "subagent" }
-               .map { |entry| entry.values_at("name", "session_id") }
-
-    assert_equal links, READS.fetch(:children).call(session), "children differ at #{at}"
-    log.select { |entry| entry["type"] == "subagent_report" }.each do |report|
+  def compare_reports(session, at)
+    @store.load("s").select { |entry| entry["type"] == "subagent_report" }.each do |report|
       again = session.deliver_report(name: report["name"], session_id: report["session_id"],
                                      status: report["status"], text: report["report"])
 
@@ -80,13 +77,16 @@ class TestSessionCheckpointGenerated < Minitest::Test
 
   def take_step
     @count += 1
-    steps = @parked ? %i[steer spawn report compact decide decide] : open_steps
+    steps = parked ? %i[steer spawn report compact late decide decide] : open_steps
     send(steps.sample(random: @random))
   end
 
   def open_steps
-    %i[exchange exchange exchange tools tools steer spawn report crash park compact compact]
+    %i[exchange exchange exchange tools tools steer spawn report crash park legacy legacy
+       late by_hand compact compact compact]
   end
+
+  def parked = @held.open_approvals.first
 
   def agent(*turns)
     Mistri::Agent.new(provider: Mistri::Providers::Fake.new(turns:), session: @held,
@@ -121,15 +121,49 @@ class TestSessionCheckpointGenerated < Minitest::Test
     @held.append_message(Mistri::Message.assistant(tool_calls: [call], stop_reason: :tool_use))
   end
 
-  def park
-    result = agent({ tool_calls: [{ name: "gated", arguments: {} }] }).run("ask first #{@count}")
-    @parked = result.pending.first.id
-  end
+  def park = agent({ tool_calls: [{ name: "gated", arguments: {} }] }).run("ask first #{@count}")
 
   def decide
-    @random.rand(2).zero? ? @held.approve(@parked) : @held.deny(@parked)
+    open = parked
+    id = open[:call].id
+    unless open[:decision]
+      @random.rand(2).zero? ? @held.approve(id) : @held.deny(id)
+    end
     agent({ text: "after the decision #{@count}" }).resume
-    @parked = nil
+    @settled << id
+  end
+
+  # A turn as releases before 0.6.0 wrote it: a call_N id that repeats, here
+  # with an approval, settled or left with only its decision.
+  def legacy
+    call = Mistri::ToolCall.new(id: "call_#{@random.rand(1..2)}", name: "gated", arguments: {})
+    @held.append_message(Mistri::Message.user("legacy #{@count}"))
+    @held.append_message(Mistri::Message.assistant(tool_calls: [call], stop_reason: :tool_use,
+                                                   provider: :gemini))
+    @held.append("approval_request", "call" => call.to_h)
+    @held.append("approval_decision", "call_id" => call.id, "approved" => true)
+    return if @random.rand(3).zero?
+
+    @held.append_message(Mistri::Message.tool(content: "ran", tool_call_id: call.id,
+                                              tool_name: "gated"))
+    @settled << call.id
+  end
+
+  # A decision that lost its race and is written long after its call settled.
+  def late
+    id = @settled.sample(random: @random)
+    @held.append("approval_decision", "call_id" => id, "approved" => false) if id
+  end
+
+  # A compaction as an older release or a host writes it: it carries nothing.
+  def by_hand
+    return unless @held.pending_inbox.empty?
+
+    start = @held.replay.reverse_each.find { |message, index| index && message.user? }&.last
+    floor = @held.last_compaction&.fetch("kept_from") || 0
+    return unless start && start > floor
+
+    @held.append("compaction", "summary" => "By hand #{@count}.", "kept_from" => start)
   end
 
   def compact

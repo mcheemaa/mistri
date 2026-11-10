@@ -102,8 +102,8 @@ read whole until its next compaction.
 - `approve` and `deny` repeated for a call that was settled before the newest
   checkpoint raise `Mistri::ConfigurationError` ("no open approval"). They
   used to return nil.
-- An entry older than the window is no longer parsed, so a damaged one no
-  longer stops the session.
+- An entry older than the window is no longer replayed or audited as a
+  message. A store may still decode it while the window is being found.
 - To let a session find its window in a custom store without loading the
   rest, add `size(id)` and take `to:` in `load`, as
   [Sessions and control](docs/sessions.md#starting-at-the-newest-checkpoint)
@@ -112,9 +112,12 @@ read whole until its next compaction.
   every method, already answers `size`. Its own `load` must take `to:` as
   well as `from:`.
 - Code that appends a compaction entry itself should call
-  `Session#checkpoint(summary:, kept_from:)`, so the entry carries the
-  sub-agent links before it. A compaction appended with `Session#append`
-  still replays correctly but does not bound a read.
+  `Session#checkpoint(summary:, kept_from:)`, so the entry carries what is
+  needed from before it. It raises `Mistri::ConfigurationError` for a start
+  that would move back, pass an open approval or a steer or report not folded
+  in yet, or part a tool call from its result. A compaction appended with
+  `Session#append` still replays correctly, and the session is read whole
+  while it is the newest one.
 
 ### A session's string id is fixed
 

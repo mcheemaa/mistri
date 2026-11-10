@@ -90,12 +90,14 @@ built-in stores answer both.
 
 A compaction written by Mistri is a checkpoint. Besides the summary and
 `kept_from`, the position replay starts at, its entry carries what a later
-turn needs from before that position: the links to sub-agents and which of
-them have reported. A session's window is the entries from the newest
-checkpoint's `kept_from` to the end. Replay, the context size, the inbox, open
-approvals and the audit of tool calls all work on the window, however old the
-session is. `Session#children` adds the carried links, so it stays complete.
-`Session#entries` and `Session#transcript` still return everything.
+turn needs from before that position: the links to sub-agents, which of them
+have reported, and the old-style `call_N` ids that already took part in an
+approval. When the newest compaction is a checkpoint, a session's window is
+the entries from its `kept_from` to the end. Replay, the context size, the
+inbox, open approvals and the audit of tool calls all work on the window,
+however old the session is. `Session#children` adds the carried links, so it
+stays complete. `Session#entries` and `Session#transcript` still return
+everything.
 
 A store lets a new `Session` find its window without loading the rest by
 answering two more things:
@@ -106,7 +108,7 @@ load(session_id, from: 0, to: nil) # the entries from `from` up to, not includin
 ```
 
 The session reads back from the end in growing chunks until one holds a
-checkpoint, then from that checkpoint's `kept_from`. A store without `size` is
+compaction, then from that compaction's `kept_from`. A store without `size` is
 read whole and the same window is used in memory, so every store answers the
 same. The memory and Active Record stores answer both. The JSONL store does
 not, because a file is read from its start either way.
@@ -114,12 +116,15 @@ not, because a file is read from its start either way.
 Three things follow at the edge. A tool call id has to be unique within the
 window, not over the session's whole life. A decision repeated for a call that
 was settled before the newest checkpoint raises "no open approval". An entry
-older than the window is never parsed, so one that cannot be read does not
-stop the session.
+older than the window is no longer replayed or audited as a message, though a
+store may still decode it on the way to finding the window.
 
 A compaction entry written by hand, or by a version before checkpoints,
-carries nothing and does not bound a read. Write one with
-`Session#checkpoint(summary:, kept_from:)`.
+carries nothing. While it is the newest compaction the session is read whole.
+Write one with `Session#checkpoint(summary:, kept_from:)`. It raises
+`Mistri::ConfigurationError` for a start that would move back, pass an open
+approval or a steer or report not folded in yet, or part a tool call from its
+result.
 
 Built-in stores are:
 
