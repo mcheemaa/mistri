@@ -24,6 +24,11 @@ module Mistri
     MAX_ARGUMENT_ERROR_BYTES = 2048
     MAX_VIOLATION_SOURCE_BYTES = 4096
     TOOL_ARGUMENT_VALIDATOR = Tool.instance_method(:validate_arguments)
+    # Sent with the wrap-up turn and never stored: without it a model cut
+    # off mid-task answers as if it will keep working.
+    WRAP_UP = "This run has reached its limit and cannot continue or call tools. Reply to " \
+              "the user now: give your best answer from the work so far, and say what is " \
+              "done and what is not."
     private_constant :MAX_ARGUMENT_VIOLATIONS, :MAX_ARGUMENT_ERROR_BYTES,
                      :MAX_VIOLATION_SOURCE_BYTES, :TOOL_ARGUMENT_VALIDATOR
 
@@ -236,7 +241,7 @@ module Mistri
       started = monotonic_now
       loop do
         reason = @budget.exceeded(turns: turns, usage: usage, elapsed: monotonic_now - started)
-        return stop_for_budget(reason, usage, &emit) if reason
+        return stop_for_budget(reason, usage, signal, output_schema, &emit) if reason
 
         fold_inbox
         compacted = auto_compact(&emit)
@@ -245,7 +250,7 @@ module Mistri
           validate_usage!(compaction_usage, kind: "compaction", &emit)
           usage += compaction_usage
           reason = @budget.exceeded(turns:, usage:, elapsed: monotonic_now - started)
-          return stop_for_budget(reason, usage, &emit) if reason
+          return stop_for_budget(reason, usage, signal, output_schema, &emit) if reason
         end
         last, turn_usage = run_turn(signal, output_schema, &emit)
         turns += 1
@@ -330,9 +335,21 @@ module Mistri
     # model and a recovered retry never shows the subscriber an error it
     # walks back. Only the accepted attempt persists and terminates.
     def run_turn(signal, output_schema = nil, &emit)
+      message, held, usage = request_turn(signal, output_schema, &emit)
+      emit&.call(held) if held
+      @session.append_message(message)
+      reserve_tool_call_ids(message.tool_calls)
+      [message, usage]
+    end
+
+    # One provider turn with its retries, neither persisted nor announced:
+    # the caller decides what the session and the subscriber see of it.
+    def request_turn(signal, output_schema, wrap_up: false, &emit)
       history = @transform_context.reduce(@session.messages) do |messages, transform|
         transform.call(messages)
       end
+      history += [Message.user(WRAP_UP)] if wrap_up
+      options = wrap_up ? { tool_choice: :none } : {}
       attempt = 0
       usage = Usage.zero
       schema = provider_output_schema(output_schema)
@@ -341,7 +358,7 @@ module Mistri
         gate = emit && ->(event) { event.terminal? ? held = event : emit.call(event) }
         message = @provider.stream(messages: history, system: @system,
                                    tools: @tool_specs, signal: signal,
-                                   output_schema: schema, &gate)
+                                   output_schema: schema, **options, &gate)
         message, held = enforce_tool_call_envelope(message, held)
         attempt_usage = message.usage || Usage.new
         validate_usage!(attempt_usage, message:, kind: "turn", &emit)
@@ -354,10 +371,7 @@ module Mistri
           wait(pause, signal)
           next unless signal&.aborted?
         end
-        emit&.call(held) if held
-        @session.append_message(message)
-        reserve_tool_call_ids(message.tool_calls)
-        return [message, usage]
+        return [message, held, usage]
       end
     end
 
@@ -988,7 +1002,29 @@ module Mistri
       Result.new(message: message, status: :awaiting_approval, pending: parked, usage: usage)
     end
 
-    def stop_for_budget(reason, usage, &emit)
+    def stop_for_budget(reason, usage, signal = nil, output_schema = nil, &)
+      return wrap_up(reason, usage, signal, output_schema, &) if @budget.wrap_up?
+
+      budget_stopped(reason, usage, &)
+    end
+
+    # The model answers under a spent budget with tool calls forbidden. A
+    # provider that calls a tool anyway has the call dropped: nothing will
+    # run it, and an unanswered call makes the transcript unreplayable.
+    def wrap_up(reason, usage, signal, output_schema, &emit)
+      message, held, turn_usage = request_turn(signal, output_schema, wrap_up: true, &emit)
+      usage += turn_usage
+      answer = message.with(content: message.content.grep_v(ToolCall),
+                            stop_reason: StopReason::BUDGET, error_message: "budget_#{reason}")
+      failed = [StopReason::ERROR, StopReason::ABORTED].include?(message.stop_reason)
+      return budget_stopped(reason, usage, &emit) if failed || answer.text.to_s.strip.empty?
+
+      emit&.call(held.with(reason: StopReason::BUDGET, message: answer)) if held
+      @session.append_message(answer)
+      Result.new(message: answer, status: :budget, usage: usage)
+    end
+
+    def budget_stopped(reason, usage, &emit)
       message = Message.assistant(content: "Run stopped: #{reason} budget reached.",
                                   stop_reason: StopReason::BUDGET,
                                   error_message: "budget_#{reason}")

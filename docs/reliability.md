@@ -269,6 +269,20 @@ Limits are checked between model-visible turns. A turn already in progress,
 including its retry attempts, completes before the next check. Every budget is
 therefore a soft ceiling and may exceed its configured value by one turn.
 
+A stopped run ends on a fixed "Run stopped" message and status `:budget`. Pass
+`wrap_up: true` to let the model answer instead:
+
+```ruby
+budget = Mistri::Budget.new(turns: 20, wrap_up: true)
+```
+
+The run then spends one more turn past the ceiling. The model keeps its tools
+but cannot call them, and is told to give its best answer and say what is
+unfinished. That instruction is sent to the model and not stored in the
+session. The result keeps status `:budget`, and the turn counts toward usage.
+If the turn fails, is aborted, or returns no text, the run ends on the fixed
+message.
+
 ### Cost budgets
 
 Unknown price is not zero. Constructing a cost-budgeted Agent requires a
@@ -465,6 +479,10 @@ inside the Agent; the provider owns its wire correlation.
 Custom providers may return `native_output_schema(schema)` when they can enforce
 the requested task contract. Returning nil leaves the prompt and local
 validation path intact.
+
+A budget with `wrap_up: true` passes `tool_choice: :none` to `stream` on its
+final turn. Forbid tool calls for that request; any the provider returns are
+dropped.
 
 To support cost budgets, return true from `prices_usage?` and attach a known
 cost to every response, commonly with `Mistri::Usage#with_cost`. Missing or

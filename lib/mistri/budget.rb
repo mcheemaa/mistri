@@ -6,13 +6,19 @@ module Mistri
   # run. Pure limits with no clock of its own, so one Budget shared across
   # agents or runs behaves identically for each: the loop measures and asks
   # between turns, and a run always finishes the turn it is in.
+  #
+  # wrap_up: true spends one more turn past a reached ceiling so the model
+  # answers the user itself; without it the run ends on a fixed message.
   class Budget
-    def initialize(turns: nil, tokens: nil, cost_usd: nil, wall_clock: nil)
+    def initialize(turns: nil, tokens: nil, cost_usd: nil, wall_clock: nil, wrap_up: false)
       @turns = turns
       @tokens = tokens
       @cost_usd = cost_usd
       @wall_clock = wall_clock
+      @wrap_up = wrap_up
     end
+
+    def wrap_up? = @wrap_up
 
     def none? = [@turns, @tokens, @cost_usd, @wall_clock].all?(&:nil?)
 

@@ -72,6 +72,9 @@ module Mistri
         instruction = Serializer.system_instruction(system, messages)
         body[:systemInstruction] = instruction if instruction
         body[:tools] = Serializer.tools(tools) if tools.any?
+        if tools.any? && overrides[:tool_choice] == :none
+          body[:toolConfig] = { functionCallingConfig: { mode: "NONE" } }
+        end
         service_tier = overrides.fetch(:service_tier, @service_tier)
         body[:serviceTier] = service_tier if service_tier
         config = {}

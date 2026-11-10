@@ -5,6 +5,11 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+- `Budget.new(wrap_up: true)` gives the model one more turn when a ceiling
+  stops the run, with tool calls forbidden, so the run ends on the model's
+  answer in place of the fixed "Run stopped" message. The result still has
+  status `:budget`. Off by default. A custom provider receives
+  `tool_choice: :none` on that turn.
 - A session's string id is fixed when the Session is built. `Session.new`
   keeps its own copy of it and `Session#id` returns a copy. Changing the string
   a session was given used to redirect it, and could mix two sessions' entries
