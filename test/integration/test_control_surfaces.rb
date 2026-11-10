@@ -68,7 +68,7 @@ class TestControlSurfacesIntegration < Minitest::Test
     session = Mistri::Session.new(store:)
     calls = [Mistri::ToolCall.new(id: "call_1", name: "book_venue",
                                   arguments: { "city" => "Lisbon" })]
-    session.append_message(Mistri::Message.user("Book us a venue, then confirm."))
+    session.append_message(Mistri::Message.user("Book us a venue in Lisbon, then confirm."))
     session.append_message(Mistri::Message.assistant(tool_calls: calls))
 
     booked = Mistri::Tool.define("book_venue", "Books the venue.",
