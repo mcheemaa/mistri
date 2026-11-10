@@ -20,6 +20,8 @@ module Mistri
         end
       end
 
+      def settled? = true
+
       private
 
       # Memory must preserve the same value ownership as stores that decode

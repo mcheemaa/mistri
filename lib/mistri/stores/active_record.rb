@@ -67,9 +67,9 @@ module Mistri
         end
       end
 
-      # A session holds what it has read, except rows that can still be rolled
-      # back.
-      def in_transaction? = @model.connection.transaction_open?
+      # Inside a transaction a read can be rolled back or pinned to an older
+      # snapshot, so a session reads the whole log there and holds nothing.
+      def settled? = !@model.connection.transaction_open?
 
       private
 

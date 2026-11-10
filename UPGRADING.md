@@ -65,23 +65,24 @@ could share one file.
 - New session files are created with mode 0600. Existing files keep their
   mode.
 
-### Stores read from a position
+### A session reads only what is new
 
-`load(session_id)` is now `load(session_id, from: 0)`. A session reads its log
-once and then asks only for the entries appended since, so after the first
-read the store returns only new entries.
+A session reads its log from the store once and then asks only for the entries
+appended since. The built-in stores support this. A custom store keeps working
+unchanged: without `settled?` it is read whole on every read, as before.
 
-- A custom store must accept the keyword. Reading everything and dropping the
-  first `from` entries is correct. Filter at the source where you can.
-- A custom store on a database with transactions should also answer
-  `in_transaction?`, true while a transaction is open on its connection. A
-  session does not hold what it reads then, because it can be rolled back.
-- The built-in stores need no change. The Active Record store reads by
-  `position`, which the unique index on `[session_id, position]` already
-  serves.
+- To let a session read a custom store in part, add `load(id, from: 0)` and
+  `settled?` as [Sessions and control](docs/sessions.md#reading-only-what-is-new)
+  describes.
+- A subclass of a built-in store, or a wrapper that forwards every method,
+  already answers `settled?`. Its own `load` must take `from:`.
+- Inside an open database transaction a session reads the whole log and holds
+  nothing, so what it answers there is unchanged.
 - The Active Record store raises `Mistri::ConfigurationError` when the rows it
   reads are not at consecutive positions. Rows that are only ever appended sit
   at positions 1, 2, 3. Delete a session's rows together, never some of them.
+- The Active Record store needs READ COMMITTED or a stronger isolation level
+  on the connection that reads. MySQL and PostgreSQL have that by default.
 - A `Session` object holds every entry it has read in memory, image data
   included, for as long as the object lives. After a session's rows are
   deleted, build a new `Session` object.

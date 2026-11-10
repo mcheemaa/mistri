@@ -3,9 +3,11 @@
 module Mistri
   class Session
     # A session's entries as read so far. The log only grows and a committed
-    # entry never changes, so each read asks the store for what came after the
-    # entries already held. The held entries are frozen: every reader of one
-    # Session shares them, from any thread.
+    # entry never changes, so a read asks the store for what came after the
+    # entries already held. That holds only while the store says its reads are
+    # settled. A store that does not say so, or says no, is read whole and
+    # nothing is held. The entries are frozen: every reader of one Session
+    # shares them, from any thread.
     class Log
       def initialize(store, id)
         @store = store
@@ -15,23 +17,20 @@ module Mistri
       end
 
       def entries
-        @mutex.synchronize do
-          appended = @store.load(@id, from: @entries.length).each { |entry| deep_freeze(entry) }
-          next @entries if appended.empty?
+        return frozen(@store.load(@id)).freeze unless settled?
 
-          entries = (@entries + appended).freeze
-          @entries = entries unless in_transaction?
-          entries
+        @mutex.synchronize do
+          appended = frozen(@store.load(@id, from: @entries.length))
+          @entries = (@entries + appended).freeze unless appended.empty?
+          @entries
         end
       end
 
       private
 
-      # Rows read inside an open transaction can still be rolled back. They
-      # are answered and read again next time, never held.
-      def in_transaction?
-        @store.respond_to?(:in_transaction?) && @store.in_transaction?
-      end
+      def settled? = @store.respond_to?(:settled?) && @store.settled?
+
+      def frozen(entries) = entries.each { |entry| deep_freeze(entry) }
 
       def deep_freeze(value)
         case value

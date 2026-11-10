@@ -11,9 +11,9 @@ module Mistri
   # types (reminders, custom host data) ride alongside without the loop
   # knowing their shapes.
   #
-  # A store implements two methods: append(id, entry_hash) and
-  # load(id, from: 0) -> array of entry hashes in append order, starting at a
-  # position. Everything else lives here.
+  # A store implements two methods: append(id, entry_hash) and load(id) ->
+  # array of entry hashes in append order. One that also answers settled? and
+  # takes load(id, from: position) is read in part. Everything else lives here.
   class Session # rubocop:disable Metrics/ClassLength -- append-only ordering is the class contract
     attr_reader :id, :store
 

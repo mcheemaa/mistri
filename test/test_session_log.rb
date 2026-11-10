@@ -24,7 +24,7 @@ class TestSessionLog < Minitest::Test
   class TransactionalStore < Mistri::Stores::Memory
     class Rollback < StandardError; end
 
-    def in_transaction? = @open == true
+    def settled? = !@open
 
     def transaction
       saved = @mutex.synchronize { @entries.to_h { |id, entries| [id, entries.dup] } }
@@ -34,6 +34,43 @@ class TestSessionLog < Minitest::Test
       @mutex.synchronize { @entries.each_key { |id| @entries[id] = saved.fetch(id, []) } }
     ensure
       @open = false
+    end
+  end
+
+  # Serves the thread that pinned it a copy of the log from that moment, as
+  # a REPEATABLE READ transaction does on its connection.
+  class SnapshotStore < Mistri::Stores::Memory
+    def pin
+      copy = @mutex.synchronize { @entries.to_h { |id, entries| [id, entries.dup] } }
+      Thread.current.thread_variable_set(:pinned, copy)
+    end
+
+    def unpin = Thread.current.thread_variable_set(:pinned, nil)
+
+    def settled? = Thread.current.thread_variable_get(:pinned).nil?
+
+    def load(id, from: 0)
+      pinned = Thread.current.thread_variable_get(:pinned)
+      return super unless pinned
+
+      pinned.fetch(id, []).drop(from).map { |entry| json_copy(entry, freeze: false) }
+    end
+  end
+
+  # A store written before partial reads: append and load(id), nothing else.
+  class PlainStore
+    attr_reader :loads
+
+    def initialize
+      @store = Mistri::Stores::Memory.new
+      @loads = 0
+    end
+
+    def append(id, entry) = @store.append(id, entry)
+
+    def load(id)
+      @loads += 1
+      @store.load(id)
     end
   end
 
@@ -148,6 +185,36 @@ class TestSessionLog < Minitest::Test
     refute session.open_approvals.first[:decision]["approved"]
   end
 
+  def test_a_read_inside_a_transaction_answers_from_its_own_view_of_the_store
+    store = SnapshotStore.new
+    session = Mistri::Session.new(store:)
+    exchange("first", session)
+    session.messages
+    store.pin
+    Thread.new do
+      exchange("second", session)
+      session.messages
+    end.join
+
+    assert_equal %w[first FIRST], session.messages.map(&:text)
+    store.unpin
+
+    assert_equal %w[first FIRST second SECOND], session.messages.map(&:text)
+  ensure
+    store&.unpin
+  end
+
+  def test_a_store_with_only_append_and_load_is_read_whole_every_time
+    store = PlainStore.new
+    session = Mistri::Session.new(store:)
+    exchange("first", session)
+    session.messages
+    exchange("second", session)
+
+    assert_equal %w[first FIRST second SECOND], session.messages.map(&:text)
+    assert_equal 2, store.loads
+  end
+
   def test_entries_returns_copies_the_caller_owns
     exchange("first")
     @session.messages
@@ -215,6 +282,7 @@ class TestSessionLog < Minitest::Test
     assert_equal [0, 2], store.starts
   ensure
     store&.release
+    [first, second].compact.each(&:join)
   end
 
   def test_readers_on_many_threads_share_one_consistent_log
@@ -298,6 +366,11 @@ class TestSessionLog < Minitest::Test
 
   def wait_until
     deadline = Process.clock_gettime(Process::CLOCK_MONOTONIC) + 5
-    Thread.pass until yield || Process.clock_gettime(Process::CLOCK_MONOTONIC) > deadline
+    until yield
+      late = Process.clock_gettime(Process::CLOCK_MONOTONIC) > deadline
+      flunk "the condition was not met in time" if late
+
+      Thread.pass
+    end
   end
 end

@@ -45,27 +45,38 @@ A store implements:
 
 ```ruby
 append(session_id, entry_hash) # append one JSON-shaped entry
-load(session_id, from: 0)      # return entries in append order, from a position
+load(session_id)               # return entries in append order
 ```
 
 The store must preserve each append as one entry, provide a stable total order
-per session, and make a successful append visible to subsequent loads. An
-entry's position is the number of entries appended before it, and it never
-changes. `load(id, from: n)` returns the entries at position `n` and after. A
-session reads its log once and then asks only for what was appended since, so
-a store that answers `from` at the source returns only the new entries however
-long the session grows. A store that cannot may read everything and drop the
-first `n` entries. A `Session` object holds every entry it has read in memory,
-image data included.
-
-A store on a database with transactions also answers `in_transaction?`, true
-while a transaction is open on its connection. Rows read then can still be
-rolled back, so a session answers from them and does not hold them. The Active
-Record store does this. Values
+per session, and make a successful append visible to subsequent loads. Values
 returned by `load` must not let caller mutation rewrite durable history: return
 fresh decoded copies or deeply immutable snapshots. Mistri does not rely on
 Ruby object identity. `Session#append` normalizes entries through JSON, so store
 implementations see string keys and JSON values.
+
+### Reading only what is new
+
+A session that loads its whole log on every turn costs more as it ages. A
+store lets a session read each entry once by answering two more things:
+
+```ruby
+load(session_id, from: 0) # the entries at position `from` and after
+settled?                  # true when a load returns only committed entries
+```
+
+An entry's position is the number of entries appended before it, and it never
+changes. While `settled?` is true, a `Session` object holds the entries it has
+read, image data included, and asks only for the ones after them. When it is
+false, or the store does not answer it, the session reads the whole log with
+`load(session_id)` and holds nothing.
+
+`settled?` must be false whenever a load could return an entry that is later
+undone, or miss one that is already committed. On a database that is while a
+transaction is open on the connection that reads: its rows can be rolled back,
+and it may be pinned to an older snapshot. A wrapper around a store must pass
+`settled?` through from the store it reads with. The built-in stores answer
+both.
 
 Built-in stores are:
 
@@ -105,7 +116,9 @@ independent writers, and it serves every read: a load from a position is one
 range read on it. Positions run 1, 2, 3 with no gap because rows are only ever
 appended. A read whose rows are not at consecutive positions raises
 `Mistri::ConfigurationError`, which is what deleting a row from the middle of
-a session causes. Delete a session's rows together.
+a session causes. Delete a session's rows together. The reading connection
+needs READ COMMITTED or a stronger isolation level, which MySQL and PostgreSQL
+have by default.
 
 On MySQL and Trilogy, `payload` must be LONGTEXT because one legal parallel
 tool turn can exceed MEDIUMTEXT even while each call stays inside its own

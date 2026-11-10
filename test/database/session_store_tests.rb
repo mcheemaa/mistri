@@ -40,12 +40,7 @@ module SessionStoreTests
   end
 
   def test_a_session_does_not_keep_a_decision_that_was_rolled_back
-    session = Mistri::Session.new(store: @store)
-    call = Mistri::ToolCall.new(id: "call_a", name: "send", arguments: { "to" => "ops" })
-    session.append_message(Mistri::Message.user("send it"))
-    session.append_message(Mistri::Message.assistant(content: [call], stop_reason: :tool_use))
-    session.append("approval_request", "call" => JSON.parse(JSON.generate(call.to_h)))
-    session.open_approvals
+    session = session_with_a_parked_approval
 
     model.transaction do
       session.approve("call_a")
@@ -60,6 +55,31 @@ module SessionStoreTests
     refute session.open_approvals.first[:decision]["approved"]
   end
 
+  def test_a_transaction_reads_its_own_snapshot_not_what_the_session_holds
+    session = session_with_a_parked_approval
+    pinned = Queue.new
+    decided = Queue.new
+    reader = Thread.new do
+      model.transaction(isolation: :repeatable_read) do
+        model.where(session_id: session.id).count
+        pinned << true
+        decided.pop(timeout: 10)
+        session.open_approvals.first[:decision]
+      end
+    end
+
+    assert pinned.pop(timeout: 10), "the reader never pinned its snapshot"
+    session.approve("call_a")
+
+    assert session.open_approvals.first[:decision]["approved"]
+    decided << true
+
+    assert_nil reader.value
+  ensure
+    decided << true
+    reader&.join
+  end
+
   def test_another_connection_sees_an_append_once_it_commits
     @store.append("s", { "n" => 0 })
     appended = Queue.new
@@ -68,11 +88,11 @@ module SessionStoreTests
       model.transaction do
         @store.append("s", { "n" => 1 })
         appended << true
-        commit.pop
+        commit.pop(timeout: 10)
       end
     end
-    appended.pop
 
+    assert appended.pop(timeout: 10), "the writer never appended"
     assert_equal 1, @store.load("s").length
     commit << true
     writer.join
@@ -84,6 +104,16 @@ module SessionStoreTests
   end
 
   private
+
+  def session_with_a_parked_approval
+    session = Mistri::Session.new(store: @store)
+    call = Mistri::ToolCall.new(id: "call_a", name: "send", arguments: { "to" => "ops" })
+    session.append_message(Mistri::Message.user("send it"))
+    session.append_message(Mistri::Message.assistant(content: [call], stop_reason: :tool_use))
+    session.append("approval_request", "call" => JSON.parse(JSON.generate(call.to_h)))
+    session.open_approvals
+    session
+  end
 
   def selects(&)
     queries = []

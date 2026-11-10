@@ -42,6 +42,8 @@ module Mistri
         entries.drop(from)
       end
 
+      def settled? = true
+
       private
 
       # Session ids become filenames; a sanitized id would alias two sessions

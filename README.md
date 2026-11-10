@@ -175,8 +175,8 @@ reloaded.steer("Make it about the mountains instead.")
 
 For a database-backed store, run `bin/rails generate mistri:install AgentEntry`
 and use the Active Record adapter, or implement `append(id, entry)` and
-`load(id, from: 0)` on anything. Only one Agent may run a session at a time;
-approvals, steering, and worker reports may append concurrently. See
+`load(id)` on anything. Only one Agent may run a session at a time; approvals,
+steering, and worker reports may append concurrently. See
 [Sessions and control](docs/sessions.md).
 
 ## Streaming into any Ruby application

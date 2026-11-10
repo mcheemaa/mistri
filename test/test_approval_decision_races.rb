@@ -23,8 +23,8 @@ class TestApprovalDecisionRaces < Minitest::Test
       @store.append(id, entry)
     end
 
-    def load(id, from: 0)
-      snapshot = @store.load(id, from:)
+    def load(id)
+      snapshot = @store.load(id)
       wait_at_read_barrier
       snapshot
     end
