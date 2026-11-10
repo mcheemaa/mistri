@@ -24,7 +24,8 @@ if defined?(Mistri::Generators::InstallGenerator)
       assert_file "app/models/agent_entry.rb", /class AgentEntry < ApplicationRecord/
       assert_migration "db/migrate/create_agent_entries.rb" do |migration|
         assert_match(/create_table :agent_entries/, migration)
-        assert_match(/t\.string :session_id, null: false, index: true/, migration)
+        assert_match(/t\.string :session_id, null: false$/, migration)
+        refute_match(/index: true/, migration)
         assert_match(/t\.integer :position, null: false/, migration)
         assert_match(/t\.text :payload, null: false/, migration)
         assert_match(/add_index :agent_entries, \[:session_id, :position\], unique: true/,

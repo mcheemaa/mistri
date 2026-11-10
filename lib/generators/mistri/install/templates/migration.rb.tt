@@ -1,14 +1,15 @@
 class Create<%= table_name.camelize %> < ActiveRecord::Migration[<%= ActiveRecord::Migration.current_version %>]
   def change
     create_table :<%= table_name %> do |t|
-      t.string :session_id, null: false, index: true
+      t.string :session_id, null: false
       t.integer :position, null: false
       t.text :payload<%= payload_size %>, null: false
       t.timestamps
     end
 
     # The unique position is the optimistic concurrency boundary for
-    # independent appenders; a collision retries at the next position.
+    # independent appenders; a collision retries at the next position. It
+    # also serves every read and delete by session, so it is the only index.
     add_index :<%= table_name %>, [:session_id, :position], unique: true
   end
 end

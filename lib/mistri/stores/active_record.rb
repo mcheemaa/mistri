@@ -10,11 +10,11 @@ module Mistri
     # Postgres, whatever the app runs. Not auto-required; load it with
     # require "mistri/stores/active_record".
     #
-    # The model needs three columns: session_id (string, indexed), position
+    # The model needs three columns: session_id (string), position
     # (integer), payload (text). A migration to copy:
     #
     #   create_table :mistri_entries do |t|
-    #     t.string :session_id, null: false, index: true
+    #     t.string :session_id, null: false
     #     t.integer :position, null: false
     #     t.text :payload, size: :long, null: false
     #     t.timestamps
