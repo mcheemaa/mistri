@@ -28,8 +28,8 @@ reloaded = Mistri::Session.new(store: store, id: session.id)
 Mistri.agent("claude-opus-5-5", session: reloaded).run("Continue the plan.")
 ```
 
-A session's id is fixed when the Session is built. Mistri keeps its own copy
-of a string id, and `Session#id` returns a copy, so changing either string
+A session's string id is fixed when the Session is built. Mistri keeps its
+own copy of it, and `Session#id` returns a copy, so changing either string
 afterwards does not move the session.
 
 `Session#entries` returns the raw typed log. `Session#messages` returns the
