@@ -61,10 +61,19 @@ module Mistri
             sleep (deadline - now).clamp(0.01, 1.0)
             break if @stopping
 
-            signal.abort!("stopped by user") if stop_key && signal && adapter.flag?(stop_key)
-            if now >= deadline
+            begin
+              signal.abort!("stopped by user") if stop_key && signal && adapter.flag?(stop_key)
+            rescue StandardError
+              nil # retried next tick; renewal failures warn
+            end
+            next if now < deadline
+
+            deadline = now + heartbeat
+            begin
               adapter.renew(key, ttl: ttl)
-              deadline = now + heartbeat
+            rescue StandardError => e
+              warn "mistri: renewing lease #{key} failed (#{e.class}: #{e.message}); " \
+                   "retrying in #{heartbeat}s"
             end
           end
         end

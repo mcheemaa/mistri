@@ -260,7 +260,9 @@ or only whitespace.
 
 Background child reports use the same ordered inbox. A host that wakes idle
 sessions should watch `session.pending_inbox`, not only
-`session.pending_steers`, so worker reports receive the same treatment.
+`session.pending_steers`, so worker reports receive the same treatment. An entry
+can land as a run finishes. If waking raises `Mistri::SessionBusyError`, retry
+shortly and check `pending_inbox` again.
 
 Inbox consumption is itself an append: the folded message records the source
 entry ID. A crash cannot consume a steer invisibly or require a repair write.
@@ -405,7 +407,17 @@ provider history remains pairable. That error explicitly says the tool may
 have run; it does not make replay safe.
 
 Hosts must serialize active runners and make side effects idempotent or
-reconcilable. Read [Reliability](reliability.md) for the complete contract.
+reconcilable. With a [lock adapter](sub-agents.md#lock-adapters) configured,
+`run`, `resume`, `task`, and `compact` hold a lease on the session, and a
+second runner raises `Mistri::SessionBusyError` before it appends. The lease
+catches a missed case; it does not replace host serialization. Without an
+adapter nothing is checked. With one, a runner that stalls or cannot renew for
+longer than the lease can still overlap the next. After a crash the lease
+expires on its own within three minutes. Read [Reliability](reliability.md) for
+the complete contract.
+
+The lease key is the session ID alone, so session IDs must be unique across
+every store that shares one lock adapter.
 
 ## Related guides
 

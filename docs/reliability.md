@@ -46,7 +46,9 @@ subscriber bugs into model output.
 
 Only one Agent may actively call `run` or `resume` for a Session at a time. The
 store can accept independent approval, steer, and worker-report appends, but
-active runners are a host scheduling concern.
+active runners are a host scheduling concern. With a lock adapter configured, a
+second runner raises `Mistri::SessionBusyError` before it appends; see
+[Sessions](sessions.md#concurrency-and-crashes).
 
 Even with one runner, this gap remains:
 

@@ -348,6 +348,9 @@ Mistri.locks = Mistri::Locks::RailsCache.new(cache: Rails.cache)
 The cache must implement atomic `unless_exist` writes and be shared by every
 worker process. A local memory cache is not a cross-process adapter.
 
+A configured adapter also guards every top-level `run`, `resume`, `task`, and
+`compact`; see [Concurrency and crashes](sessions.md#concurrency-and-crashes).
+
 A custom adapter implements:
 
 ```text
@@ -360,6 +363,8 @@ flag?(key) -> boolean
 clear_flag(key)
 ```
 
+`acquire` returns false only when the key is held; a backend failure raises.
+
 The current lease is a best-effort duplicate-suppression and liveness signal,
 not an ownership token or exactly-once fence. It stores no holder identity. A
 process stalled beyond the TTL can resume after another process acquires the
@@ -368,7 +373,9 @@ generations.
 
 Queue jobs must therefore keep child work idempotent or reconcilable. A held
 lease suppresses an ordinary redelivery while the first worker is healthy; an
-expired lease allows a retry of a child that appears interrupted. A finished
+expired lease allows a retry of a child that appears interrupted. A retry soon
+after a crash can raise `Mistri::SessionBusyError` until the crashed run's
+lease lapses; the child stays interrupted, so let the queue retry it. A finished
 child's terminal entry makes a later matching delivery a no-op. Calling
 `Child#stop` while the child is interrupted competes for the lease and, when it
 wins, replaces that possible retry with a durable stopped terminal.

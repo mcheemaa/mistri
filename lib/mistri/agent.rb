@@ -66,7 +66,6 @@ module Mistri
       @after_tool = after_tool
       @context = context
       @log_label = log_label
-      @log_depth = 0
     end
 
     attr_reader :session
@@ -81,19 +80,7 @@ module Mistri
       # The frame covers the whole public method, so an audit rejection or
       # a store failure gets a crash line too, not just loop failures.
       logged(emit, verb: "run", input: input) do |subscriber|
-        if refresh_tool_control.any?
-          raise ConfigurationError,
-                "session is awaiting approvals; call resume"
-        end
-        input = nil if input.to_s.match?(/\A[[:space:]]*\z/)
-        if input.nil? && Array(images).empty?
-          raise ArgumentError,
-                "run needs input text or images"
-        end
-
-        fold_inbox # anything queued while this session sat idle arrived first; keep that order
-        @session.append_message(Message.user_with_images(input, images))
-        loop_turns(signal, output_schema, &subscriber)
+        exclusive { exchange(input, images:, signal:, output_schema:, &subscriber) }
       end
     end
 
@@ -104,25 +91,27 @@ module Mistri
     # the turn, in which case its execution was the run's last word.
     def resume(signal: nil, &emit)
       logged(emit, verb: "resume") do |subscriber|
-        open = refresh_tool_control
-        pending = open.select { |approval| approval[:decision].nil? }
-        if pending.any?
-          next Result.new(message: nil, status: :awaiting_approval,
-                          pending: pending.map { |approval| approval[:call] },
-                          usage: Usage.zero)
-        end
+        exclusive do
+          open = refresh_tool_control
+          pending = open.select { |approval| approval[:decision].nil? }
+          if pending.any?
+            next Result.new(message: nil, status: :awaiting_approval,
+                            pending: pending.map { |approval| approval[:call] },
+                            usage: Usage.zero)
+          end
 
-        executed = settle(open, signal, &subscriber)
-        if signal&.aborted?
-          last = @session.messages.reverse_each.find(&:assistant?)
-          next finished(last, Usage.zero, signal)
-        end
-        if executed.any? { |call| ends_turn?(call) }
-          last = @session.messages.reverse_each.find(&:assistant?)
-          next finished(last, Usage.zero, signal, handed_off: true)
-        end
+          executed = settle(open, signal, &subscriber)
+          if signal&.aborted?
+            last = @session.messages.reverse_each.find(&:assistant?)
+            next finished(last, Usage.zero, signal)
+          end
+          if executed.any? { |call| ends_turn?(call) }
+            last = @session.messages.reverse_each.find(&:assistant?)
+            next finished(last, Usage.zero, signal, handed_off: true)
+          end
 
-        loop_turns(signal, nil, &subscriber)
+          loop_turns(signal, nil, &subscriber)
+        end
       end
     end
 
@@ -138,12 +127,12 @@ module Mistri
     # belongs to whoever answers, and re-prompting for JSON would steal it
     # back. Ask again once the answer arrives.
     def task(input, schema:, images: [], signal: nil, fixes: 1, &emit)
-      # One log frame for the whole task, fix passes included: the inner
-      # runs see the frame open and only tee, so the single done line
-      # reports the validated outcome, not a rejected intermediate answer.
+      # One log frame, so the done line reports the validated outcome.
       logged(emit, verb: "task", input: input) do |subscriber|
-        plan = Schema.task_plan(schema)
-        validated_task(input, plan, images, signal, fixes, &subscriber)
+        exclusive do
+          plan = Schema.task_plan(schema)
+          validated_task(input, plan, images, signal, fixes, &subscriber)
+        end
       end
     end
 
@@ -160,16 +149,35 @@ module Mistri
     # Compact now (a UI button, a pre-flight trim before a big task). Returns
     # the Compactor result, or nil when there is nothing worth compacting.
     def compact(&)
-      Compactor.call(session: @session, provider: @provider,
-                     settings: @compaction || Compaction.new, budget: @budget, &)
+      exclusive do
+        Compactor.call(session: @session, provider: @provider,
+                       settings: @compaction || Compaction.new, budget: @budget, &)
+      end
     end
 
     private
 
+    # run's body outside the lease; task's fix passes share task's lease.
+    def exchange(input, signal:, output_schema:, images: [], &emit)
+      if refresh_tool_control.any?
+        raise ConfigurationError,
+              "session is awaiting approvals; call resume"
+      end
+      input = nil if input.to_s.match?(/\A[[:space:]]*\z/)
+      if input.nil? && Array(images).empty?
+        raise ArgumentError,
+              "run needs input text or images"
+      end
+
+      fold_inbox # anything queued while this session sat idle arrived first; keep that order
+      @session.append_message(Message.user_with_images(input, images))
+      loop_turns(signal, output_schema, &emit)
+    end
+
     # The body of task, extracted so its early returns close the log frame
     # instead of skipping it.
     def validated_task(input, plan, images, signal, fixes, &emit)
-      result = run(
+      result = exchange(
         TaskOutput.prompt(input, plan), images:, signal:, output_schema: plan, &emit
       )
       spent = result.usage
@@ -183,51 +191,58 @@ module Mistri
         return result.with(output: value) if errors.empty?
         raise SchemaError, "task output failed validation: #{errors.join("; ")}" if remaining.zero?
 
-        result = run(TaskOutput.fix_prompt(errors), signal:, output_schema: plan, &emit)
+        result = exchange(TaskOutput.fix_prompt(errors), signal:, output_schema: plan, &emit)
         spent += result.usage
       end
     end
 
-    # When a host sets Mistri.logger, every public run tees its events into
-    # a fresh logging sink for this session alongside the caller's block,
-    # and the framing lines carry what the stream cannot: the input, the
-    # model, and the final Result. Nothing wraps when no logger is set, a
-    # nested public call (task's inner runs) reuses the open frame, and a
-    # caller's subscriber failures propagate exactly as before because the
-    # sink never raises.
-    def logged(emit, verb:, input: nil)
-      sink = log_sink
-      return yield(emit) unless sink
+    # Concurrent runners interleave appends; without an adapter the host serializes them.
+    def exclusive
+      return yield unless Mistri.locks
 
-      @log_depth += 1
+      lease = Locks.hold("run:#{@session.id}")
+      unless lease
+        raise SessionBusyError.new("session #{@session.id} has an active runner",
+                                   session_id: @session.id)
+      end
+
       begin
-        sink.run_started(verb: verb, input: input, model: @provider.model,
-                         tool_count: @tools.length)
-        subscriber = if emit
-                       lambda { |event|
-                         sink.call(event)
-                         emit.call(event)
-                       }
-                     else
-                       sink.to_proc
-                     end
-        begin
-          result = yield(subscriber)
-        rescue StandardError => e
-          sink.run_crashed(EventDelivery.original(e))
-          raise
-        end
-        sink.run_finished(result)
-        result
+        yield
       ensure
-        @log_depth -= 1
+        # Never mask the run's outcome; an unreleased lease expires on its own.
+        begin
+          lease.release
+        rescue StandardError => e
+          warn "mistri: releasing the run lease for session #{@session.id} failed " \
+               "(#{e.class}: #{e.message}); it expires on its own"
+        end
       end
     end
 
-    def log_sink
-      return nil if @log_depth.positive?
+    # With Mistri.logger set, tees events into a session log framed by the input,
+    # model, and Result. The sink never raises, so subscriber failures propagate unchanged.
+    def logged(emit, verb:, input: nil)
+      sink = Sinks::Logger.attach(@session.id, label: @log_label)
+      return yield(emit) unless sink
 
-      Sinks::Logger.attach(@session.id, label: @log_label)
+      sink.run_started(verb: verb, input: input, model: @provider.model,
+                       tool_count: @tools.length)
+      subscriber = if emit
+                     lambda { |event|
+                       sink.call(event)
+                       emit.call(event)
+                     }
+                   else
+                     sink.to_proc
+                   end
+      begin
+        result = yield(subscriber)
+      rescue StandardError => e
+        sink.run_crashed(EventDelivery.original(e))
+        raise
+      end
+      sink.run_finished(result)
+      result
     end
 
     def loop_turns(signal, output_schema = nil, &emit)
