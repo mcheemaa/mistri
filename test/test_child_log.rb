@@ -1,31 +1,15 @@
 # frozen_string_literal: true
 
 require_relative "test_helper"
+require_relative "support/session_stores"
 
 # A Child reads its session through a held log, so a wait reads the child's
 # log once and then only what was appended since, and still answers what a
 # read of the whole log would.
 class TestChildLog < Minitest::Test
-  # Records each load of one session: where it starts and how many entries
-  # it returns.
-  class RecordingStore < Mistri::Stores::Memory
-    Read = Data.define(:from, :entries)
-
-    def reads(id) = (@reads ||= Hash.new { |hash, key| hash[key] = [] })[id]
-
-    def load(id, from: 0)
-      super.tap { |entries| reads(id) << Read.new(from:, entries: entries.length) }
-    end
-  end
-
-  # A store written before partial reads: append and load(id), nothing else.
-  class PlainStore
-    def initialize = @store = Mistri::Stores::Memory.new
-
-    def append(id, entry) = @store.append(id, entry)
-
-    def load(id) = @store.load(id)
-  end
+  TERMINAL = Mistri::Child::TERMINAL
+  DISPATCHED = Mistri::Child::DISPATCHED
+  STARTED = Mistri::Child::STARTED
 
   READS = {
     status: lambda(&:status),
@@ -38,9 +22,13 @@ class TestChildLog < Minitest::Test
   }.freeze
 
   def setup
-    @store = RecordingStore.new
+    @store = SessionStores::Recording.new
     @session = Mistri::Session.new(store: @store, id: "child-1")
-    @child = Mistri::Child.new(name: "Magpie", session_id: "child-1", store: @store)
+    @child = window(@store)
+  end
+
+  def teardown
+    Mistri.locks = nil
   end
 
   def test_a_wait_reads_the_childs_log_once_and_then_only_what_is_new
@@ -55,19 +43,21 @@ class TestChildLog < Minitest::Test
     assert_equal [20, 0, 1, 0], @store.reads("child-1").map(&:entries)
   end
 
-  def test_a_console_wait_reads_each_entry_of_the_child_once
+  def test_a_console_wait_polls_before_the_end_and_reads_each_entry_once
     30.times { |n| @session.append_message(Mistri::Message.user("step #{n}")) }
-    finisher = Thread.new do
-      sleep 0.05
-      @session.append(Mistri::Child::TERMINAL, "status" => "done", "report" => "Found it.")
-    end
+    waiter = Thread.new { Mistri::Console.await(@child, 5, 0.01) }
+    wait_for_loads(2)
+    @session.append(TERMINAL, "status" => "done", "report" => "Found it.")
 
-    output = Mistri::Console.await(@child, 2, 0.01)
-    finisher.join
-    read = @store.reads("child-1").sum(&:entries)
+    assert waiter.join(5), "the wait never returned"
+    reads = @store.reads("child-1")
 
-    assert_match(/Magpie done\./, output)
-    assert_equal @store.load("child-1").length, read
+    assert_match(/Magpie done\./, waiter.value)
+    assert_equal [30, 0], reads.first(2).map(&:entries)
+    assert_equal 31, reads.sum(&:entries)
+  ensure
+    waiter&.kill
+    waiter&.join
   end
 
   def test_every_answer_matches_one_read_of_the_whole_log
@@ -75,17 +65,15 @@ class TestChildLog < Minitest::Test
       step.call
 
       READS.each do |name, read|
-        whole = read.call(Mistri::Child.new(name: "Magpie", session_id: "child-1", store: @store))
-
-        assert_equal [whole], [read.call(@child)], "#{name} differs from the whole log"
+        assert_equal [read.call(window(@store))], [read.call(@child)],
+                     "#{name} differs from the whole log"
       end
     end
   end
 
   def test_a_report_and_a_transcript_are_values_the_caller_owns
     @session.append_message(Mistri::Message.user("look into it"))
-    @session.append(Mistri::Child::TERMINAL, "status" => "failed", "report" => "Half done.",
-                                             "error" => "Timeout")
+    @session.append(TERMINAL, "status" => "failed", "report" => "Half done.", "error" => "Timeout")
 
     @child.report << " changed"
     @child.error << " changed"
@@ -97,29 +85,186 @@ class TestChildLog < Minitest::Test
   end
 
   def test_a_child_on_a_store_with_only_append_and_load_still_answers
-    store = PlainStore.new
-    session = Mistri::Session.new(store:, id: "child-2")
-    child = Mistri::Child.new(name: "Husky", session_id: "child-2", store:)
-    session.append(Mistri::Child::DISPATCHED, {})
+    store = SessionStores::Plain.new
+    session = Mistri::Session.new(store:, id: "child-1")
+    child = window(store)
+    session.append(DISPATCHED, {})
 
     assert_equal :queued, child.status
-    session.append(Mistri::Child::TERMINAL, "status" => "done", "report" => "Done.")
+    session.append(TERMINAL, "status" => "done", "report" => "Done.")
 
     assert_predicate child, :finished?
     assert_equal "Done.", child.report
   end
 
+  def test_an_end_that_is_rolled_back_is_not_kept
+    store = SessionStores::Transactional.new
+    session = Mistri::Session.new(store:, id: "child-1")
+    child = window(store)
+    session.append(DISPATCHED, {})
+    child.status
+
+    store.transaction do
+      session.append(TERMINAL, "status" => "done", "report" => "Never committed.")
+
+      assert_predicate child, :finished?
+      raise SessionStores::Transactional::Rollback
+    end
+
+    refute_predicate child, :finished?
+    assert_equal :queued, child.status
+    assert_nil child.report
+  end
+
+  def test_a_read_inside_an_older_snapshot_does_not_see_a_later_end
+    store = SessionStores::Snapshot.new
+    session = Mistri::Session.new(store:, id: "child-1")
+    child = window(store)
+    session.append(DISPATCHED, {})
+    store.pin
+    Thread.new do
+      session.append(TERMINAL, "status" => "done", "report" => "Later.")
+      child.finished?
+    end.join
+
+    refute_predicate child, :finished?
+    assert_equal :queued, child.status
+    store.unpin
+
+    assert_equal "Later.", child.report
+  ensure
+    store&.unpin
+  end
+
+  def test_two_threads_on_one_window_read_each_entry_once
+    store = SessionStores::Gated.new
+    session = Mistri::Session.new(store:, id: "child-1")
+    child = window(store)
+    session.append(DISPATCHED, {})
+    session.append(TERMINAL, "status" => "done", "report" => "Done.")
+    store.hold_next_load
+    first = Thread.new { child.status }
+    store.entered.pop
+    second = Thread.new { child.report }
+    wait_until { second.status == "sleep" }
+    store.release
+
+    assert_equal [:done, "Done."], [first.value, second.value]
+    assert_equal [0, 2], store.starts
+  ensure
+    store&.release
+    [first, second].compact.each(&:join)
+  end
+
+  def test_a_stop_through_a_warmed_window_ends_a_queued_child_once
+    Mistri.locks = Mistri::Locks::Memory.new
+    @session.append(DISPATCHED, {})
+    @child.status
+
+    assert @child.stop
+    assert @child.stop
+
+    assert_equal :stopped, @child.status
+    assert_equal ["stopped"], ends
+  end
+
+  def test_a_stop_through_a_warmed_window_sees_an_end_another_writer_appended
+    Mistri.locks = Mistri::Locks::Memory.new
+    @session.append(DISPATCHED, {})
+    @child.status
+    @session.append(TERMINAL, "status" => "done", "report" => "Finished first.")
+
+    assert @child.stop
+
+    assert_equal :done, @child.status
+    assert_equal ["done"], ends
+  end
+
+  def test_a_wait_and_a_stop_share_one_window
+    Mistri.locks = Mistri::Locks::Memory.new
+    @session.append(DISPATCHED, {})
+    waiter = Thread.new { Mistri::Console.await(@child, 5, 0.01) }
+    wait_for_loads(2)
+
+    assert @child.stop
+    assert waiter.join(5), "the wait never returned"
+
+    assert_match(/Magpie stopped\./, waiter.value)
+    assert_equal ["stopped"], ends
+  ensure
+    waiter&.kill
+    waiter&.join
+  end
+
+  def test_changing_the_string_a_child_was_given_does_not_move_the_window
+    Mistri.locks = Mistri::Locks::Memory.new
+    Mistri::Session.new(store: @store, id: "child-2").append(DISPATCHED, {})
+    @session.append(DISPATCHED, {})
+    @session.append(TERMINAL, "status" => "done", "report" => "From the first.")
+    id = +"child-1"
+    child = Mistri::Child.new(name: "Magpie", session_id: id, store: @store)
+    child.report
+
+    id.replace("child-2")
+
+    assert_equal "child-1", child.session_id
+    assert_equal "From the first.", child.report
+    assert child.stop
+    assert_equal ["done"], ends
+    assert_equal :queued, window(@store, "child-2").status
+  end
+
+  def test_the_session_id_a_child_returns_is_a_copy_the_caller_owns
+    Mistri.locks = Mistri::Locks::Memory.new
+    @session.append(DISPATCHED, {})
+    child = Mistri::Child.new(name: "Magpie", session_id: +"child-1", store: @store)
+
+    child.session_id << " changed"
+    child.to_h["session_id"] << " changed"
+
+    assert_equal "child-1", child.session_id
+    assert child.stop
+    assert_equal ["stopped"], ends
+  end
+
   private
 
-  # One child from its queue to its end, with a steer that lands after it.
+  def window(store, session_id = "child-1")
+    Mistri::Child.new(name: "Magpie", session_id:, store:)
+  end
+
+  # The status of each terminal entry in the child's log, oldest first.
+  def ends
+    @store.load("child-1").filter_map { |entry| entry["status"] if entry["type"] == TERMINAL }
+  end
+
+  # Returns once the store has finished that many loads, so what follows
+  # happens after the waiting thread has polled.
+  def wait_for_loads(count)
+    count.times { flunk "the wait never polled" unless @store.loaded.pop(timeout: 5) }
+  end
+
+  # One child from its queue to its end, with a steer and a second end that
+  # land after it.
   def script
-    [-> { @session.append(Mistri::Child::DISPATCHED, { "spec" => { "name" => "Magpie" } }) },
-     -> { @session.append(Mistri::Child::STARTED, {}) },
+    [-> { @session.append(DISPATCHED, { "spec" => { "name" => "Magpie" } }) },
+     -> { @session.append(STARTED, {}) },
      -> { @session.append_message(Mistri::Message.user("find the answer")) },
      -> { @session.append_message(Mistri::Message.assistant(content: "On it.")) },
      -> { @child.say("also check the pricing page") },
      -> { @session.append_message(Mistri::Message.user("also check the pricing page")) },
-     -> { @session.append(Mistri::Child::TERMINAL, "status" => "done", "report" => "It is 42.") },
-     -> { @child.say("too late") }]
+     -> { @session.append(TERMINAL, "status" => "done", "report" => "It is 42.") },
+     -> { @child.say("too late") },
+     -> { @session.append(TERMINAL, "status" => "failed", "error" => "Ended a second time.") }]
+  end
+
+  def wait_until
+    deadline = Process.clock_gettime(Process::CLOCK_MONOTONIC) + 5
+    until yield
+      late = Process.clock_gettime(Process::CLOCK_MONOTONIC) > deadline
+      flunk "the condition was not met in time" if late
+
+      Thread.pass
+    end
   end
 end

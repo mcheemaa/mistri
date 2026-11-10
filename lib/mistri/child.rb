@@ -24,7 +24,7 @@ module Mistri
     # Interrupted work is nonterminal but not actively live.
     LIVE = %i[running queued].freeze
 
-    attr_reader :name, :session_id
+    attr_reader :name
 
     def self.lease_key(session_id) = "child:#{session_id}"
 
@@ -32,10 +32,16 @@ module Mistri
 
     def initialize(name:, session_id:, store:, parent_session_id: nil)
       @name = name
-      @session_id = session_id
       @store = store
+      @log = Session::Log.new(store, session_id)
+      @session_id = @log.id
       @parent_session_id = parent_session_id
     end
+
+    # A string id comes back as a copy. The child a window looks at is fixed
+    # when the window is built: its reads, its lease and stop keys and its
+    # report to the parent all use the one id.
+    def session_id = @session_id.is_a?(String) ? @session_id.dup : @session_id
 
     def status
       log = read_log
@@ -181,9 +187,7 @@ module Mistri
 
     # The child's log as this window has read it, brought up to date: a wait
     # reads it once and then only what was appended since.
-    def read_log
-      (@log ||= Session::Log.new(@store, @session_id)).entries
-    end
+    def read_log = @log.entries
 
     def terminal_entry
       read_log.reverse_each.find { |entry| entry["type"] == TERMINAL }

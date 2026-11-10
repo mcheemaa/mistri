@@ -1,105 +1,9 @@
 # frozen_string_literal: true
 
 require_relative "test_helper"
+require_relative "support/session_stores"
 
 class TestSessionLog < Minitest::Test
-  # Records where each load starts and how many entries it returns.
-  class RecordingStore < Mistri::Stores::Memory
-    Read = Data.define(:from, :entries)
-
-    attr_reader :reads
-
-    def initialize
-      super
-      @reads = []
-    end
-
-    def load(id, from: 0)
-      super.tap { |entries| @reads << Read.new(from:, entries: entries.length) }
-    end
-  end
-
-  # Appends made inside #transaction vanish when it is rolled back, as rows
-  # do in a database transaction.
-  class TransactionalStore < Mistri::Stores::Memory
-    class Rollback < StandardError; end
-
-    def settled? = !@open
-
-    def transaction
-      saved = @mutex.synchronize { @entries.to_h { |id, entries| [id, entries.dup] } }
-      @open = true
-      yield
-    rescue Rollback
-      @mutex.synchronize { @entries.each_key { |id| @entries[id] = saved.fetch(id, []) } }
-    ensure
-      @open = false
-    end
-  end
-
-  # Serves the thread that pinned it a copy of the log from that moment, as
-  # a REPEATABLE READ transaction does on its connection.
-  class SnapshotStore < Mistri::Stores::Memory
-    def pin
-      copy = @mutex.synchronize { @entries.to_h { |id, entries| [id, entries.dup] } }
-      Thread.current.thread_variable_set(:pinned, copy)
-    end
-
-    def unpin = Thread.current.thread_variable_set(:pinned, nil)
-
-    def settled? = Thread.current.thread_variable_get(:pinned).nil?
-
-    def load(id, from: 0)
-      pinned = Thread.current.thread_variable_get(:pinned)
-      return super unless pinned
-
-      pinned.fetch(id, []).drop(from).map { |entry| json_copy(entry, freeze: false) }
-    end
-  end
-
-  # A store written before partial reads: append and load(id), nothing else.
-  class PlainStore
-    attr_reader :loads
-
-    def initialize
-      @store = Mistri::Stores::Memory.new
-      @loads = 0
-    end
-
-    def append(id, entry) = @store.append(id, entry)
-
-    def load(id)
-      @loads += 1
-      @store.load(id)
-    end
-  end
-
-  # Holds one load inside the store until the test lets it go.
-  class GatedStore < Mistri::Stores::Memory
-    attr_reader :entered, :starts
-
-    def initialize
-      super
-      @entered = Queue.new
-      @gate = Queue.new
-      @starts = []
-    end
-
-    def hold_next_load = @hold = true
-
-    def release = @gate << true
-
-    def load(id, from: 0)
-      @starts << from
-      if @hold
-        @hold = false
-        @entered << true
-        @gate.pop
-      end
-      super
-    end
-  end
-
   READS = {
     replay: ->(session) { session.replay.map { |message, index| [message.to_h, index] } },
     context_tokens: lambda(&:context_tokens),
@@ -114,7 +18,7 @@ class TestSessionLog < Minitest::Test
   }.freeze
 
   def setup
-    @store = RecordingStore.new
+    @store = SessionStores::Recording.new
     @session = Mistri::Session.new(store: @store)
   end
 
@@ -167,7 +71,7 @@ class TestSessionLog < Minitest::Test
   end
 
   def test_a_decision_that_is_rolled_back_is_not_kept
-    store = TransactionalStore.new
+    store = SessionStores::Transactional.new
     session = Mistri::Session.new(store:)
     park_an_approval("call_a", session)
     session.open_approvals
@@ -176,7 +80,7 @@ class TestSessionLog < Minitest::Test
       session.approve("call_a")
 
       assert session.open_approvals.first[:decision]["approved"]
-      raise TransactionalStore::Rollback
+      raise SessionStores::Transactional::Rollback
     end
 
     assert_nil session.open_approvals.first[:decision]
@@ -186,7 +90,7 @@ class TestSessionLog < Minitest::Test
   end
 
   def test_a_read_inside_a_transaction_answers_from_its_own_view_of_the_store
-    store = SnapshotStore.new
+    store = SessionStores::Snapshot.new
     session = Mistri::Session.new(store:)
     exchange("first", session)
     session.messages
@@ -205,7 +109,7 @@ class TestSessionLog < Minitest::Test
   end
 
   def test_a_store_with_only_append_and_load_is_read_whole_every_time
-    store = PlainStore.new
+    store = SessionStores::Plain.new
     session = Mistri::Session.new(store:)
     exchange("first", session)
     session.messages
@@ -326,7 +230,7 @@ class TestSessionLog < Minitest::Test
   end
 
   def test_a_second_reader_waits_and_reads_only_what_the_first_did_not
-    store = GatedStore.new
+    store = SessionStores::Gated.new
     session = Mistri::Session.new(store:)
     exchange("first", session)
     store.hold_next_load

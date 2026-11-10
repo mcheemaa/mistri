@@ -87,14 +87,16 @@ unchanged: without `settled?` it is read whole on every read, as before.
   on the connection that reads. MySQL and PostgreSQL have that by default.
 - A `Session` object holds every entry it has read in memory, image data
   included, for as long as the object lives. After a session's rows are
-  deleted, build a new `Session` object.
+  deleted, build a new `Session` object. A `Child` holds the entries of its
+  worker's log the same way.
 
 ### A session's string id is fixed
 
 `Session.new` keeps its own copy of a string id, and `Session#id` returns a
 copy. Changing either string in place no longer changes which session is read
 and written. Build a new `Session` to work with another id. An id that is not
-a string is kept as the object it was given.
+a string is kept as the object it was given. A `Child` treats its `session_id`
+the same way.
 
 ### The generated session table has one index
 
