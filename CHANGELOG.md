@@ -7,7 +7,9 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 - A compaction is no longer declined when the recent turns end on a tool call
   whose result was never recorded. The keep budget was measured to the start
-  of the session in that case, so nothing was left to summarize.
+  of the session in that case, so nothing was left to summarize. A kept tail
+  that fits the keep budget is now always left whole. After a compaction
+  entry appended by hand it could be summarized again.
 - A wait on a worker reads the worker's log once and then only what was
   appended since. `read_agent` with `wait` used to load the whole log twice on
   every poll. A `Child` keeps its own copy of a string `session_id` and

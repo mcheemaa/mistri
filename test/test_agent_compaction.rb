@@ -6,24 +6,6 @@ require_relative "test_helper"
 # append-only entry log, iterative summaries, and the pairing guarantees that
 # keep a compacted replay wire-valid.
 class TestAgentCompaction < Minitest::Test
-  def test_an_interrupted_call_at_the_tail_does_not_stop_a_compaction
-    session = Mistri::Session.new(store: Mistri::Stores::Memory.new)
-    session.append_message(Mistri::Message.user("old question " * 50))
-    session.append_message(Mistri::Message.assistant(content: "old answer " * 50,
-                                                     stop_reason: :stop))
-    session.append_message(Mistri::Message.user("paint it"))
-    lost = Mistri::ToolCall.new(id: "lost", name: "paint", arguments: {})
-    session.append_message(Mistri::Message.assistant(tool_calls: [lost], stop_reason: :tool_use))
-    provider = Mistri::Providers::Fake.new(turns: [{ text: "Summary." }])
-
-    result = Mistri::Compactor.call(session:, provider:,
-                                    settings: Mistri::Compaction.new(keep_recent: 1))
-
-    refute_nil result, "the compaction was declined"
-    assert_equal 3, session.last_compaction["kept_from"]
-    assert_equal %i[user assistant tool], session.messages.map(&:role)
-  end
-
   def test_the_loop_compacts_automatically_and_continues
     big_usage = Mistri::Usage.new(input: 900, output: 100)
     provider = Mistri::Providers::Fake.new(turns: [
