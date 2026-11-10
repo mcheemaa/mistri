@@ -71,12 +71,14 @@ read, image data included, and asks only for the ones after them. When it is
 false, or the store does not answer it, the session reads the whole log with
 `load(session_id)` and holds nothing.
 
-`settled?` must be false whenever a load could return an entry that is later
-undone, or miss one that is already committed. On a database that is while a
-transaction is open on the connection that reads: its rows can be rolled back,
-and it may be pinned to an older snapshot. A wrapper around a store must pass
-`settled?` through from the store it reads with. The built-in stores answer
-both.
+Answer true only when the load that follows returns committed entries that
+can no longer change or disappear. On a database, answer false while a
+transaction is open on the connection that reads: its own rows can be rolled
+back, and it expects to read its own snapshot. The answer has to hold for the
+load that follows it and for the place that load reads from, so a subclass or
+a wrapper that reads from somewhere else must answer for itself and not
+inherit the answer. When in doubt answer false. A session then reads the whole
+log, which is always correct. The built-in stores answer both.
 
 Built-in stores are:
 
@@ -118,7 +120,9 @@ appended. A read whose rows are not at consecutive positions raises
 `Mistri::ConfigurationError`, which is what deleting a row from the middle of
 a session causes. Delete a session's rows together. The reading connection
 needs READ COMMITTED or a stronger isolation level, which MySQL and PostgreSQL
-have by default.
+have by default. The store knows about a transaction that Active Record
+opened. One begun with raw SQL is invisible to it, so do not read a session
+inside one.
 
 On MySQL and Trilogy, `payload` must be LONGTEXT because one legal parallel
 tool turn can exceed MEDIUMTEXT even while each call stays inside its own

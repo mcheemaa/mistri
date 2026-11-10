@@ -74,7 +74,8 @@ module SessionStoreTests
       model.transaction(isolation: :repeatable_read) do
         model.where(session_id: session.id).count
         pinned << true
-        decided.pop(timeout: 10)
+        raise "the decision never arrived" unless decided.pop(timeout: 10)
+
         session.open_approvals.first[:decision]
       end
     end
@@ -99,7 +100,7 @@ module SessionStoreTests
       model.transaction do
         @store.append("s", { "n" => 1 })
         appended << true
-        commit.pop(timeout: 10)
+        raise "the commit signal never arrived" unless commit.pop(timeout: 10)
       end
     end
 

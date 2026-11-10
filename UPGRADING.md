@@ -76,8 +76,10 @@ unchanged: without `settled?` it is read whole on every read, as before.
   describes.
 - A subclass of a built-in store, or a wrapper that forwards every method,
   already answers `settled?`. Its own `load` must take `from:`.
-- Inside an open database transaction a session reads the whole log and holds
-  nothing, so what it answers there is unchanged.
+- Inside a transaction that Active Record opened, a session reads the whole
+  log and holds nothing, so what it answers there is unchanged. A transaction
+  begun with raw SQL is invisible to the store; do not read a session inside
+  one.
 - The Active Record store raises `Mistri::ConfigurationError` when the rows it
   reads are not at consecutive positions. Rows that are only ever appended sit
   at positions 1, 2, 3. Delete a session's rows together, never some of them.
