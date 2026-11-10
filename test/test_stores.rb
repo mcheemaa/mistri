@@ -292,7 +292,7 @@ if defined?(Mistri::Stores::ActiveRecord)
 
       error = assert_raises(Mistri::ConfigurationError) { @store.load("s") }
 
-      assert_match(/missing or repeated entries/, error.message)
+      assert_match(/not at consecutive positions/, error.message)
     end
 
     def test_load_refuses_a_read_that_starts_after_a_missing_row

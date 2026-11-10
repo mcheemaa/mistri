@@ -170,8 +170,8 @@ module Mistri
       read_log.filter_map do |entry|
         next unless entry["type"] == "subagent"
 
-        Child.new(name: entry["name"], session_id: entry["session_id"], store: @store,
-                  parent_session_id: @id)
+        Child.new(name: own_json(entry["name"]), session_id: own_json(entry["session_id"]),
+                  store: @store, parent_session_id: @id)
       end
     end
 
@@ -604,7 +604,7 @@ module Mistri
     # A new summary invalidates prefix-bound thinking in the kept tail. Only
     # replay drops it: the transcript and thoughts from the new prefix survive.
     def replay_message(entry, before_compaction:)
-      message = Message.from_h(entry["message"])
+      message = Message.from_h(own_json(entry["message"]))
       return message unless before_compaction && message.assistant? &&
                             message.provider == :anthropic &&
                             Models.prefix_bound_thinking?(message.model)

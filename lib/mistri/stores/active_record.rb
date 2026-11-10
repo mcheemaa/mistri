@@ -67,16 +67,20 @@ module Mistri
         end
       end
 
+      # A session holds what it has read, except rows that can still be rolled
+      # back.
+      def in_transaction? = @model.connection.transaction_open?
+
       private
 
-      # An entry's place in the log is its position minus one. A missing or
-      # repeated row would move every entry after it, so the read fails.
+      # An entry's place in the log is its position minus one, so the rows of
+      # one read must sit at consecutive positions from the one asked for.
       def verify_positions(id, rows, from)
         return if rows.empty?
         return if rows.first.first == from + 1 && rows.last.first == from + rows.length
 
-        raise ConfigurationError, "session #{id.inspect} has missing or repeated entries in " \
-                                  "the store"
+        raise ConfigurationError, "session #{id.inspect} has entries that are not at " \
+                                  "consecutive positions in the store"
       end
     end
   end

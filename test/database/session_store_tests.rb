@@ -39,6 +39,50 @@ module SessionStoreTests
     assert_raises(Mistri::ConfigurationError) { @store.load("s") }
   end
 
+  def test_a_session_does_not_keep_a_decision_that_was_rolled_back
+    session = Mistri::Session.new(store: @store)
+    call = Mistri::ToolCall.new(id: "call_a", name: "send", arguments: { "to" => "ops" })
+    session.append_message(Mistri::Message.user("send it"))
+    session.append_message(Mistri::Message.assistant(content: [call], stop_reason: :tool_use))
+    session.append("approval_request", "call" => JSON.parse(JSON.generate(call.to_h)))
+    session.open_approvals
+
+    model.transaction do
+      session.approve("call_a")
+
+      assert session.open_approvals.first[:decision]["approved"]
+      raise ActiveRecord::Rollback
+    end
+
+    assert_nil session.open_approvals.first[:decision]
+    session.deny("call_a")
+
+    refute session.open_approvals.first[:decision]["approved"]
+  end
+
+  def test_another_connection_sees_an_append_once_it_commits
+    @store.append("s", { "n" => 0 })
+    appended = Queue.new
+    commit = Queue.new
+    writer = Thread.new do
+      model.transaction do
+        @store.append("s", { "n" => 1 })
+        appended << true
+        commit.pop
+      end
+    end
+    appended.pop
+
+    assert_equal 1, @store.load("s").length
+    commit << true
+    writer.join
+
+    assert_equal([0, 1], @store.load("s").map { |entry| entry["n"] })
+  ensure
+    commit << true
+    writer&.join
+  end
+
   private
 
   def selects(&)

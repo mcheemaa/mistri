@@ -68,19 +68,22 @@ could share one file.
 ### Stores read from a position
 
 `load(session_id)` is now `load(session_id, from: 0)`. A session reads its log
-once and then asks only for the entries appended since, so every read after
-the first stays small as the session grows.
+once and then asks only for the entries appended since, so after the first
+read the store returns only new entries.
 
-- A custom store must accept the keyword. Returning `load(id).drop(from)` is
-  correct. Filter at the source where you can.
+- A custom store must accept the keyword. Reading everything and dropping the
+  first `from` entries is correct. Filter at the source where you can.
+- A custom store on a database with transactions should also answer
+  `in_transaction?`, true while a transaction is open on its connection. A
+  session does not hold what it reads then, because it can be rolled back.
 - The built-in stores need no change. The Active Record store reads by
   `position`, which the unique index on `[session_id, position]` already
   serves.
-- The Active Record store raises `Mistri::ConfigurationError` when a session
-  has a missing or repeated `position`. Rows that are only ever appended have
-  positions 1, 2, 3 with no gap. Delete a session's rows together, never some
-  of them.
-- A `Session` object keeps the entries it has read. After a session's rows are
+- The Active Record store raises `Mistri::ConfigurationError` when the rows it
+  reads are not at consecutive positions. Rows that are only ever appended sit
+  at positions 1, 2, 3. Delete a session's rows together, never some of them.
+- A `Session` object holds every entry it has read in memory, image data
+  included, for as long as the object lives. After a session's rows are
   deleted, build a new `Session` object.
 
 ### OpenAI tools are no longer strict

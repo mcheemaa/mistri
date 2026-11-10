@@ -51,11 +51,17 @@ load(session_id, from: 0)      # return entries in append order, from a position
 The store must preserve each append as one entry, provide a stable total order
 per session, and make a successful append visible to subsequent loads. An
 entry's position is the number of entries appended before it, and it never
-changes. `load(id, from: n)` returns the entries at position `n` and after, so
-it equals `load(id).drop(n)`. A session reads its log once and then asks only
-for what was appended since, so a store that answers `from` at the source
-keeps a read small however long the session grows. A store that cannot may
-drop the first `n` entries after a full read. Values
+changes. `load(id, from: n)` returns the entries at position `n` and after. A
+session reads its log once and then asks only for what was appended since, so
+a store that answers `from` at the source returns only the new entries however
+long the session grows. A store that cannot may read everything and drop the
+first `n` entries. A `Session` object holds every entry it has read in memory,
+image data included.
+
+A store on a database with transactions also answers `in_transaction?`, true
+while a transaction is open on its connection. Rows read then can still be
+rolled back, so a session answers from them and does not hold them. The Active
+Record store does this. Values
 returned by `load` must not let caller mutation rewrite durable history: return
 fresh decoded copies or deeply immutable snapshots. Mistri does not rely on
 Ruby object identity. `Session#append` normalizes entries through JSON, so store
@@ -97,8 +103,9 @@ The table needs `session_id`, `position`, and `payload`, plus a unique index on
 `[session_id, position]`. The unique index is the optimistic append boundary for
 independent writers, and it serves every read: a load from a position is one
 range read on it. Positions run 1, 2, 3 with no gap because rows are only ever
-appended. A session with a missing or repeated position raises
-`Mistri::ConfigurationError`, so delete a session's rows together.
+appended. A read whose rows are not at consecutive positions raises
+`Mistri::ConfigurationError`, which is what deleting a row from the middle of
+a session causes. Delete a session's rows together.
 
 On MySQL and Trilogy, `payload` must be LONGTEXT because one legal parallel
 tool turn can exceed MEDIUMTEXT even while each call stays inside its own

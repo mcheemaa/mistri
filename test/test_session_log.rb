@@ -19,6 +19,63 @@ class TestSessionLog < Minitest::Test
     end
   end
 
+  # Appends made inside #transaction vanish when it is rolled back, as rows
+  # do in a database transaction.
+  class TransactionalStore < Mistri::Stores::Memory
+    class Rollback < StandardError; end
+
+    def in_transaction? = @open == true
+
+    def transaction
+      saved = @mutex.synchronize { @entries.to_h { |id, entries| [id, entries.dup] } }
+      @open = true
+      yield
+    rescue Rollback
+      @mutex.synchronize { @entries.each_key { |id| @entries[id] = saved.fetch(id, []) } }
+    ensure
+      @open = false
+    end
+  end
+
+  # Holds one load inside the store until the test lets it go.
+  class GatedStore < Mistri::Stores::Memory
+    attr_reader :entered, :starts
+
+    def initialize
+      super
+      @entered = Queue.new
+      @gate = Queue.new
+      @starts = []
+    end
+
+    def hold_next_load = @hold = true
+
+    def release = @gate << true
+
+    def load(id, from: 0)
+      @starts << from
+      if @hold
+        @hold = false
+        @entered << true
+        @gate.pop
+      end
+      super
+    end
+  end
+
+  READS = {
+    replay: ->(session) { session.replay.map { |message, index| [message.to_h, index] } },
+    context_tokens: lambda(&:context_tokens),
+    inbox: lambda(&:pending_inbox),
+    last_compaction: lambda(&:last_compaction),
+    compaction_failures: ->(session) { session.compaction_failures(trigger: :automatic) },
+    children: ->(session) { session.children.map(&:to_h) },
+    tool_call_ids: lambda(&:tool_call_ids),
+    approvals: lambda do |session|
+      session.open_approvals.map { |open| [open[:call].to_h, open[:decision]] }
+    end
+  }.freeze
+
   def setup
     @store = RecordingStore.new
     @session = Mistri::Session.new(store: @store)
@@ -50,7 +107,7 @@ class TestSessionLog < Minitest::Test
     assert_equal @store.load(@session.id).length, read
   end
 
-  def test_an_append_from_another_process_is_seen_by_the_next_read
+  def test_an_append_through_another_session_object_is_seen_by_the_next_read
     exchange("first")
     @session.messages
     Mistri::Session.new(store: @store, id: @session.id).steer("from elsewhere")
@@ -60,24 +117,35 @@ class TestSessionLog < Minitest::Test
     assert_equal ["from elsewhere"], texts
   end
 
-  def test_every_answer_matches_a_session_that_reads_the_whole_log
-    steps = [
-      -> { exchange("first") },
-      -> { @session.steer("while busy") },
-      -> { fold_inbox },
-      -> { park_an_approval },
-      -> { @session.approve("call_a") },
-      -> { settle_the_approval },
-      -> { exchange("second") },
-      -> { compact },
-      -> { exchange("third") }
-    ]
-
-    steps.each do |step|
+  def test_every_answer_matches_one_read_from_the_whole_log
+    script.each do |step|
       step.call
 
-      assert_equal answers(Mistri::Session.new(store: @store, id: @session.id)), answers(@session)
+      READS.each do |name, read|
+        whole = read.call(Mistri::Session.new(store: @store, id: @session.id))
+
+        assert_equal [whole], [read.call(@session)], "#{name} differs from the whole log"
+      end
     end
+  end
+
+  def test_a_decision_that_is_rolled_back_is_not_kept
+    store = TransactionalStore.new
+    session = Mistri::Session.new(store:)
+    park_an_approval("call_a", session)
+    session.open_approvals
+
+    store.transaction do
+      session.approve("call_a")
+
+      assert session.open_approvals.first[:decision]["approved"]
+      raise TransactionalStore::Rollback
+    end
+
+    assert_nil session.open_approvals.first[:decision]
+    session.deny("call_a")
+
+    refute session.open_approvals.first[:decision]["approved"]
   end
 
   def test_entries_returns_copies_the_caller_owns
@@ -100,6 +168,55 @@ class TestSessionLog < Minitest::Test
     assert_equal "earlier", @session.last_compaction["summary"]
   end
 
+  def test_a_replayed_message_is_a_value_the_caller_owns
+    @session.append("message", "message" => {
+                      "role" => "assistant", "content" => [{ "type" => "text", "text" => "done" }],
+                      "model" => "model-1", "stop_reason" => "stop",
+                      "ui" => { "card" => { "title" => "Report" } },
+                      "error" => { "detail" => { "code" => "none" } }
+                    })
+    message = @session.messages.first
+
+    message.ui["card"]["title"] << " changed"
+    message.to_h[:error]["detail"]["code"] << " changed"
+    message.model << " changed"
+    again = @session.messages.first
+
+    assert_equal "Report", again.ui.dig("card", "title")
+    assert_equal "none", again.error.dig("detail", "code")
+    assert_equal "model-1", again.model
+  end
+
+  def test_a_child_is_a_value_the_caller_owns
+    @session.append("subagent", "name" => "Magpie", "session_id" => "child-1")
+    child = @session.children.first
+
+    child.name << " changed"
+    child.to_h["session_id"] << " changed"
+    again = @session.children.first
+
+    assert_equal %w[Magpie child-1], [again.name, again.session_id]
+  end
+
+  def test_a_second_reader_waits_and_reads_only_what_the_first_did_not
+    store = GatedStore.new
+    session = Mistri::Session.new(store:)
+    exchange("first", session)
+    store.hold_next_load
+    first = Thread.new { session.messages.length }
+    store.entered.pop
+    second = Thread.new { session.messages.length }
+    wait_until { second.status == "sleep" }
+
+    assert_equal [0], store.starts
+    store.release
+
+    assert_equal [2, 2], [first.value, second.value]
+    assert_equal [0, 2], store.starts
+  ensure
+    store&.release
+  end
+
   def test_readers_on_many_threads_share_one_consistent_log
     writer = Thread.new { 200.times { |n| @session.append_message(Mistri::Message.user("m#{n}")) } }
     readers = Array.new(8) do
@@ -116,9 +233,31 @@ class TestSessionLog < Minitest::Test
 
   private
 
-  def exchange(text)
-    @session.append_message(Mistri::Message.user(text))
-    @session.append_message(Mistri::Message.assistant(content: text.upcase, stop_reason: :stop))
+  # One session that meets a steer, a child report, an approval, a denial, an
+  # unanswered call, a failed and a successful compaction.
+  def script
+    [-> { exchange("first") },
+     -> { @session.steer("while busy") },
+     -> { fold_inbox },
+     -> { @session.append("subagent", "name" => "Magpie", "session_id" => "child-1") },
+     -> { report_from("child-1") },
+     -> { fold_inbox },
+     -> { park_an_approval("call_a") },
+     -> { @session.approve("call_a") },
+     -> { answer("call_a", "sent") },
+     -> { park_an_approval("call_b") },
+     -> { @session.deny("call_b", note: "not now") },
+     -> { answer("call_b", "denied") },
+     -> { leave_a_call_unanswered },
+     -> { exchange("second") },
+     -> { @session.append("compaction_failed", "reason" => "empty", "trigger" => "automatic") },
+     -> { compact },
+     -> { exchange("third") }]
+  end
+
+  def exchange(text, session = @session)
+    session.append_message(Mistri::Message.user(text))
+    session.append_message(Mistri::Message.assistant(content: text.upcase, stop_reason: :stop))
   end
 
   def fold_inbox
@@ -128,15 +267,26 @@ class TestSessionLog < Minitest::Test
     end
   end
 
-  def park_an_approval
-    call = Mistri::ToolCall.new(id: "call_a", name: "send", arguments: { "to" => "ops" })
-    @session.append_message(Mistri::Message.assistant(content: [call], stop_reason: :tool_use))
-    @session.append("approval_request", "call" => JSON.parse(JSON.generate(call.to_h)))
+  def report_from(child_id)
+    @session.deliver_report(name: "Magpie", session_id: child_id, status: "done", text: "found")
   end
 
-  def settle_the_approval
-    @session.append_message(Mistri::Message.tool(content: "sent", tool_call_id: "call_a",
+  def park_an_approval(id, session = @session)
+    call = Mistri::ToolCall.new(id:, name: "send", arguments: { "to" => "ops" })
+    session.append_message(Mistri::Message.user("send it"))
+    session.append_message(Mistri::Message.assistant(content: [call], stop_reason: :tool_use))
+    session.append("approval_request", "call" => JSON.parse(JSON.generate(call.to_h)))
+  end
+
+  def answer(id, text)
+    @session.append_message(Mistri::Message.tool(content: text, tool_call_id: id,
                                                  tool_name: "send"))
+  end
+
+  def leave_a_call_unanswered
+    call = Mistri::ToolCall.new(id: "call_lost", name: "send", arguments: {})
+    @session.append_message(Mistri::Message.user("and again"))
+    @session.append_message(Mistri::Message.assistant(content: [call], stop_reason: :tool_use))
   end
 
   def compact
@@ -146,15 +296,8 @@ class TestSessionLog < Minitest::Test
     assert Mistri::Compactor.call(session: @session, provider:, settings:)
   end
 
-  def answers(session)
-    control = session.tool_control_state
-    { messages: session.messages.map(&:to_h),
-      context_tokens: session.context_tokens,
-      inbox: session.pending_inbox,
-      last_compaction: session.last_compaction,
-      compaction_failures: session.compaction_failures,
-      children: session.children.map(&:to_h),
-      tool_call_ids: control.fetch(:tool_call_ids),
-      approvals: control.fetch(:approvals).map { |open| [open[:call].to_h, open[:decision]] } }
+  def wait_until
+    deadline = Process.clock_gettime(Process::CLOCK_MONOTONIC) + 5
+    Thread.pass until yield || Process.clock_gettime(Process::CLOCK_MONOTONIC) > deadline
   end
 end
