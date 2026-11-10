@@ -223,8 +223,7 @@ module Mistri
         # backend down, say) would leave the child reading :queued forever,
         # with nothing to report and nothing for a retry to heal.
         stopped = factory_failed && child_stop_requested?(child, signal)
-        retryable = (factory_failed && retry_factory_errors && !stopped) ||
-                    busy_child?(e, child)
+        retryable = factory_failed && retry_factory_errors && !stopped
         retryable_exit = retryable
         if child && terminalize && !retryable &&
            !Child.new(name: spec.fetch("name"), session_id: child.id, store: store).finished?
