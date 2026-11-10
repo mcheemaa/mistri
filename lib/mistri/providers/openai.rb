@@ -75,7 +75,7 @@ module Mistri
         }
         body[:instructions] = system if system && !system.empty?
         body[:tools] = Serializer.tools(tools) if tools.any?
-        body[:tool_choice] = "none" if tools.any? && overrides[:tool_choice] == :none
+        body[:tool_choice] = "none" if overrides[:tool_choice] == :none
         service_tier = overrides.fetch(:service_tier, @service_tier)
         body[:service_tier] = service_tier if service_tier
         reasoning = overrides.fetch(:reasoning, @reasoning)

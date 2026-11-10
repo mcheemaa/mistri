@@ -39,6 +39,17 @@ class TestBudgetWrapUp < Minitest::Test
     refute earlier.key?(:tool_choice)
   end
 
+  # A tool setting with no tools declared is a request the APIs reject.
+  def test_an_agent_without_tools_wraps_up_without_a_tool_setting
+    provider = Mistri::Providers::Fake.new(turns: [{ text: "Nothing started." }])
+    agent = Mistri::Agent.new(provider:, budget: Mistri::Budget.new(turns: 0, wrap_up: true))
+
+    result = agent.run("go")
+
+    assert_equal "Nothing started.", result.text
+    refute provider.requests.last[:options].key?(:tool_choice)
+  end
+
   def test_the_wrap_up_instruction_reaches_the_model_and_not_the_session
     provider, agent = stopped_run({ text: "Done so far." })
 
@@ -96,10 +107,6 @@ class TestBudgetWrapUp < Minitest::Test
     assert_equal "NONE", gemini_body.dig(:toolConfig, :functionCallingConfig, :mode)
     assert_equal({ type: "none" }, anthropic_body[:tool_choice])
     assert([openai_body, gemini_body, anthropic_body].all? { |body| body[:tools].any? })
-    # A tool setting with no tools declared is a request the APIs reject.
-    bare = anthropic.send(:build_body, "claude-opus-5-5", history, nil, [], overrides)
-
-    refute bare.key?(:tool_choice)
   ensure
     [openai, gemini, anthropic].compact.each(&:close)
   end

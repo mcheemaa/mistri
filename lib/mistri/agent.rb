@@ -351,7 +351,8 @@ module Mistri
         transform.call(messages)
       end
       history += [Message.user(WRAP_UP)] if wrap_up
-      options = wrap_up ? { tool_choice: :none } : {}
+      # The APIs reject a tool choice on a request that declares no tools.
+      options = wrap_up && @tool_specs.any? ? { tool_choice: :none } : {}
       attempt = 0
       usage = Usage.zero
       schema = provider_output_schema(output_schema)

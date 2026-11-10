@@ -100,10 +100,7 @@ module Mistri
         body = body.merge(PASSTHROUGH.each_with_object({}) do |key, params|
           params[key] = overrides[key] if overrides.key?(key)
         end)
-        # The API rejects a tool choice on a request that declares no tools.
-        if overrides[:tool_choice] == :none
-          tools.any? ? body[:tool_choice] = { type: "none" } : body.delete(:tool_choice)
-        end
+        body[:tool_choice] = { type: "none" } if overrides[:tool_choice] == :none
         body
       end
 
