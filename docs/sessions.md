@@ -62,12 +62,13 @@ Built-in stores are:
 - `Mistri::Stores::ActiveRecord` for a host model and database.
 
 JSONL names each file after the session id, so the id must match
-`[A-Za-z0-9_-]{1,64}`; any other id raises `ArgumentError`. It creates each
+`[A-Za-z0-9_-]{1,249}`; any other id raises `ArgumentError`. It creates each
 file with mode 0600 and closes each append, so completed lines survive an
 ordinary process restart. A partial last line left by a crash mid-write is
-skipped on load and the next append starts on a fresh line. It does not call
-`fsync`, provide a database transaction, or promise power-loss durability. Use
-a database or host store when that distinction matters.
+skipped on load and the next append starts on a fresh line. Load skips any
+line it cannot parse, so it does not detect damage to a complete line. It does
+not call `fsync`, provide a database transaction, or promise power-loss
+durability. Use a database or host store when that distinction matters.
 
 ### Active Record
 

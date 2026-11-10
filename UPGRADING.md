@@ -53,6 +53,18 @@ empty or only whitespace. Before, `run` sent whitespace to the provider, and
   raises the same way.
 - `run` still accepts images with no text. `task` is unchanged.
 
+### The JSONL store checks session ids
+
+`Mistri::Stores::JSONL` now raises `ArgumentError` for a session id that holds
+a character outside `A-Z`, `a-z`, `0-9`, `_`, and `-`, or is longer than 249
+characters. Before, it replaced every other character with `-`, so two ids
+could share one file.
+
+- To keep an existing session, use its id with each other character replaced
+  by `-`. That is the name of its file: `user:42` is stored as `user-42`.
+- New session files are created with mode 0600. Existing files keep their
+  mode.
+
 ### OpenAI tools are no longer strict
 
 Mistri sends `strict: false` with every OpenAI tool. Before, the model wrote a
