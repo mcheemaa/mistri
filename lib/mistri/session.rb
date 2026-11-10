@@ -53,7 +53,7 @@ module Mistri
     def tool_control_state
       audited = audit_history(read_log)
       approvals = audited.fetch(:approvals).map do |approval|
-        decision = approval[:decision] && own_json(approval[:decision])
+        decision = approval[:decision] && Log.owned(approval[:decision])
         { call: rebuild_call(approval[:call]), decision: }
       end
       { tool_call_ids: audited.fetch(:tool_call_ids), approvals: }
@@ -99,7 +99,7 @@ module Mistri
 
     def last_compaction
       entry = read_log.reverse_each.find { |candidate| candidate["type"] == "compaction" }
-      entry && own_json(entry)
+      entry && Log.owned(entry)
     end
 
     # Failed summaries since the last checkpoint, all of them or only those
@@ -160,7 +160,7 @@ module Mistri
       log = read_log
       folded = log.flat_map { |entry| entry.values_at(*INBOX.values) }.compact.to_set
       log.select { |entry| INBOX.key?(entry["type"]) && !folded.include?(entry["id"]) }
-         .map { |entry| own_json(entry) }
+         .map { |entry| Log.owned(entry) }
     end
 
     # The steer-only slice of the inbox, oldest first.
@@ -175,7 +175,7 @@ module Mistri
       read_log.filter_map do |entry|
         next unless entry["type"] == "subagent"
 
-        Child.new(name: own_json(entry["name"]), session_id: own_json(entry["session_id"]),
+        Child.new(name: Log.owned(entry["name"]), session_id: Log.owned(entry["session_id"]),
                   store: @store, parent_session_id: @id)
       end
     end
@@ -609,7 +609,7 @@ module Mistri
     # A new summary invalidates prefix-bound thinking in the kept tail. Only
     # replay drops it: the transcript and thoughts from the new prefix survive.
     def replay_message(entry, before_compaction:)
-      message = Message.from_h(own_json(entry["message"]))
+      message = Message.from_h(Log.owned(entry["message"]))
       return message unless before_compaction && message.assistant? &&
                             message.provider == :anthropic &&
                             Models.prefix_bound_thinking?(message.model)
@@ -780,15 +780,6 @@ module Mistri
       return nil if state&.fetch(:ambiguous_approval, false)
 
       state&.dig(:approval, :decision)
-    end
-
-    def own_json(value)
-      case value
-      when Hash then value.to_h { |key, nested| [own_json(key), own_json(nested)] }
-      when Array then value.map { |nested| own_json(nested) }
-      when String then value.dup
-      else value
-      end
     end
 
     def rebuild_call(hash)

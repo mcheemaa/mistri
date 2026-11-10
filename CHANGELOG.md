@@ -5,6 +5,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+- A wait on a worker reads the worker's log once and then only what was
+  appended since. `read_agent` with `wait` used to load the whole log twice on
+  every poll. A `Child` keeps its own copy of a string `session_id` and
+  `Child#session_id` returns a copy, as a Session does with its id.
 - A session's string id is fixed when the Session is built. `Session.new`
   keeps its own copy of it and `Session#id` returns a copy. Changing the string
   a session was given used to redirect it, and could mix two sessions' entries
