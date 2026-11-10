@@ -323,6 +323,18 @@ module Mistri
       end
     end
 
+    # Persists and announces the attempt request_turn accepted.
+    def run_turn(signal, output_schema = nil, &emit)
+      message, held, usage = request_turn(signal, output_schema, &emit)
+      emit&.call(held) if held
+      @session.append_message(message)
+      reserve_tool_call_ids(message.tool_calls)
+      [message, usage]
+    end
+
+    # One provider turn with its retries, neither persisted nor announced:
+    # the caller decides what the session and the subscriber see of it.
+    #
     # transform_context reshapes what the model sees each turn (reminders,
     # redaction, windowing) without touching what the session stores. The
     # lambda gets the replay messages and returns the messages to send; it
@@ -334,16 +346,6 @@ module Mistri
     # (:done or :error) holds at a gate, so retries stay invisible to the
     # model and a recovered retry never shows the subscriber an error it
     # walks back. Only the accepted attempt persists and terminates.
-    def run_turn(signal, output_schema = nil, &emit)
-      message, held, usage = request_turn(signal, output_schema, &emit)
-      emit&.call(held) if held
-      @session.append_message(message)
-      reserve_tool_call_ids(message.tool_calls)
-      [message, usage]
-    end
-
-    # One provider turn with its retries, neither persisted nor announced:
-    # the caller decides what the session and the subscriber see of it.
     def request_turn(signal, output_schema, wrap_up: false, &emit)
       history = @transform_context.reduce(@session.messages) do |messages, transform|
         transform.call(messages)
@@ -1002,7 +1004,7 @@ module Mistri
       Result.new(message: message, status: :awaiting_approval, pending: parked, usage: usage)
     end
 
-    def stop_for_budget(reason, usage, signal = nil, output_schema = nil, &)
+    def stop_for_budget(reason, usage, signal, output_schema, &)
       return wrap_up(reason, usage, signal, output_schema, &) if @budget.wrap_up?
 
       budget_stopped(reason, usage, &)
