@@ -9,9 +9,13 @@ module Mistri
     # nothing is held. The entries are frozen: every reader of one Session
     # shares them, from any thread.
     class Log
+      attr_reader :id
+
+      # The id is the caller's object and a String can be changed in place.
+      # The log reads under its own copy, so its entries stay one session's.
       def initialize(store, id)
         @store = store
-        @id = id
+        @id = id.frozen? ? id : id.dup.freeze
         @entries = [].freeze
         @mutex = Mutex.new
       end

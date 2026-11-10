@@ -89,6 +89,12 @@ unchanged: without `settled?` it is read whole on every read, as before.
   included, for as long as the object lives. After a session's rows are
   deleted, build a new `Session` object.
 
+### A session's id is fixed
+
+`Session.new` keeps its own copy of the id it is given, and `Session#id`
+returns a copy. Changing either string in place no longer changes which
+session is read and written. Build a new `Session` to work with another id.
+
 ### The generated session table has one index
 
 The install generator no longer adds an index on `session_id` alone. The

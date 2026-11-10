@@ -215,6 +215,39 @@ class TestSessionLog < Minitest::Test
     assert_equal 2, store.loads
   end
 
+  def test_changing_the_string_a_session_was_given_does_not_move_the_session
+    other = Mistri::Session.new(store: @store, id: "other")
+    other.append_message(Mistri::Message.user("from the other session"))
+    id = +"first"
+    session = Mistri::Session.new(store: @store, id:)
+    session.append_message(Mistri::Message.user("from first"))
+    session.messages
+
+    id.replace("other")
+    session.append_message(Mistri::Message.user("more from first"))
+
+    assert_equal ["from first", "more from first"], session.messages.map(&:text)
+    assert_equal ["from the other session"], other.messages.map(&:text)
+  end
+
+  def test_the_id_a_session_returns_is_a_copy_the_caller_owns
+    session = Mistri::Session.new(store: @store, id: +"first")
+    session.append_message(Mistri::Message.user("from first"))
+
+    session.id << " changed"
+
+    assert_equal "first", session.id
+    assert_equal ["from first"], session.messages.map(&:text)
+  end
+
+  def test_a_session_keeps_an_id_that_is_not_a_string
+    session = Mistri::Session.new(store: @store, id: 42)
+    session.append_message(Mistri::Message.user("numbered"))
+
+    assert_equal 42, session.id
+    assert_equal ["numbered"], session.messages.map(&:text)
+  end
+
   def test_entries_returns_copies_the_caller_owns
     exchange("first")
     @session.messages
