@@ -23,9 +23,10 @@ module Mistri
       @id = @log.id
     end
 
-    # A copy. The id a session was built with is fixed: changing the string
-    # it was given, or the one returned here, does not move the session.
-    def id = own_json(@id)
+    # A string id comes back as a copy. The id a session was built with is
+    # fixed: changing the string it was given, or the one returned here, does
+    # not move the session.
+    def id = @id.is_a?(String) ? @id.dup : @id
 
     def append_message(message)
       append("message", "message" => message.to_h)

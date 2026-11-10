@@ -11,11 +11,12 @@ module Mistri
     class Log
       attr_reader :id
 
-      # The id is the caller's object and a String can be changed in place.
-      # The log reads under its own copy, so its entries stay one session's.
+      # A String id is the caller's object and can be changed in place. The
+      # log reads under its own copy, so its entries stay one session's. Any
+      # other id is kept as given, the way a Hash keeps a key.
       def initialize(store, id)
         @store = store
-        @id = id.frozen? ? id : id.dup.freeze
+        @id = id.is_a?(String) ? id.dup.freeze : id
         @entries = [].freeze
         @mutex = Mutex.new
       end
