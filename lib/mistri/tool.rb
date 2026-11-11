@@ -33,7 +33,7 @@ module Mistri
     end
 
     def initialize(name:, description:, input_schema: EMPTY_SCHEMA, eager_input_streaming: false,
-                   needs_approval: false, ends_turn: false, timeout: nil,
+                   needs_approval: false, ends_turn: false, timeout: nil, deferred: false,
                    argument_normalizer: nil, argument_validator: nil,
                    complete_argument_validator: nil, &handler)
       raise ArgumentError, "tool #{name.inspect} needs a handler block" unless handler
@@ -61,6 +61,7 @@ module Mistri
       @needs_approval = needs_approval
       @ends_turn = ends_turn
       @timeout = timeout
+      @deferred = deferred
       @argument_normalizer = argument_normalizer
       @argument_validator = argument_validator
       @complete_argument_validator = complete_argument_validator
@@ -124,6 +125,13 @@ module Mistri
     # discipline required; the answer arrives as the next run's input.
     def ends_turn?
       @ends_turn
+    end
+
+    # A deferred tool is not shown to the model until a tool result loads it,
+    # so a large set costs nothing until one is needed. An agent that holds
+    # any adds the tool_search tool, which finds and loads them.
+    def deferred?
+      @deferred
     end
 
     # The provider-facing definition; every serializer accepts this shape.

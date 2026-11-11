@@ -14,10 +14,16 @@ module Mistri
   #
   # ui must be JSON-serializable; it is stored and delivered in canonical
   # JSON form (string keys), the same shape a reloaded session reads.
-  ToolResult = Data.define(:content, :ui, :error) do
-    def initialize(content:, ui: nil, error: false)
+  #
+  # loads names deferred tools this result makes available: the model can
+  # call them from its next step, in this run and in later ones.
+  ToolResult = Data.define(:content, :ui, :error, :loads) do
+    def initialize(content:, ui: nil, error: false, loads: nil)
       unless [true, false].include?(error)
         raise ArgumentError, "tool result error must be true or false"
+      end
+      unless loads.nil? || Message.names?(loads)
+        raise ArgumentError, "tool result loads must be an array of tool names"
       end
 
       super
