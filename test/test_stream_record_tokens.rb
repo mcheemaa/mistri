@@ -11,6 +11,19 @@ require_relative "support/stub_server"
 class TestStreamRecordTokens < Minitest::Test
   WIDE = { "pad" => Array.new(20_002, 0) }.freeze
 
+  def test_the_count_covers_every_kind_of_token_and_can_be_left_out
+    scanner = Mistri.const_get(:ToolArguments, false)
+    kinds = { "strings" => '""', "arrays" => "[]", "numbers" => "0",
+              "true" => "true", "false" => "false", "null" => "null" }
+
+    kinds.each do |kind, token|
+      wide = "[#{Array.new(20_002, token).join(",")}]"
+
+      assert_equal "too_many_nodes", scanner.raw_json_resource_error(wide), kind
+      assert_nil scanner.raw_json_resource_error(wide, count_tokens: false), kind
+    end
+  end
+
   def test_a_stream_counts_the_tokens_in_a_record_only_when_asked
     server = Mistri::Test::StubServer.new do |socket, _request|
       server.start_sse(socket)
