@@ -9,9 +9,9 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   repeats the request's tool definitions in its own events, and the 20,001
   token ceiling on a stream record refused that once the list was large
   enough. OpenAI and Anthropic stream records are no longer held to that
-  ceiling: their tool arguments are encoded strings with their own limits.
-  Gemini and MCP records keep it, and every record keeps its byte, depth and
-  number limits.
+  ceiling: the arguments of a tool the host runs arrive there as encoded
+  strings with their own limits. Gemini records and MCP SSE records keep it,
+  and every record keeps its byte, depth and number limits.
 - A finished worker is read from the end of its log. On a store that answers
   `size`, the first `Child#status`, `report` or `error` reads its last entry,
   and the first `Child#transcript(tail:)` reads only the entries it returns.

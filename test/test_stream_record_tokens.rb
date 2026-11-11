@@ -96,28 +96,43 @@ class TestStreamRecordTokens < Minitest::Test
   end
 
   def test_an_anthropic_record_is_not_counted
-    events = [{ "type" => "message_start", "message" => { "id" => "msg_1" } },
-              { "type" => "ping" }.merge(WIDE),
-              { "type" => "content_block_start", "index" => 0,
-                "content_block" => { "type" => "text", "text" => "" } },
-              { "type" => "content_block_delta", "index" => 0,
-                "delta" => { "type" => "text_delta", "text" => "ready" } },
-              { "type" => "content_block_stop", "index" => 0 },
-              { "type" => "message_delta", "delta" => { "stop_reason" => "end_turn" } },
-              { "type" => "message_stop" }]
-    server = Mistri::Test::StubServer.new do |socket, _request|
-      server.start_sse(socket)
-      events.each { |event| server.sse_data(socket, event) }
-      server.finish_sse(socket)
-    end
-    provider = Mistri::Providers::Anthropic.new(api_key: "test", origin: server.origin)
-
-    message = provider.stream(messages: [Mistri::Message.user("go")])
+    message = anthropic_reply(
+      { "type" => "ping" }.merge(WIDE),
+      { "type" => "content_block_start", "index" => 0,
+        "content_block" => { "type" => "text", "text" => "" } },
+      { "type" => "content_block_delta", "index" => 0,
+        "delta" => { "type" => "text_delta", "text" => "ready" } },
+      { "type" => "content_block_stop", "index" => 0 },
+      { "type" => "message_delta", "delta" => { "stop_reason" => "end_turn" } }
+    )
 
     assert_equal [:stop, "ready"], [message.stop_reason, message.text]
-  ensure
-    provider&.close
-    server&.stop
+  end
+
+  def test_anthropic_tool_arguments_keep_their_own_token_limit
+    block = { "type" => "tool_use", "id" => "toolu_1", "name" => "wide", "input" => {} }
+    message = anthropic_reply(
+      { "type" => "content_block_start", "index" => 0, "content_block" => block },
+      { "type" => "content_block_delta", "index" => 0,
+        "delta" => { "type" => "input_json_delta", "partial_json" => JSON.generate(WIDE) } },
+      { "type" => "content_block_stop", "index" => 0 },
+      { "type" => "message_delta", "delta" => { "stop_reason" => "tool_use" } }
+    )
+    call = message.tool_calls.first
+
+    assert_equal %w[wide too_many_nodes], [call.name, call.arguments_error]
+  end
+
+  def test_anthropic_tool_arguments_that_arrive_as_an_object_are_never_run
+    block = { "type" => "tool_use", "id" => "toolu_1", "name" => "wide", "input" => WIDE }
+    message = anthropic_reply(
+      { "type" => "content_block_start", "index" => 0, "content_block" => block },
+      { "type" => "content_block_stop", "index" => 0 },
+      { "type" => "message_delta", "delta" => { "stop_reason" => "tool_use" } }
+    )
+
+    assert_equal :error, message.stop_reason
+    assert_empty message.tool_calls
   end
 
   def test_openai_tool_arguments_keep_their_own_token_limit
@@ -162,6 +177,21 @@ class TestStreamRecordTokens < Minitest::Test
   end
 
   private
+
+  def anthropic_reply(*events)
+    events = [{ "type" => "message_start", "message" => { "id" => "msg_1" } }, *events,
+              { "type" => "message_stop" }]
+    server = Mistri::Test::StubServer.new do |socket, _request|
+      server.start_sse(socket)
+      events.each { |event| server.sse_data(socket, event) }
+      server.finish_sse(socket)
+    end
+    provider = Mistri::Providers::Anthropic.new(api_key: "test", origin: server.origin)
+    provider.stream(messages: [Mistri::Message.user("go")])
+  ensure
+    provider&.close
+    server&.stop
+  end
 
   def teardown_all(transport, server)
     transport&.close

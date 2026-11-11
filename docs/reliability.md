@@ -325,10 +325,10 @@ the limit.
 Completed SSE JSON records are scanned before parsing: 64 levels and 64 KiB
 per numeric token, for every provider. A Gemini record is also held to 20,001
 JSON tokens, because a tool call's arguments arrive as an object inside it.
-OpenAI and Anthropic records are not counted: their tool arguments are encoded
-strings with their own limits, and the OpenAI stream repeats the request's
-tool definitions in its own events, which a large tool list takes past any
-fixed count.
+OpenAI and Anthropic records are not counted: the arguments of a tool the host
+runs arrive there as an encoded string with its own limits, and the OpenAI
+stream repeats the request's tool definitions in its own events, which a large
+tool list takes past any fixed count.
 
 Fragmented Anthropic and OpenAI tool arguments also carry an aggregate 8 MiB
 limit across deltas; their partial preview refreshes on a bounded schedule while
@@ -344,8 +344,8 @@ agent = Mistri.agent(
 )
 ```
 
-The byte boundary is configurable. Fixed structural ceilings protect the JSON
-allocation shape and are not raised by that option.
+The byte boundary is configurable. The depth and number ceilings, and the token
+ceiling where it applies, are fixed and are not raised by that option.
 
 ## Provider input and options
 
