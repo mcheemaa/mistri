@@ -94,6 +94,18 @@ class TestReleaseVerifier < Minitest::Test
     assert_match(/gemspec name/, error.message)
   end
 
+  def test_reads_release_notes_with_a_non_ascii_character_whatever_the_locale
+    notes = "- Ship the caf\u00e9."
+    File.binwrite(File.join(@root, "CHANGELOG.md"),
+                  "# Changelog\n\n## [#{VERSION}] - 2026-07-10\n\n#{notes}\n")
+    git!("add", ".")
+    git!("commit", "--quiet", "--amend", "--no-edit")
+    git!("tag", "--force", TAG)
+    git!("update-ref", "refs/remotes/origin/main", "HEAD")
+
+    assert_equal notes, with_external_encoding(Encoding::US_ASCII) { verifier.verify! }
+  end
+
   def test_rejects_missing_empty_or_duplicate_release_notes
     changelog = File.join(@root, "CHANGELOG.md")
     File.write(changelog, "# Changelog\n\n## [Unreleased]\n")
@@ -181,6 +193,18 @@ class TestReleaseVerifier < Minitest::Test
       ref_type: ref_type,
       version: version
     )
+  end
+
+  # Ruby warns when the default is set at run time.
+  def with_external_encoding(encoding)
+    previous = Encoding.default_external
+    verbose = $VERBOSE
+    $VERBOSE = nil
+    Encoding.default_external = encoding
+    yield
+  ensure
+    Encoding.default_external = previous
+    $VERBOSE = verbose
   end
 
   def write_fixture

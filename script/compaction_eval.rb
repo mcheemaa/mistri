@@ -157,7 +157,7 @@ module CompactionEval
     def load_env
       return unless File.exist?(@env_file)
 
-      File.readlines(@env_file, chomp: true).each do |line|
+      File.readlines(@env_file, chomp: true, encoding: Encoding::UTF_8).each do |line|
         next if line.strip.empty? || line.start_with?("#")
 
         key, value = line.sub(/\Aexport\s+/, "").split("=", 2)
