@@ -1,5 +1,6 @@
 # frozen_string_literal: true
 
+require "securerandom"
 require_relative "test_helper"
 
 # Deferred tools against the real Messages API. Every catalogued model must
@@ -67,7 +68,7 @@ class TestAnthropicDeferredToolsLive < Minitest::Test
   def test_a_load_leaves_the_cached_prefix_in_place_and_a_later_run_reads_it
     created = []
     session = Mistri::Session.new(store: Mistri::Stores::Memory.new)
-    system = "You work in a tracker. Be brief.\n#{RULES}"
+    system = "Run #{SecureRandom.hex(8)}. You work in a tracker. Be brief.\n#{RULES}"
     agent = Mistri::Agent.new(provider: provider("claude-haiku-5-5"), session:,
                               tools: tracker_tools(created), system:)
 
