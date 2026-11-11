@@ -128,6 +128,20 @@ the same in every run, whatever else the server lists.
 its own passes one with `bridge(client, definition, name:)`, and that name is
 used as given.
 
+A tool that cannot be bridged, because its schema is not one Mistri can
+validate or it has no name, is left out, and the server's other tools stay
+usable. Without a block the tool and the reason are written as a warning. With
+one, the block is given the remote definition and the error:
+
+```ruby
+tools = Mistri::MCP.tools(client, prefix: "tracker") do |definition, error|
+  connection.note_unusable(definition["name"], error.message)
+end
+```
+
+A host that would sooner fail raises the error from the block.
+`Mistri::MCP.bridge`, which takes one definition, still raises.
+
 `needs_approval:` gates every bridged tool. `gates:` sets policy by remote name
 and overrides the shared default.
 

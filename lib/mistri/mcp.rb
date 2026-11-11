@@ -52,15 +52,20 @@ module Mistri
     # The server's tools as Mistri tools. allow/deny filter by remote name,
     # prefix namespaces local names ("linear__create_issue") against
     # collisions, and gates marks tools needing human approval
-    # (gates: { "create_issue" => true }, or needs_approval: for all).
+    # (gates: { "create_issue" => true }, or needs_approval: for all). A tool
+    # that cannot be bridged is left out: the block is given its definition
+    # and the error, and without a block it is named in a warning.
     def tools(client, allow: nil, deny: [], prefix: nil, needs_approval: false, gates: {},
               complete_argument_validator: nil)
       listed = client.tools
       listed = listed.select { |tool| allow.include?(tool["name"]) } if allow
       listed = listed.reject { |tool| deny.include?(tool["name"]) }
-      listed.map do |tool|
+      listed.filter_map do |tool|
         bridge(client, tool, prefix: prefix, gate: gates.fetch(tool["name"], needs_approval),
                              complete_argument_validator: complete_argument_validator)
+      rescue ConfigurationError => e
+        block_given? ? yield(tool, e) : warn("mistri: #{e.message}; the tool was left out")
+        nil
       end
     end
 
@@ -68,7 +73,11 @@ module Mistri
     # the remote name. The server is always called with the remote name.
     def bridge(client, spec, prefix: nil, name: nil, gate: false,
                complete_argument_validator: nil)
-      remote = spec.fetch("name")
+      remote = spec["name"]
+      unless remote.is_a?(String) && !remote.empty?
+        raise ConfigurationError, "the definition has no name"
+      end
+
       local = name || local_name(remote, prefix)
       if spec.key?("inputSchema") && spec["inputSchema"].nil?
         raise ConfigurationError, "inputSchema must be an object, not null"
