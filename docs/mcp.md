@@ -156,6 +156,11 @@ such a server should raise from the block.
 `needs_approval:` gates every bridged tool. `gates:` sets policy by remote name
 and overrides the shared default.
 
+`deferred: true` keeps a server's tools out of the model's sight until a search
+loads them, so the definitions of a server with a long tool list are left out
+of every request until one of its tools is needed. See
+[Tools on demand](tool-contracts.md#tools-on-demand).
+
 ## Schema authority
 
 Mistri validates the directly reachable portable subset described in
