@@ -87,7 +87,7 @@ module Mistri
 
       def build_body(model, messages, system, tools, overrides)
         definitions = Serializer.tools(tools, overrides[:deferred_tools])
-        deferred = definitions.filter_map { |tool| tool[:name] if tool[:defer_loading] }
+        deferred = Serializer.referable(definitions)
         body = {
           model: model,
           max_tokens: max_tokens_for(model, overrides),

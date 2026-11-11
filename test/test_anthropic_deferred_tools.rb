@@ -46,6 +46,16 @@ class TestAnthropicDeferredTools < Minitest::Test
     assert_equal(%w[lookup], plain.map { |tool| tool[:name] })
   end
 
+  def test_a_host_tool_cannot_take_the_reserved_name_while_tools_are_deferred
+    taken = [spec("mistri_deferred_tools")]
+
+    [[taken, []], [[], taken]].each do |eager, deferred|
+      error = assert_raises(Mistri::ConfigurationError) { SERIALIZER.tools(eager, deferred) }
+      assert_match(/mistri_deferred_tools is reserved/, error.message)
+    end
+    assert_equal(%w[mistri_deferred_tools], SERIALIZER.tools(taken).map { |tool| tool[:name] })
+  end
+
   def test_a_result_that_loads_tools_carries_references_and_its_text_follows
     wire = SERIALIZER.messages(history(loading(%w[create_issue list_teams])),
                                deferred: %w[create_issue list_teams delete_issue])
@@ -124,7 +134,8 @@ class TestAnthropicDeferredTools < Minitest::Test
     end
     @provider = Mistri::Providers::Anthropic.new(api_key: "k", origin: @server.origin)
 
-    @provider.stream(messages: history(loading(%w[create_issue])), tools: [spec("tool_search")],
+    @provider.stream(messages: history(loading(%w[create_issue mistri_deferred_tools])),
+                     tools: [spec("tool_search")],
                      deferred_tools: [spec("create_issue"), spec("list_teams")])
     body = JSON.parse(@server.requests.first[:body])
 

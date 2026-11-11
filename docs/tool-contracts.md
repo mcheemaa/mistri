@@ -379,9 +379,11 @@ not choose:
   to it. The prompt cache holds across a load. One reserved definition,
   `mistri_deferred_tools`, is sent the same way from the first request,
   because the first deferred definition to appear in a conversation would
-  otherwise rebuild the cache once. The model is not shown it. The result's
-  own text follows the tool results of that turn. This is used on the official
-  origin; another origin is treated like the last provider below.
+  otherwise rebuild the cache once. The model is not shown it, no result can
+  load it, and a tool of that name beside deferred tools fails the request
+  before it is sent. The result's own text follows the tool results of that
+  turn. This is used on the official origin; another origin is treated like
+  the last provider below.
 - OpenAI keeps the request's own tools as they are, and a result that loads
   tools is followed by an item in the input that makes them callable from
   that point on. The prompt cache holds across a load here too. This is used
@@ -397,8 +399,8 @@ first search, from each deferred tool's description and schema. Building a
 request adds one pass over the history to find what was loaded, and on
 OpenAI one pass over the loaded definitions to index them by name.
 
-On the wire no request carries a deferred definition until a result loads
-it, on any provider.
+On the wire no request carries the definition of a deferred tool until a
+result loads it, on any provider.
 
 A provider of your own is sent the growing tool list. To hold definitions
 back itself it answers `defers_tools?` with true, and `stream` is then given

@@ -50,7 +50,21 @@ module Mistri
           eager = definitions.map { |tool| definition(tool) }
           return eager unless deferred
 
-          eager + [RESERVED] + deferred.map { |tool| definition(tool).merge(defer_loading: true) }
+          loaded = deferred.map { |tool| definition(tool).merge(defer_loading: true) }
+          if (eager + loaded).any? { |tool| tool[:name] == RESERVED[:name] }
+            raise ConfigurationError, "the tool name #{RESERVED[:name]} is reserved while " \
+                                      "tools are deferred on Anthropic"
+          end
+
+          eager + [RESERVED] + loaded
+        end
+
+        # The names a result may reference: the deferred tools of the request,
+        # never the reserved definition.
+        def referable(definitions)
+          definitions.filter_map do |tool|
+            tool[:name] if tool[:defer_loading] && !tool.equal?(RESERVED)
+          end
         end
 
         def definition(tool)
