@@ -356,9 +356,14 @@ A name that is not a deferred tool of this agent is ignored, and a result
 marked `error: true` loads nothing.
 
 A deferred tool is still one of the agent's tools. Its approval gate, the
-argument check, `before_tool` and `after_tool` apply when it runs, and a call
-to one that was never loaded runs the same way. Keep the few tools every
-conversation needs out of deferral, so the model does not search for them. A
+argument check, `before_tool` and `after_tool` apply when it runs. A call to
+one that no result has loaded does not run: the model has a name and no
+schema, so its arguments would be a guess. It is told to load the tool with
+`tool_search` and call it again. A call that waited for approval was loaded
+when the model made it and is not asked again when it resumes. Keep the few
+tools every conversation needs out of deferral, so the model does not search
+for them, and do not name a deferred tool in a system prompt as if it were at
+hand. A
 host tool named `tool_search` beside a deferred tool is a duplicate name and
 fails Agent construction.
 

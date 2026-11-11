@@ -35,14 +35,15 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   `tool_search` tool: the model asks in words, the best matches are loaded,
   and it calls them from its next step. A query that is a tool's name, or
   `select:` and a list of names, loads those tools and no others, and a tool
-  is not loaded twice. A load is stored with the session, so
-  a later run offers the same tools. A tool result can load tools itself with
-  `ToolResult.new(content:, loads:)`. On Anthropic the deferred definitions
-  travel marked to stay out of the prompt and a load is a reference to one,
-  so the tool list never changes and the prompt cache holds across a load.
-  On OpenAI, for gpt-5.4 and later except the nano models, a load is an item
-  in the input that makes the tools callable from there on, which keeps the
-  cache as well.
+  is not loaded twice. A call to a deferred tool that was not loaded does not
+  run, and the model is told to load it first. A load is stored with the
+  session, so a later run offers the same tools. A tool result can load tools
+  itself with `ToolResult.new(content:, loads:)`. On Anthropic the deferred
+  definitions travel marked to stay out of the prompt and a load is a
+  reference to one, so the tool list never changes and the prompt cache holds
+  across a load. On OpenAI, for gpt-5.4 and later except the nano models, a
+  load is an item in the input that makes the tools callable from there on,
+  which keeps the cache as well.
 - A bridged MCP tool gets a name every provider takes. MCP allows dots,
   slashes and any length in a tool name, and one name the model's API refused
   failed the whole request. A name of letters, digits, underscores and

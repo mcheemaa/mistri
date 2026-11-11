@@ -158,14 +158,20 @@ class TestDeferredTools < Minitest::Test
     assert_match(/duplicate tool names/, error.message)
   end
 
-  def test_a_deferred_tool_called_before_it_was_loaded_still_runs
-    agent, provider = agent([{ tool_calls: [{ name: "refund_charge" }] }, { text: "Refunded." }])
+  def test_a_deferred_tool_called_before_it_was_loaded_does_not_run
+    ran = 0
+    agent, = agent([{ tool_calls: [{ name: "refund_charge" }] },
+                    { tool_calls: [search("select:refund_charge")] },
+                    { tool_calls: [{ name: "refund_charge" }] }, { text: "Refunded." }],
+                   tools: [tool("refund_charge") { ran += 1 }])
 
     result = agent.run("Refund it.")
+    refused = agent.session.messages.find(&:tool?)
 
     assert_predicate result, :completed?
-    assert_equal "ran refund_charge", agent.session.messages.find(&:tool?).text
-    assert_equal %w[lookup_order tool_search], offered(provider)
+    assert_predicate refused, :tool_error?
+    assert_match(/not loaded.*did not run.*tool_search.*select:refund_charge/m, refused.text)
+    assert_equal 1, ran
   end
 
   def test_any_tool_can_load_deferred_tools_with_its_result
@@ -303,6 +309,12 @@ class TestDeferredTools < Minitest::Test
 
     assert_equal :awaiting_approval, result.status
     assert_equal %w[refund_charge], result.pending.map(&:name)
+
+    agent.session.approve(result.pending.first.id)
+    later, = agent([{ text: "Refunded." }], session: agent.session, tools: [gated])
+
+    assert_predicate later.resume, :completed?
+    assert_equal "refunded", agent.session.messages.reverse_each.find(&:tool?).text
   end
 
   def test_a_specialist_with_deferred_tools_searches_for_them_itself
