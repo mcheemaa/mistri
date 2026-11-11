@@ -217,6 +217,31 @@ class TestDeferredTools < Minitest::Test
     assert answer.text.end_with?("...")
   end
 
+  def test_a_description_is_cut_at_two_hundred_characters_whatever_they_are
+    fits = tool("tracker__fits", "文" * 200)
+    over = tool("tracker__over", "文" * 201)
+    agent, = agent([{ tool_calls: [search("tracker")] }, { text: "Found." }], tools: [fits, over])
+
+    agent.run("Find them.")
+    lines = agent.session.messages.find(&:tool?).text.lines.map(&:chomp)
+
+    assert_includes lines, "- tracker__fits: #{"文" * 200}"
+    assert_includes lines, "- tracker__over: #{"文" * 197}..."
+  end
+
+  def test_a_query_is_read_up_to_five_hundred_characters
+    target = tool("tracker__zebra", "Stripes.")
+    padding = "q" * 494
+    agent, = agent([{ tool_calls: [search("#{padding} zebra")] },
+                    { tool_calls: [search("#{padding}  zebra")] }, { text: "Done." }],
+                   tools: [target])
+
+    agent.run("Find it.")
+    loads = agent.session.messages.select(&:tool?).map(&:loads)
+
+    assert_equal [%w[tracker__zebra], nil], loads
+  end
+
   def test_a_query_with_nothing_to_search_by_says_so
     agent, = agent([{ tool_calls: [search("the of and")] }, { text: "Sorry." }])
 

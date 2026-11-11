@@ -313,9 +313,10 @@ is.
 
 A query that is a tool's name finds that tool first. The search matches words,
 so it finds what a name, a description or a parameter says and not what they
-mean. Chinese, Japanese and Korean text, which has no spaces between words, is
-matched by pairs of characters. Other scripts written without spaces match
-poorly. A query is read up to 500 characters.
+mean. A run of Han, kana or Hangul characters, which often has no spaces
+between its words, is matched by pairs of characters, and by one character
+when the query is one. Other scripts written without spaces match poorly. A
+query is read up to 500 characters.
 
 A load is stored with the tool result that made it. A later run on the same
 session offers the same tools with no new search. A load the model no longer

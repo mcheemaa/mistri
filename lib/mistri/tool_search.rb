@@ -19,8 +19,9 @@ module Mistri
     STOP_WORDS = %w[
       a an and are as at be by for from in is it of on or that the this to with
     ].freeze
-    # Chinese, Japanese and Korean are written without spaces between words.
-    UNSPACED = "\\p{Han}\\p{Hangul}\\u3040-\\u30FF"
+    # Han, kana and Hangul letters, and the long vowel mark that sits inside
+    # kana words. Runs of these often have no spaces between words.
+    UNSPACED = "\\p{Han}\\p{Hiragana}\\p{Katakana}\\p{Hangul}\\u30FC"
     WORD = /[#{UNSPACED}]+|[[:alnum:]&&[^#{UNSPACED}]]+/
     UNSPACED_RUN = /\A[#{UNSPACED}]/
     private_constant :K1, :B, :NAME_WEIGHT, :STOP_WORDS, :UNSPACED, :WORD, :UNSPACED_RUN
@@ -79,9 +80,9 @@ module Mistri
       return 0 if name == query
       return 1 if name.end_with?("__#{query}")
 
-      alike = identifier(name)
       wanted = identifier(query)
-      alike == wanted || alike.end_with?("__#{wanted}") ? 2 : 3
+      alike = wanted && identifier(name)
+      alike && (alike == wanted || alike.end_with?("__#{wanted}")) ? 2 : 3
     end
     private_class_method :name_rank
 
@@ -122,7 +123,7 @@ module Mistri
       description = spec[:description].to_s
       parts = [description]
       schema_text(spec[:input_schema], parts)
-      counts = words(parts.join(" ")).tally
+      counts = words(parts.join(" "), index: true).tally
       Document.new(tool:, summary: summary(description),
                    name_words: words(tool.name).uniq,
                    local_words: words(tool.name.split("__").last).uniq,
@@ -193,19 +194,24 @@ module Mistri
     end
     private_class_method :score
 
-    def words(text)
+    def words(text, index: false)
       text.to_s.gsub(/([a-z0-9])([A-Z])/, '\1 \2').gsub(/([A-Z]+)([A-Z][a-z])/, '\1 \2')
-          .downcase.scan(WORD).flat_map { |word| word.match?(UNSPACED_RUN) ? pairs(word) : word }
+          .downcase.scan(WORD)
+          .flat_map { |word| word.match?(UNSPACED_RUN) ? pieces(word, index) : word }
           .reject { |word| STOP_WORDS.include?(word) }.map { |word| singular(word) }
     end
     private_class_method :words
 
     # A run with no spaces has no words to split at, so it is matched by its
-    # pairs of characters.
-    def pairs(run)
-      run.length < 2 ? [run] : run.each_char.each_cons(2).map(&:join)
+    # pairs of characters. A tool's text is also indexed by single characters,
+    # which is what a query of one character is.
+    def pieces(run, index)
+      pairs = run.each_char.each_cons(2).map(&:join)
+      return run.chars + pairs if index
+
+      pairs.empty? ? [run] : pairs
     end
-    private_class_method :pairs
+    private_class_method :pieces
 
     def singular(word)
       return "#{word[0...-3]}y" if word.length > 4 && word.end_with?("ies")
@@ -216,7 +222,11 @@ module Mistri
     end
     private_class_method :singular
 
-    def identifier(text) = text.to_s.strip.downcase.gsub(/[^a-z0-9_]/, "_")
+    # A name as it reads whatever its case and punctuation, or nil for text
+    # that could not be a name at all.
+    def identifier(text)
+      text.downcase.gsub(/[-. ]/, "_") if text.match?(/\A[\w\-. ]*[A-Za-z0-9][\w\-. ]*\z/)
+    end
     private_class_method :identifier
   end
 end

@@ -68,6 +68,36 @@ class TestToolSearchRanking < Minitest::Test
     assert_equal %w[notes__find], rank("ノート", [tool("notes__find", "ノートを検索します"), other])
   end
 
+  def test_text_that_cannot_be_a_name_never_counts_as_one
+    odd = Array.new(8) { |index| tool("misc#{index}____", "Manages settings.") }
+    search = tool("docs__search", "検索して文書を見つける")
+
+    assert_equal %w[docs__search], rank("検索", [*odd, search])
+    assert_empty rank("!!", [tool("thing____", "A thing.")])
+    assert_empty rank("- .", [tool("thing____", "A thing.")])
+    settings = tool("pdf__", "Manage settings")
+
+    assert_equal "docs__find", rank("PDF文档", [settings, tool("docs__find", "PDF文档搜索")]).first
+    assert_equal %w[Thread-Read], rank("thread_read", [tool("Thread-Read", "Opens one.")])
+  end
+
+  def test_punctuation_between_kana_separates_and_is_not_searched
+    export = tool("export", "レコード・エクスポート")
+
+    assert_empty rank("・", [export, tool("dump", "Exports ・ records")])
+    assert_equal %w[export], rank("レコード", [export])
+    assert_equal %w[export], rank("エクスポート", [export])
+    assert_equal %w[notes], rank("ノート", [tool("food", "トマトノルマ"), tool("notes", "ノートを検索")])
+  end
+
+  def test_one_character_finds_a_run_that_holds_it
+    pets = tool("pets__find", "猫の情報を検索")
+    other = tool("docs__find", "文書を検索")
+
+    assert_equal %w[pets__find], rank("猫", [other, pets])
+    assert_equal %w[docs__find], rank("文書", [other, pets])
+  end
+
   def test_words_and_text_without_spaces_can_sit_side_by_side
     mixed = tool("docs__find", "PDF文档搜索")
     other = tool("docs__delete", "删除一个页面")
