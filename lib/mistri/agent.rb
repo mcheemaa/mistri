@@ -167,6 +167,7 @@ module Mistri
       specs, @external_tool_validators = compile_tool_contracts
       names = deferred.to_h { |tool| [tool.name, true] }
       later, @eager_specs = specs.partition { |spec| names.key?(spec[:name]) }.map(&:freeze)
+      @deferred_list = later
       @deferred_specs = later.to_h { |spec| [spec[:name], spec] }.freeze
       @defers_tools = @provider.respond_to?(:defers_tools?) && @provider.defers_tools?
     end
@@ -401,7 +402,7 @@ module Mistri
     # sent the loaded tools as tools.
     def tool_options(history)
       return { tools: @eager_specs } if @deferred_specs.empty?
-      return { tools: @eager_specs, deferred_tools: @deferred_specs.values } if @defers_tools
+      return { tools: @eager_specs, deferred_tools: @deferred_list } if @defers_tools
 
       { tools: offered_tools(history) }
     end

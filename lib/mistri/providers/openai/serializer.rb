@@ -21,24 +21,25 @@ module Mistri
       module Serializer
         module_function
 
+        # The deferred tools are only indexed by name here. One is converted
+        # to a definition when a result loads it, not on every request.
         def input_items(history, deferred: [])
-          definitions = tools(deferred).to_h { |tool| [tool[:name], tool] }
+          specs = deferred.to_h { |tool| [tool[:name] || tool["name"], tool] }
           declared = {}
           history.reject(&:system?).flat_map do |msg|
             items = items_for(msg, declared)
-            msg.tool? ? items + additions(msg, definitions, declared) : items
+            msg.tool? ? items + additions(msg, specs, declared) : items
           end
         end
 
-        def additions(msg, definitions, declared)
+        def additions(msg, specs, declared)
           return [] if msg.tool_error?
 
-          fresh = msg.loads.to_a.uniq
-                     .select { |name| definitions.key?(name) && !declared.key?(name) }
+          fresh = msg.loads.to_a.uniq.select { |name| specs.key?(name) && !declared.key?(name) }
           return [] if fresh.empty?
 
           fresh.each { |name| declared[name] = true }
-          [{ type: "additional_tools", role: "developer", tools: definitions.values_at(*fresh) }]
+          [{ type: "additional_tools", role: "developer", tools: tools(specs.values_at(*fresh)) }]
         end
 
         # Left unset, the API makes each schema strict, which makes every
