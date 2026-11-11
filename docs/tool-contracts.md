@@ -309,7 +309,10 @@ model asks it in words for what it needs to do. The search ranks the deferred
 tools by their name, their description and the names and descriptions of their
 parameters, loads the best matches (eight by default, twenty at most) and
 answers with their names. From its next step the model calls them like any
-other tool. The description of `tool_search` tells the model how many tools it
+other tool. One load also holds no more than 20 KB of definitions, which is
+eight of the size that nine in ten real MCP definitions stay under. A first
+match larger than that still loads, alone. When more tools matched than fit,
+the answer says so and the next search loads them. The description of `tool_search` tells the model how many tools it
 searches under each name prefix, so give a server a prefix that says what it
 is.
 

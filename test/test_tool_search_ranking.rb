@@ -96,6 +96,21 @@ class TestToolSearchRanking < Minitest::Test
     refute_includes none.content, "s20__list"
   end
 
+  def test_a_search_loads_no_more_than_fits_one_load
+    heavy = Array.new(5) { |index| tool("export_#{index}", "Exports data. #{"x" * 9_000}") }
+    search = Mistri::ToolSearch.tool([*heavy, tool("small", "Exports.")],
+                                     loaded: [].method(:itself))
+    first = search.call({ "query" => "exports data" })
+    second = search.call({ "query" => "exports data" })
+    huge = Mistri::ToolSearch.tool([tool("huge", "Exports. #{"x" * 30_000}")])
+
+    assert_equal %w[export_0 export_1], first.loads
+    assert_match(/^More tools match than one load holds\. Search again to load them\.$/,
+                 first.content)
+    assert_equal %w[export_2 export_3], second.loads
+    assert_equal %w[huge], huge.call({ "query" => "exports" }).loads
+  end
+
   def test_text_written_without_spaces_is_matched_by_pairs_of_characters
     search = tool("docs__search", "搜索团队文档并返回结果")
     other = tool("docs__delete", "删除一个页面")
