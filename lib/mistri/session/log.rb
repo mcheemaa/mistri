@@ -51,6 +51,8 @@ module Mistri
 
       def entries = window.entries
 
+      def held? = @mutex.synchronize { !@window.nil? }
+
       def window
         return read unless settled?
 

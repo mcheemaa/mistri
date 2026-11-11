@@ -42,6 +42,9 @@ module Mistri
     def session_id = @session_id.is_a?(String) ? @session_id.dup : @session_id
 
     def status
+      terminal = terminal_at_end
+      return terminal["status"].to_sym if terminal
+
       log = read_log
       terminal = log.reverse_each.find { |entry| entry["type"] == TERMINAL }
       return terminal["status"].to_sym if terminal
@@ -74,8 +77,7 @@ module Mistri
     # marker: transcripts are for reading and re-sending, not for hauling
     # screenshots back into a context window.
     def transcript(tail: 20)
-      entries = read_log
-      entries = entries.last(tail) if tail
+      entries = tail ? last_entries(tail) : read_log
       entries.map { |entry| Session::Log.owned(self.class.strip_images(entry)) }
     end
 
@@ -186,7 +188,29 @@ module Mistri
     def read_log = @log.entries
 
     def terminal_entry
-      read_log.reverse_each.find { |entry| entry["type"] == TERMINAL }
+      terminal_at_end || read_log.reverse_each.find { |entry| entry["type"] == TERMINAL }
     end
+
+    # A finished child's log nearly always ends on its terminal entry, so
+    # that one entry answers for it without the rest.
+    def terminal_at_end
+      return nil unless from_the_end?
+
+      last = last_entries(1).first
+      last if last && last["type"] == TERMINAL
+    end
+
+    def last_entries(count)
+      return read_log.last(count) unless from_the_end?
+
+      size = @store.size(@session_id)
+      # The count is taken the way Array#last takes it.
+      first = (0...size).last(count).first || size
+      @store.load(@session_id, from: first, to: size)
+    end
+
+    # A log that is already held is read on from where it stopped, which
+    # is cheaper than asking the store for its end again.
+    def from_the_end? = @store.respond_to?(:size) && !@log.held?
   end
 end
