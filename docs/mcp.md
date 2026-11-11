@@ -116,6 +116,18 @@ creates local names such as `linear__create_issue` while the remote call still
 uses `create_issue`. Duplicate local tool names make Agent construction fail;
 one server can never silently shadow another.
 
+A local name is one every provider takes: letters, digits, underscores and
+hyphens, 64 characters at most, not starting with a digit or a hyphen. A name
+inside that set is not changed. MCP allows more, and so does a single provider
+here and there, such as a dot on Gemini or a leading digit on Anthropic. Any
+such name has its unsafe characters replaced and ends in eight characters of a
+hash of the whole name, so `issues.list/open` becomes `issues_list_open_` and
+the hash. The local name depends only on the prefix and the remote name: it is
+the same in every run, whatever else the server lists.
+`Mistri::MCP.local_name(remote, prefix)` gives it. A host that keeps names of
+its own passes one with `bridge(client, definition, name:)`, and that name is
+used as given.
+
 `needs_approval:` gates every bridged tool. `gates:` sets policy by remote name
 and overrides the shared default.
 

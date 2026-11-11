@@ -1,5 +1,6 @@
 # frozen_string_literal: true
 
+require "digest"
 require "json"
 
 module Mistri
@@ -20,6 +21,10 @@ module Mistri
     EMPTY_INPUT_SCHEMA = {
       "type" => "object", "properties" => {}.freeze, "additionalProperties" => false
     }.freeze
+    # What every catalogued provider takes for a tool name: letters, digits,
+    # underscores and hyphens, 64 at most, not starting with a digit or hyphen.
+    NAME_LIMIT = 64
+    SAFE_NAME = /\A[A-Za-z_][A-Za-z0-9_-]{0,63}\z/
 
     # A protocol-level failure: a JSON-RPC error, a missing response, an
     # unsupported negotiation.
@@ -59,9 +64,12 @@ module Mistri
       end
     end
 
-    def bridge(client, spec, prefix: nil, gate: false, complete_argument_validator: nil)
+    # The model calls the tool by name, or by a safe name made from prefix and
+    # the remote name. The server is always called with the remote name.
+    def bridge(client, spec, prefix: nil, name: nil, gate: false,
+               complete_argument_validator: nil)
       remote = spec.fetch("name")
-      local = prefix ? "#{prefix}__#{remote}" : remote
+      local = name || local_name(remote, prefix)
       if spec.key?("inputSchema") && spec["inputSchema"].nil?
         raise ConfigurationError, "inputSchema must be an object, not null"
       end
@@ -78,6 +86,18 @@ module Mistri
       end
     rescue ConfigurationError => e
       raise ConfigurationError, "MCP tool #{remote.inspect}: #{e.message}"
+    end
+
+    # The local name of a remote tool. One that every provider takes stays
+    # as it is. Any other has its unsafe characters replaced and ends in a
+    # hash of the whole name, so it depends on nothing but prefix and remote.
+    def local_name(remote, prefix = nil)
+      whole = prefix ? "#{prefix}__#{remote}" : remote.to_s
+      return whole if whole.match?(SAFE_NAME)
+
+      safe = whole.gsub(/[^A-Za-z0-9_-]/, "_")
+      safe = "_#{safe}" unless safe.match?(/\A[A-Za-z_]/)
+      "#{safe[0, NAME_LIMIT - 9]}_#{Digest::SHA256.hexdigest(whole)[0, 8]}"
     end
 
     # An MCP result becomes model-readable content: text joins, images ride
@@ -127,4 +147,4 @@ require_relative "mcp/wires"
 require_relative "mcp/client"
 require_relative "mcp/oauth"
 
-Mistri::MCP.private_constant :Egress, :WireError, :EMPTY_INPUT_SCHEMA
+Mistri::MCP.private_constant :Egress, :WireError, :EMPTY_INPUT_SCHEMA, :NAME_LIMIT, :SAFE_NAME
