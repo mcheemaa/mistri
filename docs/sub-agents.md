@@ -267,6 +267,8 @@ child.status                   # :queued, :running, :interrupted, :done, :stoppe
 child.report                   # terminal report when done
 child.error                    # terminal error when failed
 child.transcript(tail: 20)     # presentation-oriented recent entries
+child.transcript(from: 40, to: 60) # entries 40 to 59
+child.size                     # how many entries the log holds
 child.say("Check pricing too") # queues a steer
 child.stop                     # durable if inactive, cooperative if running
 ```
@@ -277,6 +279,14 @@ log, and the first `transcript(tail:)` reads only the entries it returns. A
 child that has not finished is read whole, and so is one that was sent
 something after it ended. A `Child` that has read its log keeps it and reads
 on from there, so a wait loads the log once and then only what is new.
+
+`read_agent` shows the model a page of a worker's log, one line an entry, each
+under its number. It shows the twenty most recent entries by default. `offset`
+reads from another entry and `limit` sets how many, two hundred at most, and
+each page gives the offset and limit that read on in either direction, so the
+model can walk a long log back to its start. On a store that answers `size`
+the entries of a page are read on their own. The status in its first line
+costs what `status` costs, as above.
 
 `read_agent` with `wait: true` waits for a terminal, including across an
 interrupted worker's later queue retry or cancellation. Abort and timeout still
