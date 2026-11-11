@@ -398,10 +398,11 @@ The growing list costs more for each load than the two forms above. A load
 changes the request's tools, so the prompt cache is built again from the
 start. On Anthropic's API a changed tool list also makes the thinking of
 earlier turns invalid: the request after a load is refused on the models that
-check it, unless the host set `block_binding`, and then that thinking is
-dropped. So a host that reaches Anthropic or OpenAI through a gateway that
-passes requests on as they are says so, and gets the form that keeps the
-tools fixed:
+check it, unless the host asked for
+`block_binding: { prefix_mismatch_behavior: "drop_block" }`, and then that
+thinking is dropped. So a host that reaches Anthropic or OpenAI through a
+gateway that passes requests on as they are says so, and gets the form that
+keeps the cached prefix across a load:
 
 ```ruby
 Mistri.agent("claude-opus-5-5", tools: tools,
