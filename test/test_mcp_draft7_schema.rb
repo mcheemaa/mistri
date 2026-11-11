@@ -61,6 +61,22 @@ class TestMcpDraft7Schema < Minitest::Test
     assert_match(/draft-07/, error.message)
   end
 
+  def test_every_keyword_that_is_validated_locally_is_refused_beside_a_reference
+    beside = { "type" => "object", "enum" => [{}], "required" => ["a"],
+               "properties" => { "a" => {} }, "additionalProperties" => false,
+               "items" => { "type" => "string" } }
+
+    beside.each do |keyword, value|
+      reference = { "$ref" => "#/definitions/card", keyword => value }
+      error = assert_raises(Mistri::ConfigurationError, keyword) do
+        bridge(draft7("properties" => { "card" => reference },
+                      "definitions" => { "card" => {} }))
+      end
+
+      assert_match(/\$\.properties\.card\.#{keyword} is ignored beside \$ref/, error.message)
+    end
+  end
+
   def test_a_description_beside_a_reference_is_fine
     reference = { "$ref" => "#/definitions/card", "description" => "The card." }
     tool = bridge(draft7("properties" => { "card" => reference },
