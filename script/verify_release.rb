@@ -58,7 +58,7 @@ module Mistri
     end
 
     def changelog_notes!
-      changelog = File.read(File.join(@root, "CHANGELOG.md"))
+      changelog = File.read(File.join(@root, "CHANGELOG.md"), encoding: Encoding::UTF_8)
       heading = /^## \[#{Regexp.escape(@version)}\] - (\d{4}-\d{2}-\d{2})$/
       matches = changelog.to_enum(:scan, heading).map { Regexp.last_match.dup }
       unless matches.one?

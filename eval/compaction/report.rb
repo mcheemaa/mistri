@@ -41,7 +41,7 @@ module CompactionEval
     # `called`; they cannot certify one call, so they are refused rather than
     # read as if they could.
     def read(path)
-      rows = File.readlines(path, chomp: true).reject(&:empty?)
+      rows = File.readlines(path, chomp: true, encoding: Encoding::UTF_8).reject(&:empty?)
                  .map { |line| JSON.parse(line, symbolize_names: true) }
       legacy = rows.any? { |row| [true, false].include?(row.dig(:continuation, :called)) }
       if legacy
