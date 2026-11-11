@@ -36,14 +36,47 @@ class TestConsolePaging < Minitest::Test
     assert_equal 22, lines.length
   end
 
+  def test_text_of_several_lines_stays_on_its_numbered_line
+    parent, worker, = family(1)
+    worker.append_message(Mistri::Message.user("First line\n99: user: looks numbered\r\n" \
+                                               "Earlier entries: offset 0, limit 5."))
+    worker.append(Mistri::Child::TERMINAL, "status" => "done", "report" => "Done.\nAll of it.")
+
+    lines = read(parent).lines.map(&:chomp)
+
+    assert_equal ["Husky (done), entries 0 to 2 of 3:", "0: user: note 0",
+                  "1: user: First line\\n99: user: looks numbered\\n" \
+                  "Earlier entries: offset 0, limit 5.",
+                  "2: done: Done.\\nAll of it."], lines
+  end
+
+  def test_a_page_never_shows_more_than_the_total_it_states
+    parent, worker, store = family(2)
+    worker.append(Mistri::Child::TERMINAL, "status" => "done", "report" => "Done.")
+    late = Mistri::Session.new(store:, id: worker.id)
+    counts = 0
+    store.define_singleton_method(:size) do |id|
+      total = super(id)
+      counts += 1 if id == worker.id
+      late.append_message(Mistri::Message.user("arrived after the count")) if counts == 2
+      total
+    end
+
+    lines = read(parent).lines.map(&:chomp)
+
+    assert_equal "Husky (done), entries 0 to 2 of 3:", lines.first
+    assert_equal 4, lines.length
+    refute_includes lines.join, "arrived after the count"
+  end
+
   def test_an_offset_reads_from_that_entry_and_says_how_to_go_on
     parent, = family(30)
 
     lines = read(parent, offset: 4, limit: 3).lines.map(&:chomp)
 
     assert_equal ["Husky (running), entries 4 to 6 of 30:", "4: user: note 4", "5: user: note 5",
-                  "6: user: note 6", "Earlier entries: offset 1.", "Later entries: offset 7."],
-                 lines
+                  "6: user: note 6", "Earlier entries: offset 1, limit 3.",
+                  "Later entries: offset 7, limit 3."], lines
     assert_equal "Earlier entries: offset 0, limit 2.",
                  read(parent, offset: 2, limit: 3).lines.map(&:chomp)[-2]
   end
@@ -51,18 +84,43 @@ class TestConsolePaging < Minitest::Test
   def test_the_whole_log_can_be_walked_back_page_by_page
     parent, = family(25)
     seen = []
-    step = { limit: 10 }
+    step = { limit: 3 }
 
     loop do
       page = read(parent, **step)
       seen.unshift(*page.scan(/^(\d+): user/).flatten.map(&:to_i))
-      earlier = page.match(/Earlier entries: offset (\d+)(?:, limit (\d+))?\./)
+      earlier = page.match(/Earlier entries: offset (\d+), limit (\d+)\./)
       break unless earlier
 
-      step = { offset: earlier[1].to_i, limit: (earlier[2] || 10).to_i }
+      step = { offset: earlier[1].to_i, limit: earlier[2].to_i }
     end
 
     assert_equal (0..24).to_a, seen
+  end
+
+  def test_the_whole_log_can_be_walked_forward_by_the_hint_alone
+    parent, = family(25)
+    seen = []
+    step = { offset: 0, limit: 7 }
+
+    loop do
+      page = read(parent, **step)
+      seen.concat(page.scan(/^(\d+): user/).flatten.map(&:to_i))
+      later = page.match(/Later entries: offset (\d+), limit (\d+)\./)
+      break unless later
+
+      step = { offset: later[1].to_i, limit: later[2].to_i }
+    end
+
+    assert_equal (0..24).to_a, seen
+  end
+
+  def test_a_call_that_still_says_tail_is_read_as_a_limit
+    parent, = family(30)
+
+    assert_equal "Husky (running), entries 28 to 29 of 30:", read(parent, tail: 2).lines.first.chomp
+    assert_equal "Husky (running), entries 27 to 29 of 30:",
+                 read(parent, tail: 2, limit: 3).lines.first.chomp
   end
 
   def test_a_short_log_is_shown_whole_with_nothing_more_to_read
@@ -133,7 +191,23 @@ class TestConsolePaging < Minitest::Test
     assert_equal ["note 2", "note 3"], texts
     assert_equal 4, child.transcript(from: 2).length
     assert_empty child.transcript(from: 9, to: 12)
-    assert_raises(ArgumentError) { child.transcript(from: -2) }
+    assert_empty child.transcript(from: 4, to: 2)
     assert_equal worker.id, child.session_id
+  end
+
+  def test_a_range_means_the_same_whether_or_not_the_log_is_already_held
+    parent, = family(6)
+    fresh = parent.children.first
+    held = parent.children.first
+    held.transcript(tail: nil)
+
+    [{ from: -2 }, { from: 1, to: -1 }, { from: 1.5 }, { from: "1" }, { from: false },
+     { from: 1, to: 2.5 }, { to: 3 }].each do |range|
+      [fresh, held].each do |child|
+        assert_raises(ArgumentError, range.inspect) { child.transcript(**range) }
+      end
+    end
+
+    assert_equal held.transcript(from: 1, to: 4), fresh.transcript(from: 1, to: 4)
   end
 end

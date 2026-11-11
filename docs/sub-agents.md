@@ -283,9 +283,10 @@ on from there, so a wait loads the log once and then only what is new.
 `read_agent` shows the model a page of a worker's log, one line an entry, each
 under its number. It shows the twenty most recent entries by default. `offset`
 reads from another entry and `limit` sets how many, two hundred at most, and
-each page says which offset reads on in either direction, so the model can
-walk a long log back to its start. A page reads only its own entries from a
-store that answers `size`.
+each page gives the offset and limit that read on in either direction, so the
+model can walk a long log back to its start. On a store that answers `size`
+the entries of a page are read on their own. The status in its first line
+costs what `status` costs, as above.
 
 `read_agent` with `wait: true` waits for a terminal, including across an
 interrupted worker's later queue retry or cancellation. Abort and timeout still

@@ -57,8 +57,9 @@ module Mistri
         if args["wait"]
           Console.await(child, timeout, poll, context.signal)
         else
-          Console.render(child, args.fetch("limit", 20).to_i.clamp(1, 200),
-                         offset: args["offset"])
+          # tail is what limit was called; a session from before still says it.
+          limit = args.fetch("limit") { args.fetch("tail", 20) }
+          Console.render(child, limit.to_i.clamp(1, 200), offset: args["offset"])
         end
       end
     end
@@ -164,12 +165,14 @@ module Mistri
     # most recent entries by default, or the ones from offset. The gem never
     # summarizes; the caller can.
     def render(child, limit, offset: nil)
-      total = child.size
       who = "#{child.name} (#{child.status})"
+      total = child.size
       return "#{who}: no entries yet." if total.zero?
 
       first = offset ? [offset.to_i, 0].max : [total - limit, 0].max
-      entries = child.transcript(from: first, to: first + limit)
+      # A worker may write on between the count and the read; the page stays
+      # inside the count it states.
+      entries = child.transcript(from: first, to: [first + limit, total].min)
       if entries.empty?
         return "#{who} has #{total} entries, numbered 0 to #{total - 1}. " \
                "Nothing is at offset #{first}."
@@ -177,22 +180,21 @@ module Mistri
 
       lines = entries.each_with_index.filter_map do |entry, index|
         line = Console.line(entry)
-        "#{first + index}: #{line}" if line
+        "#{first + index}: #{line.gsub(/\R/, '\n')}" if line
       end
       ["#{who}, entries #{first} to #{first + entries.length - 1} of #{total}:", *lines,
        *Console.further(first, entries.length, limit, total)].join("\n")
     end
 
-    # How to read on from a page, in either direction, without reading an
-    # entry twice.
+    # The offset and limit that read on from a page, in either direction,
+    # without reading an entry twice.
     def further(first, shown, limit, total)
       lines = []
       if first.positive?
         back = [first - limit, 0].max
-        fewer = ", limit #{first - back}" if first - back < limit
-        lines << "Earlier entries: offset #{back}#{fewer}."
+        lines << "Earlier entries: offset #{back}, limit #{first - back}."
       end
-      lines << "Later entries: offset #{first + shown}." if first + shown < total
+      lines << "Later entries: offset #{first + shown}, limit #{limit}." if first + shown < total
       lines
     end
 

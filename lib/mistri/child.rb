@@ -80,7 +80,7 @@ module Mistri
     # the log instead: the entries from that position up to, and not
     # including, to:, counted the way the store counts them.
     def transcript(tail: 20, from: nil, to: nil)
-      entries = if from then entries_between(from, to)
+      entries = if !from.nil? || !to.nil? then entries_between(from, to)
                 elsif tail then last_entries(tail)
                 else read_log
                 end
@@ -220,12 +220,20 @@ module Mistri
       @store.load(@session_id, from: first, to: size)
     end
 
+    # Positions mean the same on every store and every path, so they are
+    # checked before either is chosen. An end at or before the start is an
+    # empty range.
     def entries_between(from, to)
-      raise ArgumentError, "from must not be negative" if from.negative?
+      unless position?(from) && (to.nil? || position?(to))
+        raise ArgumentError, "from: and to: are positions in the log, whole numbers from 0"
+      end
+      return [] if to && to <= from
       return read_log[from...to].to_a unless from_the_end?
 
       @store.load(@session_id, from:, to:)
     end
+
+    def position?(value) = value.is_a?(Integer) && !value.negative?
 
     # A log that is already held is read on from where it stopped, which
     # is cheaper than asking the store for its end again.
