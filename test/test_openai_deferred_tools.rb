@@ -104,18 +104,39 @@ class TestOpenAIDeferredTools < Minitest::Test
     refute items.last.key?(:namespace)
   end
 
-  def test_only_models_that_load_tools_hold_definitions_back
-    answers = %w[gpt-6.1-terra gpt-5.4 gpt-5-nano a-model-from-next-year].to_h do |model|
+  def test_only_models_from_five_point_four_on_hold_definitions_back
+    loading = %w[gpt-5.4 gpt-5.4-2026-03-05 gpt-5.5 gpt-5.6 gpt-5.6-luna gpt-6-astra
+                 gpt-6.1-terra gpt-7 gpt-10.2-sol]
+    growing = %w[gpt-5-nano gpt-5 gpt-5-mini gpt-5.3 gpt-4.1 gpt-4.1-2025-04-14 gpt-4o o4-mini
+                 a-model-from-next-year]
+
+    assert_equal loading, loading.select { |model| Mistri::Models.tool_loading?(model) }
+    assert_empty(growing.select { |model| Mistri::Models.tool_loading?(model) })
+  end
+
+  def test_the_provider_holds_definitions_back_for_such_a_model_on_the_official_origin
+    answers = %w[gpt-6.1-terra gpt-5-nano gpt-4.1].to_h do |model|
       provider = Mistri::Providers::OpenAI.new(api_key: "k", model:)
       [model, provider.defers_tools?].tap { provider.close }
     end
     other = Mistri::Providers::OpenAI.new(api_key: "k", origin: "https://gateway.example")
 
-    assert_equal({ "gpt-6.1-terra" => true, "gpt-5.4" => true, "gpt-5-nano" => false,
-                   "a-model-from-next-year" => true }, answers)
+    assert_equal({ "gpt-6.1-terra" => true, "gpt-5-nano" => false, "gpt-4.1" => false }, answers)
     refute_predicate other, :defers_tools?
   ensure
     other&.close
+  end
+
+  def test_a_name_repeated_in_one_result_is_declared_once
+    history = [Mistri::Message.user("go"), calling(call("c1", "tool_search")),
+               result("c1", loads: %w[create_issue create_issue list_teams create_issue]),
+               calling(call("c2", "tool_search")), result("c2", loads: %w[create_issue])]
+
+    added = SERIALIZER.input_items(history, deferred:)
+                      .select { |item| item[:type] == "additional_tools" }
+
+    assert_equal([%w[create_issue list_teams]],
+                 added.map { |item| item[:tools].map { |tool| tool[:name] } })
   end
 
   def test_the_request_keeps_its_tools_and_carries_the_loaded_ones_in_the_input

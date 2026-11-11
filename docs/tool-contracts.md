@@ -360,9 +360,9 @@ not choose:
 - Gemini, and any other provider, is sent the tools that are not deferred,
   then the loaded ones in the order they were loaded.
 
-A provider of your own is sent the second form. To hold definitions back
-itself it answers `defers_tools?` with true, and `stream` is then given the
-deferred definitions as `deferred_tools:` beside `tools:`.
+A provider of your own is sent the growing tool list. To hold definitions
+back itself it answers `defers_tools?` with true, and `stream` is then given
+the deferred definitions as `deferred_tools:` beside `tools:`.
 
 ## Hand off the turn
 

@@ -33,7 +33,8 @@ module Mistri
         def additions(msg, definitions, declared)
           return [] if msg.tool_error?
 
-          fresh = msg.loads.to_a.select { |name| definitions.key?(name) && !declared.key?(name) }
+          fresh = msg.loads.to_a.uniq
+                     .select { |name| definitions.key?(name) && !declared.key?(name) }
           return [] if fresh.empty?
 
           fresh.each { |name| declared[name] = true }
