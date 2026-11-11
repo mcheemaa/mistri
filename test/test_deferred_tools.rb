@@ -53,9 +53,8 @@ class TestDeferredTools < Minitest::Test
 
     assert_equal "tool_search", answer.tool_name
     assert_equal %w[tracker__create_issue tracker__delete_issue], answer.loads
-    assert_equal "Loaded 2 tools. You can call them from your next step:\n" \
-                 "- tracker__create_issue: Opens an issue in the tracker.\n" \
-                 "- tracker__delete_issue: Removes an issue from the tracker.", answer.text
+    assert_equal "Loaded: tracker__create_issue, tracker__delete_issue. You can call them " \
+                 "from your next step.", answer.text
     refute_predicate answer, :tool_error?
   end
 
@@ -211,30 +210,6 @@ class TestDeferredTools < Minitest::Test
     end
   end
 
-  def test_a_long_description_is_cut_in_the_search_answer
-    long = tool("tracker__export", "Exports everything. #{"It is very thorough. " * 5_000}")
-    agent, = agent([{ tool_calls: [search("export")] }, { text: "Found." }], tools: [long])
-
-    agent.run("Export it.")
-    answer = agent.session.messages.find(&:tool?)
-
-    assert_operator answer.text.bytesize, :<, 400
-    assert_match(/- tracker__export: Exports everything\. It is very thorough\./, answer.text)
-    assert answer.text.end_with?("...")
-  end
-
-  def test_a_description_is_cut_at_two_hundred_characters_whatever_they_are
-    fits = tool("tracker__fits", "文" * 200)
-    over = tool("tracker__over", "文" * 201)
-    agent, = agent([{ tool_calls: [search("tracker")] }, { text: "Found." }], tools: [fits, over])
-
-    agent.run("Find them.")
-    lines = agent.session.messages.find(&:tool?).text.lines.map(&:chomp)
-
-    assert_includes lines, "- tracker__fits: #{"文" * 200}"
-    assert_includes lines, "- tracker__over: #{"文" * 197}..."
-  end
-
   def test_a_query_is_read_up_to_five_hundred_characters
     target = tool("tracker__zebra", "Stripes.")
     padding = "q" * 494
@@ -275,14 +250,14 @@ class TestDeferredTools < Minitest::Test
   end
 
   def test_text_from_an_after_tool_hook_keeps_the_load
-    shorten = ->(_call, result, _context) { result.content.lines.first.chomp }
+    shorten = ->(_call, result, _context) { result.content[0, 6] }
     agent, provider = agent([{ tool_calls: [search("refund")] }, { text: "Found." }],
                             after_tool: shorten)
 
     agent.run("Refund it.")
     answer = agent.session.messages.find(&:tool?)
 
-    assert_equal "Loaded 1 tool. You can call them from your next step:", answer.text
+    assert_equal "Loaded", answer.text
     assert_equal %w[refund_charge], answer.loads
     assert_equal %w[lookup_order tool_search refund_charge], offered(provider)
   end
