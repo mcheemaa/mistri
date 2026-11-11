@@ -5,6 +5,11 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+- An MCP server's answer is no longer held to 20,001 JSON tokens when it
+  arrives as an SSE stream. The same answer as a plain JSON body or over
+  stdio was never counted, so a server with a long tool list could be listed
+  on two transports and refused on the third. The byte, depth and number
+  limits stay.
 - With `client_secret_basic`, an MCP token request carries the client id only
   in the Basic header. It was also sent in the form, and some token endpoints
   refuse that combination.

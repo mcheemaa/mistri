@@ -17,7 +17,7 @@ module Mistri
   # fails to parse is skipped rather than killing a live stream. Only the
   # partial line is bounded; the complete stream is not.
   class SSE
-    def initialize(max_record_bytes: DEFAULT_MAX_RECORD_BYTES, count_tokens: true)
+    def initialize(max_record_bytes: DEFAULT_MAX_RECORD_BYTES, count_tokens: false)
       unless max_record_bytes.is_a?(Integer) && max_record_bytes.positive?
         raise ConfigurationError, "max_record_bytes: must be a positive integer"
       end

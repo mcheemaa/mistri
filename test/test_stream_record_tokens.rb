@@ -3,11 +3,12 @@
 require "json"
 require_relative "test_helper"
 require_relative "support/stub_server"
+require_relative "support/mcp_stub_server"
 
 # The count of JSON tokens in one stream record, taken before the record is
 # parsed. It is kept where it bounds something: Gemini's tool arguments, which
-# arrive as an object inside the record, and an MCP server's answer. An OpenAI
-# or Anthropic record is not counted.
+# arrive as an object inside the record. An OpenAI or Anthropic record is not
+# counted, and neither is an MCP server's answer.
 class TestStreamRecordTokens < Minitest::Test
   WIDE = { "pad" => Array.new(20_002, 0) }.freeze
 
@@ -44,19 +45,43 @@ class TestStreamRecordTokens < Minitest::Test
     teardown_all(transport, server)
   end
 
-  def test_a_streamable_http_answer_with_too_many_tokens_is_refused
+  def test_an_mcp_server_with_a_large_tool_list_is_listed_however_it_answers
+    names = %w[query team assignee state label project cycle priority limit cursor order include]
+    field = { "type" => "string", "description" => "One field of the tool." }
+    schema = { "type" => "object", "properties" => names.to_h { |name| [name, field] },
+               "required" => ["query"] }
+    tools = (1..300).to_h do |n|
+      ["tool_#{n}", { description: "Does thing #{n}.", schema:, handler: ->(_arguments) { "ok" } }]
+    end
+
+    [true, false].each do |sse|
+      server = Mistri::Test::McpStubServer.new(tools:, sse:)
+      client = Mistri::MCP::Client.new(url: server.url,
+                                       allow_non_public: Mistri::Test::ALLOW_LOOPBACK)
+
+      assert_equal 300, client.tools.length, sse ? "as a stream" : "as a JSON body"
+    ensure
+      client&.close
+      server&.stop
+    end
+  end
+
+  def test_a_streamable_http_answer_still_bounds_depth_and_numbers
+    lines = ["data: #{"[" * 70}#{"]" * 70}\n\n", "data: {\"value\":#{"1" * 65_537}}\n\n"]
     server = Mistri::Test::StubServer.new do |socket, _request|
       server.start_sse(socket)
-      server.sse_data(socket, WIDE)
+      server.chunk(socket, lines[server.requests.length - 1])
       server.finish_sse(socket)
     end
     transport = Mistri::Transport.new(origin: server.origin)
 
-    error = assert_raises(Mistri::ResponseTooComplexError) do
-      transport.post_either("/mcp", body: {}) { flunk }
+    kinds = Array.new(2) do
+      assert_raises(Mistri::ResponseTooComplexError) do
+        transport.post_either("/mcp", body: {}) { flunk }
+      end.kind
     end
 
-    assert_equal :sse_record_tokens, error.kind
+    assert_equal %i[sse_record_depth sse_numeric_token], kinds
   ensure
     teardown_all(transport, server)
   end
