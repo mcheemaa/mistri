@@ -245,9 +245,10 @@ module Mistri
                   "loaded" => (state.fetch("loaded", []) | loads_in(before)) - loads_in(kept))
     end
 
-    # The deferred tools that results in these entries loaded.
+    # The deferred tools that results in these entries loaded. A failed
+    # result loads nothing, whatever it names.
     def loads_in(entries)
-      entries.select { |entry| entry["type"] == "message" }
+      entries.select { |entry| entry["type"] == "message" && !entry.dig("message", "tool_error") }
              .flat_map { |entry| entry.dig("message", "loads").to_a }
     end
 

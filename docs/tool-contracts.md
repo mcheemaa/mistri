@@ -344,8 +344,8 @@ sees is no longer in effect. After a compaction that summarizes the search,
 the summary is followed by the names of the tools that were loaded before it.
 The model is told that their parameters are no longer in front of it and to
 load the ones it needs again by name. A call to one of them that it makes
-without loading still runs, through the argument check as always: it is a
-tool the model has used.
+without loading still runs, through the argument check as always: the model
+was shown that tool when it loaded it.
 
 Any tool can load deferred tools with its result:
 
