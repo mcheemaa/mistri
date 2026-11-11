@@ -130,19 +130,27 @@ used as given.
 
 A tool that cannot be bridged is left out, and the server's other tools stay
 usable. That is a tool whose schema is not one Mistri can validate, one with
-no name, a definition that is not an object, and a tool whose local name is
-already taken by one listed before it. Without a block the tool and the reason
-are written as a warning. With one, the block is given the remote definition
-and the error:
+no name, one whose name or description is not valid UTF-8, a definition that
+is not an object, and a tool whose local name is already taken by one listed
+before it. Without a block the tool and the reason are written as a warning.
+With one, the block is given what the server listed and the error, whose
+message names the tool:
 
 ```ruby
-tools = Mistri::MCP.tools(client, prefix: "tracker") do |definition, error|
-  connection.note_unusable(definition["name"], error.message)
+tools = Mistri::MCP.tools(client, prefix: "tracker") do |_definition, error|
+  connection.note_unusable(error.message)
 end
 ```
 
-A host that would sooner fail raises the error from the block.
+What the server listed may not be an object, so check before reading a key
+from it. A host that would sooner fail raises the error from the block.
 `Mistri::MCP.bridge`, which takes one definition, still raises.
+
+When two listed tools get the same local name, the first one listed keeps it.
+That needs a server that lists one name twice, or lists a tool under the name
+Mistri made for another, and then the order the server lists in decides which
+remote tool the name calls. A host that stores local names or holds approvals
+across runs for such a server should raise from the block.
 
 `needs_approval:` gates every bridged tool. `gates:` sets policy by remote name
 and overrides the shared default.

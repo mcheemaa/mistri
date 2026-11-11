@@ -88,6 +88,37 @@ class TestMcpUnusableTools < Minitest::Test
     end
   end
 
+  def test_a_name_or_a_description_that_is_not_valid_utf8_is_left_out
+    bad_name = JSON.parse(%({"name":"bad\xFFname","description":"Broken."}))
+    bad_description = good("garbled").merge("description" => "caf\xFF".dup.force_encoding("UTF-8"))
+    left_out = []
+
+    tools = Mistri::MCP.tools(client_for(bad_name, bad_description, good("search"))) do |_, error|
+      left_out << error.message
+    end
+
+    assert_equal %w[search], tools.map(&:name)
+    assert_equal ['MCP tool "bad\xFFname": the name is not valid UTF-8',
+                  'MCP tool "garbled": the description is not valid UTF-8'], left_out
+    JSON.generate(tools.map(&:spec))
+  end
+
+  def test_what_the_block_returns_never_joins_the_tools
+    stray = Mistri::Tool.define("stray", "Should not appear.") { "no" }
+
+    tools = Mistri::MCP.tools(client_for(broken, good("search"))) { |_tool, _error| stray }
+
+    assert_equal %w[search], tools.map(&:name)
+  end
+
+  def test_an_error_the_block_raises_is_the_one_the_host_sees
+    failure = Class.new(StandardError)
+
+    assert_raises(failure) do
+      Mistri::MCP.tools(client_for(broken, good("search"))) { |_tool, _error| raise failure }
+    end
+  end
+
   def test_a_message_carries_only_the_start_of_a_long_remote_name
     long = "x" * 100_000
     messages = []

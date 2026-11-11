@@ -97,6 +97,12 @@ module Mistri
       unless remote.is_a?(String) && !remote.empty?
         raise ConfigurationError, "the definition has no name"
       end
+      raise ConfigurationError, "the name is not valid UTF-8" unless remote.valid_encoding?
+
+      description = spec["description"].to_s
+      unless description.valid_encoding?
+        raise ConfigurationError, "the description is not valid UTF-8"
+      end
 
       local = name || local_name(remote, prefix)
       if spec.key?("inputSchema") && spec["inputSchema"].nil?
@@ -107,7 +113,7 @@ module Mistri
       input_schema = Schema.validate_mcp!(
         raw_schema, complete: !complete_argument_validator.nil?
       )
-      Tool.define(local, spec["description"].to_s,
+      Tool.define(local, description,
                   input_schema: input_schema,
                   needs_approval: gate,
                   complete_argument_validator: complete_argument_validator) do |args|
