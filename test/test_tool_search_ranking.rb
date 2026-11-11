@@ -60,21 +60,37 @@ class TestToolSearchRanking < Minitest::Test
   end
 
   def test_names_load_the_tools_they_name_and_no_others
-    loaded = []
     named = %w[lookup crm__lookup crm__list docs__list].map { |name| tool(name) }
-    search = Mistri::ToolSearch.tool(named, loaded: -> { loaded })
+    search = Mistri::ToolSearch.tool(named, loaded: [].method(:itself))
     first = search.call({ "query" => "select:lookup, list, nope" })
-    loaded.concat(first.loads)
-    second = search.call({ "query" => "crm__lookup docs__list" })
-    loaded.concat(second.loads)
+    second = search.call({ "query" => "crm__lookup docs__list crm__missing" })
     third = search.call({ "query" => "lookup list" })
 
     assert_equal %w[lookup crm__list docs__list], first.loads
     assert_match(/^No tool is named nope\.$/, first.content)
     assert_equal %w[crm__lookup], second.loads
     assert_match(/^Already loaded, call them as they are: docs__list\.$/, second.content)
+    assert_match(/^No tool is named crm__missing\.$/, second.content)
     assert_empty third.loads
     assert_match(/^Already loaded, call them as they are: .*crm__lookup/, third.content)
+  end
+
+  def test_a_name_many_tools_share_loads_no_more_than_the_limit
+    search = Mistri::ToolSearch.tool(Array.new(30) { |index| tool("s#{index}__list") },
+                                     loaded: [].method(:itself))
+    one = search.call({ "query" => "list", "limit" => 1 })
+    more = search.call({ "query" => "list" })
+    twelve = Array.new(12) { |index| "s#{index + 9}__list" }
+    asked = search.call({ "query" => "select:#{twelve.join(",")}" })
+    rest = search.call({ "query" => "list", "limit" => 20 })
+    none = search.call({ "query" => "list" })
+
+    assert_equal %w[s0__list], one.loads
+    assert_match(/^29 more tools with these names\. Search again for them\.$/, one.content)
+    assert_equal([8, 12, 9], [more, asked, rest].map { |result| result.loads.length })
+    assert_empty none.loads
+    assert_match(/^Already loaded, call them as they are: s0__list, .* and 10 more\.$/,
+                 none.content)
   end
 
   def test_text_written_without_spaces_is_matched_by_pairs_of_characters

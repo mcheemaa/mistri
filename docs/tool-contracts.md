@@ -317,9 +317,14 @@ A query that is a tool's name loads that tool and no other. That holds for
 the name without its prefix and for words that spell it, so `create issue`
 loads `tracker__create_issue`. The model can name several tools at once:
 `select:` and their names, separated by commas, or their whole names side by
-side. The answer says which of the names no tool has. A tool that is already
-loaded is not loaded again. The answer names it, and the search goes on to
-the next matches, so a repeated search reaches further down the list.
+side. The answer says which of the names no tool has. A name that many tools
+share, such as `list` under thirty prefixes, loads no more than the limit, and
+the answer says how many are left. When the model gives no limit, a list of
+names loads as many tools as it has names, twenty at most.
+
+A tool that is already loaded is not loaded again. The answer names it, and
+the search goes on to the next matches, so a repeated search reaches further
+down the list. Two searches in one turn do not load the same tool either.
 
 Any other query is words. The search matches words, so it finds what a name,
 a description or a parameter says and not what they mean. A run of Han, kana or Hangul characters, which often has no spaces

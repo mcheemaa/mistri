@@ -35,9 +35,12 @@ module Mistri
     module_function
 
     # The tool an agent adds when it holds deferred tools. loaded answers
-    # with the names the model already has, which a search does not load again.
+    # with the names the model already has, which a search does not load
+    # again. A search adds the names it loads to that list, so two searches
+    # of one turn do not load the same tool.
     def tool(deferred, loaded: -> { [] })
       documents = nil
+      turn = Mutex.new
       Tool.define(NAME, description(deferred), schema: lambda {
         string :query, "Words for what you need to do, or select: and the exact names of " \
                        "tools to load, separated by commas", required: true
@@ -45,15 +48,21 @@ module Mistri
       }) do |args|
         query = args["query"].to_s[0, QUERY_LIMIT]
         documents ||= deferred.map { |tool| document(tool) }
-        chosen, missing = named_tools(query, documents)
+        chosen, missing, asked = named_tools(query, documents)
         unless chosen || words(query).any?
           next ToolResult.new(content: "There is nothing to search by in that query. Say what " \
                                        "you need to do in a few words.", error: true)
         end
 
-        limit = args.fetch("limit", LIMIT).to_i.clamp(1, MAX_LIMIT) unless chosen
-        fresh, held = unloaded(chosen || search(query, documents), loaded.call, limit)
-        answer(fresh, held, missing.to_a)
+        limit = args.fetch("limit") { [LIMIT, asked.to_i].max }.to_i.clamp(1, MAX_LIMIT)
+        matches = chosen || search(query, documents)
+        names = loaded.call
+        fresh, held = turn.synchronize do
+          unloaded(matches, names, limit).tap do |picked, _|
+            names.concat(picked.map { |document| document.tool.name })
+          end
+        end
+        answer(fresh, held, missing.to_a, chosen ? chosen.length - fresh.length - held.length : 0)
       end
     end
 
@@ -84,46 +93,55 @@ module Mistri
     end
     private_class_method :search
 
-    # The tools a query names, and the names it gives that no tool has. Nil
-    # when the query is words to search by. select: lists names. A query
-    # that reads as one tool's name names that tool, and so does a list of
-    # whole names.
+    # The tools a query names, the names it gives that no tool has, and how
+    # many names it gives. Nil when the query is words to search by. select:
+    # lists names. A query that reads as one tool's name names that tool. So
+    # does a list in which every part is a whole name or is written like
+    # one, with an underscore, when it names a tool at all: read file is two
+    # words, never the tools x__read and y__file.
     def named_tools(query, documents)
       text = query.strip
-      return pick(text.sub(SELECT, "").split(","), documents, 2) if text.match?(SELECT)
+      if text.match?(SELECT)
+        parts = text.sub(SELECT, "").split(",")
+        return [*pick(parts, documents) { 2 }, parts.length]
+      end
 
-      whole = pick([text], documents, 2)
-      return whole if whole.first.any?
+      whole = pick([text], documents) { 2 }
+      return [*whole, 1] if whole.first.any?
 
       parts = text.split(/[\s,]+/)
-      several = pick(parts, documents, 0)
-      several if parts.length > 1 && several.last.empty?
+      found, missing = pick(parts, documents) { |part| part.include?("_") ? 2 : 0 }
+      return unless parts.length > 1 && found.any? && missing.all? { |part| part.include?("_") }
+
+      [found, missing, parts.length]
     end
     private_class_method :named_tools
 
-    # For each part, the tools it names in the closest way, no looser than most.
-    def pick(parts, documents, most)
+    # For each part, the tools it names in the closest way, no looser than
+    # the block allows for it.
+    def pick(parts, documents)
       found = []
       missing = []
       parts.map(&:strip).reject(&:empty?).each do |part|
         wanted = identifier(part)
         ranks = documents.group_by { |document| name_rank(document, part, wanted) }
         closest = ranks.keys.min
-        closest && closest <= most ? found.concat(ranks.fetch(closest)) : missing << part
+        closest && closest <= yield(part) ? found.concat(ranks.fetch(closest)) : missing << part
       end
       [found.uniq, missing]
     end
     private_class_method :pick
 
-    # The matches to load, as many as limit when there is one, and the
-    # loaded ones passed on the way to them.
+    # The matches to load, limit at most, and the loaded ones passed on the
+    # way to them.
     def unloaded(matches, loaded, limit)
+      have = loaded.to_set
       fresh = []
       held = []
       matches.each do |document|
-        break if limit && fresh.length == limit
+        break if fresh.length == limit
 
-        (loaded.include?(document.tool.name) ? held : fresh) << document
+        (have.include?(document.tool.name) ? held : fresh) << document
       end
       [fresh, held]
     end
@@ -162,15 +180,15 @@ module Mistri
     def count(number, noun) = "#{number} #{noun}#{"s" unless number == 1}"
     private_class_method :count
 
-    def answer(fresh, held, missing)
+    def answer(fresh, held, missing, left)
       lines = []
       if fresh.any?
         lines << "Loaded #{count(fresh.length, "tool")}. You can call them from your next step:"
         lines.concat(fresh.map { |document| "- #{document.tool.name}: #{document.summary}" })
       end
-      if held.any?
-        names = held.map { |document| document.tool.name }.join(", ")
-        lines << "Already loaded, call them as they are: #{names}."
+      lines << "Already loaded, call them as they are: #{held_names(held)}." if held.any?
+      if left.positive?
+        lines << "#{count(left, "more tool")} with these names. Search again for them."
       end
       lines << "No tool is named #{missing.join(", ")}." if missing.any?
       return "No tool matches. Try other words." if lines.empty?
@@ -178,6 +196,12 @@ module Mistri
       ToolResult.new(content: lines.join("\n"), loads: fresh.map { |document| document.tool.name })
     end
     private_class_method :answer
+
+    def held_names(held)
+      names = held.first(MAX_LIMIT).map { |document| document.tool.name }.join(", ")
+      held.length > MAX_LIMIT ? "#{names} and #{held.length - MAX_LIMIT} more" : names
+    end
+    private_class_method :held_names
 
     def document(tool)
       spec = tool.spec.transform_keys(&:to_sym)

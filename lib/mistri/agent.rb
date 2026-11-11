@@ -406,7 +406,7 @@ module Mistri
     def tool_options(history)
       return { tools: @eager_specs } if @deferred_specs.empty?
 
-      @loaded = history.flat_map { |message| message.loads.to_a }.uniq
+      @loaded = history.reject(&:tool_error?).flat_map { |message| message.loads.to_a }.uniq
       return { tools: @eager_specs, deferred_tools: @deferred_list } if @defers_tools
 
       { tools: @eager_specs + @deferred_specs.values_at(*@loaded).compact }
