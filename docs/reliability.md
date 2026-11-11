@@ -280,6 +280,8 @@ The run then spends one more turn past the ceiling. The model keeps its tools
 but cannot call them, and is told to give its best answer and say what is
 unfinished. That instruction is sent to the model and not stored in the
 session. The result keeps status `:budget`, and the turn counts toward usage.
+Under `task` the turn is sent without the output schema, so the answer is free
+text and `output` stays nil.
 If the turn fails, is aborted, or returns no text, the run ends on the fixed
 message.
 

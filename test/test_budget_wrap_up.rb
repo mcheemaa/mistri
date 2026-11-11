@@ -63,6 +63,18 @@ class TestBudgetWrapUp < Minitest::Test
     assert_raises(NameError) { Mistri::Agent::WRAP_UP }
   end
 
+  def test_a_task_wraps_up_without_its_schema
+    provider = Mistri::Providers::Fake.new(turns: [{ text: "Counted 3 of 5 files." }])
+    agent = Mistri::Agent.new(provider:, budget: Mistri::Budget.new(turns: 0, wrap_up: true))
+    schema = { type: "object", properties: { count: { type: "integer" } }, required: ["count"] }
+
+    result = agent.task("Count the files.", schema:)
+
+    assert_equal "Counted 3 of 5 files.", result.text
+    assert_nil result.output
+    assert_nil provider.requests.last[:options][:output_schema]
+  end
+
   def test_a_failed_wrap_up_turn_falls_back_to_the_fixed_message
     _, agent = stopped_run({ error: "overloaded" })
 

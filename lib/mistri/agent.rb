@@ -241,7 +241,7 @@ module Mistri
       started = monotonic_now
       loop do
         reason = @budget.exceeded(turns: turns, usage: usage, elapsed: monotonic_now - started)
-        return stop_for_budget(reason, usage, signal, output_schema, &emit) if reason
+        return stop_for_budget(reason, usage, signal, &emit) if reason
 
         fold_inbox
         compacted = auto_compact(&emit)
@@ -250,7 +250,7 @@ module Mistri
           validate_usage!(compaction_usage, kind: "compaction", &emit)
           usage += compaction_usage
           reason = @budget.exceeded(turns:, usage:, elapsed: monotonic_now - started)
-          return stop_for_budget(reason, usage, signal, output_schema, &emit) if reason
+          return stop_for_budget(reason, usage, signal, &emit) if reason
         end
         last, turn_usage = run_turn(signal, output_schema, &emit)
         turns += 1
@@ -1005,8 +1005,8 @@ module Mistri
       Result.new(message: message, status: :awaiting_approval, pending: parked, usage: usage)
     end
 
-    def stop_for_budget(reason, usage, signal, output_schema, &)
-      return wrap_up(reason, usage, signal, output_schema, &) if @budget.wrap_up?
+    def stop_for_budget(reason, usage, signal, &)
+      return wrap_up(reason, usage, signal, &) if @budget.wrap_up?
 
       budget_stopped(reason, usage, &)
     end
@@ -1014,8 +1014,10 @@ module Mistri
     # The model answers under a spent budget with tool calls forbidden. A
     # provider that calls a tool anyway has the call dropped: nothing will
     # run it, and an unanswered call makes the transcript unreplayable.
-    def wrap_up(reason, usage, signal, output_schema, &emit)
-      message, held, turn_usage = request_turn(signal, output_schema, wrap_up: true, &emit)
+    def wrap_up(reason, usage, signal, &emit)
+      # No output schema: it would force a made-up value, and a task's
+      # output comes only from a validated completion.
+      message, held, turn_usage = request_turn(signal, nil, wrap_up: true, &emit)
       usage += turn_usage
       content = message.content.grep_v(ToolCall)
       # Signed against the instruction, which the session never replays.
