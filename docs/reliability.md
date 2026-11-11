@@ -284,7 +284,9 @@ session. The result keeps status `:budget`, and the turn counts toward usage.
 Under `task` the turn is sent without the output schema, so the answer is free
 text and `output` stays nil.
 If the turn fails, is aborted, or returns no text, the run ends on the fixed
-message.
+message. The subscriber first receives that attempt's own `:done` or `:error`,
+and the session keeps it as a `wrap_up_attempt` entry, never as a conversation
+message, so its usage and error remain available for accounting.
 
 ### Cost budgets
 

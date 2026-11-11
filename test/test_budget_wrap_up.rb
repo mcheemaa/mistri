@@ -101,6 +101,25 @@ class TestBudgetWrapUp < Minitest::Test
     assert_equal result.message, agent.session.messages.last
   end
 
+  def test_a_failed_wrap_up_attempt_is_kept_for_accounting_and_announced
+    usage = Mistri::Usage.new(input: 40, output: 5)
+    _, agent = stopped_run({ error: "overloaded", usage: })
+    events = []
+
+    agent.run("go") { |event| events << event }
+
+    attempts = agent.session.entries.select { |entry| entry["type"] == "wrap_up_attempt" }
+
+    assert_equal 1, attempts.length
+    recorded = Mistri::Message.from_h(attempts.first.fetch("message"))
+
+    assert_equal [usage.input, usage.output], [recorded.usage.input, recorded.usage.output]
+    assert_equal "overloaded", recorded.error_message
+    terminals = events.select(&:terminal?).last(2).map { |e| [e.type, e.reason, e.error_message] }
+
+    assert_equal [[:error, :error, "overloaded"], [:error, :budget, "budget_turns"]], terminals
+  end
+
   def test_tool_calls_in_a_wrap_up_answer_are_never_saved
     _, agent = stopped_run({ text: "Partial answer.", tool_calls: LOOP_CALL[:tool_calls] })
 

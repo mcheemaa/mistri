@@ -9,7 +9,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   stops the run, with tool calls forbidden, so the run ends on the model's
   answer in place of the fixed "Run stopped" message. The result still has
   status `:budget`. Off by default. A custom provider receives
-  `tool_choice: :none` on that turn.
+  `tool_choice: :none` on that turn. A wrap-up turn that fails is kept as a
+  `wrap_up_attempt` session entry.
 - A sub-agent stopped by its budget ends as `Child#status` `:budget` in place
   of `:failed`, and its last answer reaches the parent: in the tool result, in
   `Child#report`, and in the background report.

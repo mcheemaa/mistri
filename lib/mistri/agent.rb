@@ -1029,7 +1029,12 @@ module Mistri
       answer = message.with(content:, stop_reason: StopReason::BUDGET,
                             error_message: "budget_#{reason}")
       failed = [StopReason::ERROR, StopReason::ABORTED].include?(message.stop_reason)
-      return budget_stopped(reason, usage, &emit) if failed || answer.text.to_s.strip.empty?
+      if failed || answer.text.to_s.strip.empty?
+        # Kept like a retry: a paid attempt, never a conversation message.
+        @session.append("wrap_up_attempt", "message" => message.to_h)
+        emit&.call(held) if held
+        return budget_stopped(reason, usage, &emit)
+      end
 
       emit&.call(held.with(reason: StopReason::BUDGET, message: answer)) if held
       @session.append_message(answer)
