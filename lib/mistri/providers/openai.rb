@@ -24,7 +24,8 @@ module Mistri
         @model = model
         @reasoning = reasoning
         @service_tier = service_tier
-        @catalog_pricing = catalog_pricing.nil? ? official_origin?(origin) : catalog_pricing
+        @official = official_origin?(origin)
+        @catalog_pricing = catalog_pricing.nil? ? @official : catalog_pricing
         @transport = Transport.new(origin: origin, **transport_options)
       end
 
@@ -39,6 +40,13 @@ module Mistri
 
         SchemaCapabilities.derive(schema, :openai)
       end
+
+      # The API makes a tool callable from an item in the input, so an agent
+      # hands every deferred tool over as deferred_tools and the request's
+      # own tools never change. Another origin may not take the item, and a
+      # model that does not use such tools steadily is sent the loaded tools
+      # as tools.
+      def defers_tools? = @official && Models.tool_loading?(@model)
 
       def stream(messages:, system: nil, tools: [], signal: nil, **overrides, &emit)
         delivery = EventDelivery.wrap(emit)
@@ -68,7 +76,8 @@ module Mistri
       def build_body(model, messages, system, tools, overrides)
         body = {
           model: model,
-          input: Serializer.input_items(messages),
+          input: Serializer.input_items(messages,
+                                        deferred: overrides.fetch(:deferred_tools, [])),
           stream: true,
           store: false,
           include: ["reasoning.encrypted_content"]

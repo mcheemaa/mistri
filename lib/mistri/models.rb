@@ -184,6 +184,7 @@ module Mistri
     TURN_BOUND_THINKING = %w[claude-fable-5 claude-opus-5 claude-opus-4-8 claude-opus-4-7
                              claude-opus-4-6 claude-sonnet-5 claude-sonnet-4-6
                              claude-haiku-4-5].freeze
+    WITHOUT_TOOL_LOADING = %w[gpt-5-nano].freeze
 
     # Published family aliases and dated ids resolve to their canonical entry.
     def self.find(id)
@@ -211,6 +212,15 @@ module Mistri
     def self.prefix_bound_thinking?(id)
       model = find(id)
       model.nil? || (model.provider == :anthropic && !TURN_BOUND_THINKING.include?(model.id))
+    end
+
+    # OpenAI documents loading tools into a running conversation for gpt-5.4
+    # and later. An older model takes the request and then, about four times
+    # in ten, searches again where it should call the loaded tool. An id the
+    # catalog does not know is newer.
+    def self.tool_loading?(id)
+      model = find(id)
+      model.nil? || !WITHOUT_TOOL_LOADING.include?(model.id)
     end
 
     def self.rates(id, usage: nil, at: Time.now) = find(id)&.rates(usage:, at:)

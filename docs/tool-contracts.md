@@ -350,9 +350,15 @@ not choose:
   prompt, and a result that loads tools carries references to them. The tool
   list never changes, so the prompt cache holds across a load. The result's
   own text follows the tool results of that turn. This is used on the official
-  origin; another origin is treated like the providers below.
-- Every other provider is sent the tools that are not deferred, then the
-  loaded ones in the order they were loaded.
+  origin; another origin is treated like the last provider below.
+- OpenAI keeps the request's own tools as they are, and a result that loads
+  tools is followed by an item in the input that makes them callable from
+  that point on. The prompt cache holds across a load here too. This is used
+  on the official origin, for the models OpenAI documents it for, gpt-5.4 and
+  later. An older model and another origin are treated like the provider
+  below.
+- Gemini, and any other provider, is sent the tools that are not deferred,
+  then the loaded ones in the order they were loaded.
 
 A provider of your own is sent the second form. To hold definitions back
 itself it answers `defers_tools?` with true, and `stream` is then given the
