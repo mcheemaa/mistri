@@ -127,7 +127,7 @@ class TestDeferredTools < Minitest::Test
     answer = agent.session.messages.find(&:tool?)
 
     assert_predicate answer, :tool_error?
-    assert_match(/query/, answer.text)
+    assert_match(/nothing to search by/i, answer.text)
     assert_nil answer.loads
   end
 
@@ -138,7 +138,7 @@ class TestDeferredTools < Minitest::Test
     description = provider.requests.first.dig(:options, :tools)
                           .find { |spec| spec[:name] == "tool_search" }.fetch(:description)
 
-    assert_match(/Not loaded yet: tracker \(2 tools\), docs \(1 tool\), 1 other\./, description)
+    assert_match(/It searches: tracker \(2 tools\), docs \(1 tool\), 1 other\./, description)
   end
 
   def test_an_agent_without_deferred_tools_is_as_before
@@ -179,6 +179,52 @@ class TestDeferredTools < Minitest::Test
     agent.run("Open the tracker.")
 
     assert_equal %w[open_tracker lookup_order tool_search tracker__create_issue], offered(provider)
+  end
+
+  def test_a_name_that_cannot_be_stored_is_an_error_the_model_reads_and_the_run_goes_on
+    ran = 0
+    names = [["\xFF".dup.force_encoding("UTF-8")], ["caf\xE9".b], ["x".encode("UTF-16LE")]]
+    opener = Mistri::Tool.define("open_tracker", "Opens the tracker.") do
+      ran += 1
+      Mistri::ToolResult.new(content: "Open.", loads: names.shift)
+    end
+    turns = Array.new(3) { { tool_calls: [{ name: "open_tracker" }] } } + [{ text: "Done." }]
+    agent, = agent(turns, tools: [opener, *tools])
+
+    result = agent.run("Open the tracker three times.")
+    answers = agent.session.messages.select(&:tool?)
+
+    assert_predicate result, :completed?
+    assert_equal 3, ran
+    assert(answers.all?(&:tool_error?))
+    assert(answers.all? { |answer| answer.text.include?("loads") })
+    broken = ["\xFF".dup.force_encoding("UTF-8")]
+
+    assert_raises(ArgumentError) do
+      Mistri::Message.tool(content: "x", tool_call_id: "1", loads: broken)
+    end
+  end
+
+  def test_a_long_description_is_cut_in_the_search_answer
+    long = tool("tracker__export", "Exports everything. #{"It is very thorough. " * 5_000}")
+    agent, = agent([{ tool_calls: [search("export")] }, { text: "Found." }], tools: [long])
+
+    agent.run("Export it.")
+    answer = agent.session.messages.find(&:tool?)
+
+    assert_operator answer.text.bytesize, :<, 400
+    assert_match(/- tracker__export: Exports everything\. It is very thorough\./, answer.text)
+    assert answer.text.end_with?("...")
+  end
+
+  def test_a_query_with_nothing_to_search_by_says_so
+    agent, = agent([{ tool_calls: [search("the of and")] }, { text: "Sorry." }])
+
+    agent.run("Search.")
+    answer = agent.session.messages.find(&:tool?)
+
+    assert_predicate answer, :tool_error?
+    assert_match(/nothing to search by/i, answer.text)
   end
 
   def test_a_failed_result_loads_nothing

@@ -307,8 +307,15 @@ model asks it in words for what it needs to do. The search ranks the deferred
 tools by their name, their description and the names and descriptions of their
 parameters, loads the best matches (eight by default, twenty at most) and
 answers with their names. From its next step the model calls them like any
-other tool. The description of `tool_search` tells the model how many tools
-wait under each name prefix, so give a server a prefix that says what it is.
+other tool. The description of `tool_search` tells the model how many tools it
+searches under each name prefix, so give a server a prefix that says what it
+is.
+
+A query that is a tool's name finds that tool first. The search matches words,
+so it finds what a name, a description or a parameter says and not what they
+mean. Chinese, Japanese and Korean text, which has no spaces between words, is
+matched by pairs of characters. Other scripts written without spaces match
+poorly. A query is read up to 500 characters.
 
 A load is stored with the tool result that made it. A later run on the same
 session offers the same tools with no new search. A load the model no longer

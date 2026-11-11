@@ -8,6 +8,8 @@ module Mistri
     NAME = "tool_search"
     LIMIT = 8
     MAX_LIMIT = 20
+    QUERY_LIMIT = 500
+    SUMMARY_LIMIT = 200
     # Okapi BM25 over the description and the parameters.
     K1 = 1.2
     B = 0.75
@@ -17,7 +19,11 @@ module Mistri
     STOP_WORDS = %w[
       a an and are as at be by for from in is it of on or that the this to with
     ].freeze
-    private_constant :K1, :B, :NAME_WEIGHT, :STOP_WORDS
+    # Chinese, Japanese and Korean are written without spaces between words.
+    UNSPACED = "\\p{Han}\\p{Hangul}\\u3040-\\u30FF"
+    WORD = /[#{UNSPACED}]+|[[:alnum:]&&[^#{UNSPACED}]]+/
+    UNSPACED_RUN = /\A[#{UNSPACED}]/
+    private_constant :K1, :B, :NAME_WEIGHT, :STOP_WORDS, :UNSPACED, :WORD, :UNSPACED_RUN
 
     Document = Data.define(:tool, :summary, :name_words, :local_words, :counts, :length)
     private_constant :Document
@@ -31,49 +37,62 @@ module Mistri
         string :query, "Words for what you need to do", required: true
         integer :limit, "How many tools to load at most (default #{LIMIT}, at most #{MAX_LIMIT})"
       }) do |args|
-        query = args["query"].to_s
-        next ToolResult.new(content: "The query is empty. Say what you need to do.", error: true) \
-          if words(query).empty?
-
+        query = args["query"].to_s[0, QUERY_LIMIT]
         documents ||= deferred.map { |tool| document(tool) }
-        answer(search(query, documents, args.fetch("limit", LIMIT).to_i.clamp(1, MAX_LIMIT)))
+        found = search(query, documents, args.fetch("limit", LIMIT).to_i.clamp(1, MAX_LIMIT))
+        next answer(found) if found.any? || words(query).any?
+
+        ToolResult.new(content: "There is nothing to search by in that query. Say what you " \
+                                "need to do in a few words.", error: true)
       end
     end
 
-    # The best matches, best first. A tool that matches more of the query's
-    # words comes before one that matches fewer, whatever their scores, and a
-    # query that is a tool's name, with or without its prefix, finds it first.
-    # Equal matches keep the order the tools were given in.
+    # The best matches, best first. A query that is a tool's name finds that
+    # tool first: the name itself, then the name without its prefix, then a
+    # name that reads the same with other punctuation. After those, a tool
+    # that matches more of the query's words comes before one that matches
+    # fewer, whatever their scores. Equal matches keep the order the tools
+    # were given in.
     def rank(query, tools, limit)
       search(query, tools.map { |tool| document(tool) }, limit).map(&:tool)
     end
 
     def search(query, documents, limit)
-      terms = words(query).uniq
-      return [] if terms.empty? || limit <= 0
+      return [] if limit <= 0
 
+      terms = words(query).uniq
       weights = weights(terms, documents)
       average = documents.sum(&:length).fdiv(documents.length).nonzero? || 1.0
-      exact = identifier(query)
       matches = documents.each_with_index.filter_map do |document, index|
+        name = name_rank(document.tool.name, query.strip)
         covered, score = score(document, terms, weights, average)
-        next if covered.zero?
-
-        named = identifier(document.tool.name)
-        [named == exact || named.end_with?("__#{exact}") ? 0 : 1, -covered, -score, index, document]
+        [name, -covered, -score, index, document] if covered.positive? || name < 3
       end
       matches.sort.first(limit).map(&:last)
     end
     private_class_method :search
 
+    # How a query names a tool: 0 its name, 1 its name without the prefix,
+    # 2 a name that reads the same, 3 not at all.
+    def name_rank(name, query)
+      return 3 if query.empty?
+      return 0 if name == query
+      return 1 if name.end_with?("__#{query}")
+
+      alike = identifier(name)
+      wanted = identifier(query)
+      alike == wanted || alike.end_with?("__#{wanted}") ? 2 : 3
+    end
+    private_class_method :name_rank
+
     def description(deferred)
-      "Finds tools that are not loaded yet and loads the best matches. You can call a loaded " \
+      "Finds tools you have not been shown and loads the best matches. You can call a loaded " \
         "tool from your next step. Search here before you say you cannot do something.\n" \
-        "Not loaded yet: #{waiting(deferred)}."
+        "It searches: #{inventory(deferred)}."
     end
     private_class_method :description
 
-    def waiting(deferred)
+    def inventory(deferred)
       prefixed, plain = deferred.map(&:name).partition { |name| name.include?("__") }
       groups = prefixed.group_by { |name| name.split("__", 2).first }.map do |prefix, names|
         "#{prefix} (#{count(names.length, "tool")})"
@@ -81,7 +100,7 @@ module Mistri
       groups << count(plain.length, groups.empty? ? "tool" : "other") if plain.any?
       groups.join(", ")
     end
-    private_class_method :waiting
+    private_class_method :inventory
 
     def count(number, noun) = "#{number} #{noun}#{"s" unless number == 1}"
     private_class_method :count
@@ -104,12 +123,19 @@ module Mistri
       parts = [description]
       schema_text(spec[:input_schema], parts)
       counts = words(parts.join(" ")).tally
-      Document.new(tool:, summary: description.lines.first.to_s.strip,
+      Document.new(tool:, summary: summary(description),
                    name_words: words(tool.name).uniq,
                    local_words: words(tool.name.split("__").last).uniq,
                    counts:, length: counts.sum { |_word, times| times })
     end
     private_class_method :document
+
+    # The first line of a description, short enough to list twenty of.
+    def summary(description)
+      line = description.lines.first.to_s.strip
+      line.length > SUMMARY_LIMIT ? "#{line[0, SUMMARY_LIMIT - 3]}..." : line
+    end
+    private_class_method :summary
 
     # Descriptions and property names, through nested objects, arrays,
     # alternatives and shared definitions.
@@ -169,10 +195,17 @@ module Mistri
 
     def words(text)
       text.to_s.gsub(/([a-z0-9])([A-Z])/, '\1 \2').gsub(/([A-Z]+)([A-Z][a-z])/, '\1 \2')
-          .downcase.scan(/[[:alnum:]]+/)
+          .downcase.scan(WORD).flat_map { |word| word.match?(UNSPACED_RUN) ? pairs(word) : word }
           .reject { |word| STOP_WORDS.include?(word) }.map { |word| singular(word) }
     end
     private_class_method :words
+
+    # A run with no spaces has no words to split at, so it is matched by its
+    # pairs of characters.
+    def pairs(run)
+      run.length < 2 ? [run] : run.each_char.each_cons(2).map(&:join)
+    end
+    private_class_method :pairs
 
     def singular(word)
       return "#{word[0...-3]}y" if word.length > 4 && word.end_with?("ies")

@@ -22,7 +22,7 @@ module Mistri
       unless [true, false].include?(error)
         raise ArgumentError, "tool result error must be true or false"
       end
-      unless loads.nil? || (loads.is_a?(Array) && loads.all?(String))
+      unless loads.nil? || Message.names?(loads)
         raise ArgumentError, "tool result loads must be an array of tool names"
       end
 

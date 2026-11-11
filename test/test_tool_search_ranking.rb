@@ -35,6 +35,47 @@ class TestToolSearchRanking < Minitest::Test
     assert_equal "tracker__read_thread", rank("read thread", tools).first
   end
 
+  def test_a_tool_is_found_by_its_exact_name_whatever_the_name_is
+    tools = [tool("at", "Schedules a command."), tool("_", "Repeats the last command."),
+             tool("other", "At the end of the day it does nothing.")]
+
+    assert_equal %w[at], rank("at", tools)
+    assert_equal %w[_], rank("_", tools)
+  end
+
+  def test_the_literal_name_comes_before_names_that_only_read_alike
+    alike = %w[get-open-pull-request-status get_open-pull-request-status
+               get-open_pull-request-status get_open_pull-request-status
+               get-open-pull_request-status get_open-pull_request-status
+               get-open_pull_request-status get_open_pull_request-status
+               get-open-pull-request_status get_open_pull_request_status]
+    tools = alike.map { |name| tool(name, "Reads the status.") }
+
+    assert_equal "get_open_pull_request_status", rank("get_open_pull_request_status", tools).first
+    assert_equal "tracker__list",
+                 rank("list", [tool("docs__list-all"), tool("tracker__list")]).first
+    assert_equal "b__get_status",
+                 rank("get_status", [tool("a__get-status"), tool("b__get_status")]).first
+    assert_equal 8, rank("get_open_pull_request_status", tools).length
+  end
+
+  def test_text_written_without_spaces_is_matched_by_pairs_of_characters
+    search = tool("docs__search", "搜索团队文档并返回结果")
+    other = tool("docs__delete", "删除一个页面")
+
+    assert_equal %w[docs__search], rank("搜索文档", [other, search])
+    assert_equal %w[docs__delete], rank("删除页面", [other, search])
+    assert_equal %w[notes__find], rank("ノート", [tool("notes__find", "ノートを検索します"), other])
+  end
+
+  def test_words_and_text_without_spaces_can_sit_side_by_side
+    mixed = tool("docs__find", "PDF文档搜索")
+    other = tool("docs__delete", "删除一个页面")
+
+    assert_equal %w[docs__find], rank("pdf", [other, mixed])
+    assert_equal %w[docs__find], rank("文档", [other, mixed])
+  end
+
   def test_names_split_at_underscores_hyphens_and_capitals
     tools = [tool("createIssue"), tool("delete-project"), tool("list_teams"), tool("getPRDiff")]
 

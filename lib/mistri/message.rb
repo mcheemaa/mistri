@@ -42,6 +42,14 @@ module Mistri
             loads:)
     end
 
+    # Tool names a session can store: strings of plain ASCII or valid UTF-8.
+    def self.names?(value)
+      value.is_a?(Array) && value.all? do |name|
+        name.is_a?(String) &&
+          (name.ascii_only? || (name.encoding == Encoding::UTF_8 && name.valid_encoding?))
+      end
+    end
+
     def self.system(content) = new(role: :system, content:)
 
     def self.user(content) = new(role: :user, content:)
@@ -104,9 +112,7 @@ module Mistri
 
     def owned_loads(loads, role)
       return nil if loads.nil?
-      unless loads.is_a?(Array) && loads.all?(String)
-        raise ArgumentError, "loads must be an array of tool names"
-      end
+      raise ArgumentError, "loads must be an array of tool names" unless Message.names?(loads)
       return nil if loads.empty?
       raise ArgumentError, "loads is only valid on tool messages" if role != :tool
 
