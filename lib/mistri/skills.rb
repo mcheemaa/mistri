@@ -28,7 +28,7 @@ module Mistri
     end
 
     def read(file, default_name:)
-      meta, body = parse(File.read(file))
+      meta, body = parse(File.read(file, encoding: Encoding::UTF_8))
       Skill.new(name: meta.fetch("name", default_name),
                 description: meta.fetch("description", ""), body: body)
     end

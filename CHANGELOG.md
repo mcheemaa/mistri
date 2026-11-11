@@ -10,6 +10,14 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   stdio was never counted, so a server with a long tool list could be listed
   on two transports and refused on the third. The byte, depth and number
   limits stay.
+- With `client_secret_basic`, an MCP token request carries the client id only
+  in the Basic header. It was also sent in the form, and some token endpoints
+  refuse that combination.
+- Files are read as UTF-8 wherever the process runs. In a process with no
+  UTF-8 locale (cron, a systemd unit, an image with no `LANG`) the JSONL store
+  could not load a session that held a non-ASCII character, a skill or a
+  definition with one failed to load, and a workspace file with one was read
+  as an invalid string.
 - A large tool list no longer ends every OpenAI run. The Responses stream
   repeats the request's tool definitions in its own events, and the 20,001
   token ceiling on a stream record refused that once the list was large
