@@ -34,7 +34,7 @@ module Mistri
       def load(id, from: 0)
         return [] unless File.exist?(path(id))
 
-        entries = File.readlines(path(id)).filter_map do |line|
+        entries = File.readlines(path(id), encoding: Encoding::UTF_8).filter_map do |line|
           JSON.parse(line)
         rescue JSON::ParserError
           nil

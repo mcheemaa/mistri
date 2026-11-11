@@ -8,6 +8,24 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - With `client_secret_basic`, an MCP token request carries the client id only
   in the Basic header. It was also sent in the form, and a strict token
   endpoint refuses a request that identifies the client twice.
+- Files are read as UTF-8 wherever the process runs. In a process with no
+  UTF-8 locale (cron, a systemd unit, an image with no `LANG`) the JSONL store
+  could not load a session that held a non-ASCII character, a skill or a
+  definition with one failed to load, and a workspace file with one was read
+  as an invalid string.
+- A large tool list no longer ends every OpenAI run. The Responses stream
+  repeats the request's tool definitions in its own events, and the 20,001
+  token ceiling on a stream record refused that once the list was large
+  enough. OpenAI and Anthropic stream records are no longer held to that
+  ceiling: the arguments of a tool the host runs arrive there as encoded
+  strings with their own limits. Gemini records and MCP SSE records keep it,
+  and every record keeps its byte, depth and number limits.
+- A finished worker is read from the end of its log. On a store that answers
+  `size`, the first `Child#status`, `report` or `error` reads its last entry,
+  and the first `Child#transcript(tail:)` reads only the entries it returns.
+  The check before a spawn and `list_agents` used to load the whole log of
+  every worker the session ever had. A worker that has not finished is still
+  read whole, once, and a `Child` that holds its log reads on from it.
 - A session starts at its newest checkpoint. A compaction entry carries the
   sub-agent links, the delivered reports and the old-style call ids with an
   approval from before it, and a session reads, replays and audits from its

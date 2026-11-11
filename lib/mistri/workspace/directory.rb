@@ -19,7 +19,7 @@ module Mistri
 
       def read(path)
         full = resolve(path)
-        File.exist?(full) ? File.read(full) : nil
+        File.exist?(full) ? File.read(full, encoding: Encoding::UTF_8) : nil
       end
 
       def write(path, content)
