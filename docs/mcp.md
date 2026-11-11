@@ -130,9 +130,10 @@ used as given.
 
 A tool that cannot be bridged is left out, and the server's other tools stay
 usable. That is a tool whose schema is not one Mistri can validate, one with
-no name, and one whose local name is already taken by a tool listed before
-it. Without a block the tool and the reason are written as a warning. With
-one, the block is given the remote definition and the error:
+no name, a definition that is not an object, and a tool whose local name is
+already taken by one listed before it. Without a block the tool and the reason
+are written as a warning. With one, the block is given the remote definition
+and the error:
 
 ```ruby
 tools = Mistri::MCP.tools(client, prefix: "tracker") do |definition, error|

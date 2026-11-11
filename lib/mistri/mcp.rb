@@ -57,15 +57,14 @@ module Mistri
     # and the error, and without a block it is named in a warning.
     def tools(client, allow: nil, deny: [], prefix: nil, needs_approval: false, gates: {},
               complete_argument_validator: nil)
-      listed = client.tools
-      listed = listed.select { |tool| allow.include?(tool["name"]) } if allow
-      listed = listed.reject { |tool| deny.include?(tool["name"]) }
       taken = {}
-      listed.filter_map do |tool|
-        bridged = bridge(client, tool, prefix: prefix,
-                                       gate: gates.fetch(tool["name"], needs_approval),
+      client.tools.filter_map do |tool|
+        remote = tool["name"] if tool.is_a?(Hash)
+        next if deny.include?(remote) || (allow && !allow.include?(remote))
+
+        bridged = bridge(client, tool, prefix: prefix, gate: gates.fetch(remote, needs_approval),
                                        complete_argument_validator: complete_argument_validator)
-        claim(taken, bridged.name, tool["name"])
+        claim(taken, bridged.name, remote)
         bridged
       rescue ConfigurationError => e
         block_given? ? yield(tool, e) : warn("mistri: #{e.message}; the tool was left out")
@@ -77,17 +76,23 @@ module Mistri
       holder = taken[local]
       if holder
         raise ConfigurationError,
-              "MCP tool #{remote.inspect}: the name #{local.inspect} is taken by #{holder.inspect}"
+              "MCP tool #{label(remote)}: the name #{local.inspect} is taken by #{label(holder)}"
       end
 
       taken[local] = remote
     end
     private_class_method :claim
 
+    # A remote name is the server's to choose, so a message carries its start.
+    def label(remote) = remote.inspect[0, 120]
+    private_class_method :label
+
     # The model calls the tool by name, or by a safe name made from prefix and
     # the remote name. The server is always called with the remote name.
     def bridge(client, spec, prefix: nil, name: nil, gate: false,
                complete_argument_validator: nil)
+      raise ConfigurationError, "the definition is not an object" unless spec.is_a?(Hash)
+
       remote = spec["name"]
       unless remote.is_a?(String) && !remote.empty?
         raise ConfigurationError, "the definition has no name"
@@ -109,7 +114,7 @@ module Mistri
         answer(client.call_tool(remote, args || {}))
       end
     rescue ConfigurationError => e
-      raise ConfigurationError, "MCP tool #{remote.inspect}: #{e.message}"
+      raise ConfigurationError, "MCP tool #{label(remote)}: #{e.message}"
     end
 
     # The local name of a remote tool. One that every provider takes stays

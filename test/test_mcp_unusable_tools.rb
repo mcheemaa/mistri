@@ -74,6 +74,37 @@ class TestMcpUnusableTools < Minitest::Test
     assert_equal "Does broken.", tools.first.description
   end
 
+  def test_a_definition_that_is_not_an_object_is_left_out
+    [nil, "text", 5, [], true].each do |definition|
+      left_out = []
+
+      tools = Mistri::MCP.tools(client_for(definition, good("search"))) do |tool, error|
+        left_out << [tool, error.message]
+      end
+
+      assert_equal %w[search], tools.map(&:name)
+      assert_equal [definition], left_out.map(&:first)
+      assert_match(/the definition is not an object/, left_out.first.last)
+    end
+  end
+
+  def test_a_message_carries_only_the_start_of_a_long_remote_name
+    long = "x" * 100_000
+    messages = []
+
+    _out, err = capture_io do
+      Mistri::MCP.tools(client_for(broken.merge("name" => long), good("search")))
+    end
+    Mistri::MCP.tools(client_for(good(long), good(Mistri::MCP.local_name(long)))) do |_tool, error|
+      messages << error.message
+    end
+
+    assert_operator err.bytesize, :<, 400
+    assert_match(/MCP tool "xxx.*must declare type object.*left out/, err)
+    assert_operator messages.first.bytesize, :<, 400
+    assert_match(/is taken by "xxx/, messages.first)
+  end
+
   def test_a_host_that_wants_the_old_behaviour_raises_from_the_block
     assert_raises(Mistri::ConfigurationError) do
       Mistri::MCP.tools(client_for(good("search"), broken)) { |_tool, error| raise error }
