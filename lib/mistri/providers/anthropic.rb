@@ -96,7 +96,7 @@ module Mistri
         }
         system_blocks = Serializer.system_blocks(system, cache: @cache)
         body[:system] = system_blocks if system_blocks
-        body[:tools] = Serializer.tools(tools, deferred) if tools.any?
+        body[:tools] = Serializer.tools(tools, deferred) if tools.any? || deferred.any?
         service_tier = overrides.fetch(:service_tier, @service_tier)
         body[:service_tier] = service_tier if service_tier
         thinking = thinking_for(model, overrides)

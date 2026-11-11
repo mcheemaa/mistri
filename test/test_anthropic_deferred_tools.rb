@@ -122,6 +122,27 @@ class TestAnthropicDeferredTools < Minitest::Test
                  body["messages"].last["content"].first["content"]
   end
 
+  def test_deferred_definitions_travel_when_they_are_the_only_tools
+    @server = Mistri::Test::StubServer.new do |socket, _request|
+      @server.start_sse(socket)
+      @server.sse_data(socket, { "type" => "message_stop" })
+      @server.finish_sse(socket)
+    end
+    @provider = Mistri::Providers::Anthropic.new(api_key: "k", origin: @server.origin)
+    deferred = [spec("create_issue")]
+
+    @provider.stream(messages: [Mistri::Message.user("go")], deferred_tools: deferred)
+    @provider.stream(messages: history(loading(%w[create_issue])), deferred_tools: deferred)
+    first, replay = @server.requests.map { |request| JSON.parse(request[:body]) }
+
+    [first, replay].each do |body|
+      assert_equal([["create_issue", true]],
+                   body["tools"].map { |tool| [tool["name"], tool["defer_loading"]] })
+    end
+    assert_equal [{ "type" => "tool_reference", "tool_name" => "create_issue" }],
+                 replay["messages"].last["content"].first["content"]
+  end
+
   def test_an_agent_gives_such_a_provider_the_same_tools_every_turn
     provider = Class.new(Mistri::Providers::Fake) { def defers_tools? = true }.new(
       turns: [{ tool_calls: [{ name: "tool_search", arguments: { "query" => "issue" } }] },
