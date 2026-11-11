@@ -7,8 +7,8 @@ module Mistri
   # agents or runs behaves identically for each: the loop measures and asks
   # between turns, and a run always finishes the turn it is in.
   #
-  # wrap_up: true spends one more turn past a reached ceiling so the model
-  # answers the user itself; without it the run ends on a fixed message.
+  # wrap_up: true spends one tool-free turn past a ceiling so the model can
+  # answer.
   class Budget
     def initialize(turns: nil, tokens: nil, cost_usd: nil, wall_clock: nil, wrap_up: false)
       @turns = turns

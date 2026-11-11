@@ -89,8 +89,8 @@ module Mistri
 
     def tool_calls? = content.any?(ToolCall)
 
-    # Its thinking is signed against every earlier message, so it verifies
-    # only when replayed after the exact history it was produced under.
+    # Its thinking signs every earlier message, so it verifies only after
+    # that exact history.
     def prefix_bound_thinking?
       assistant? && provider == :anthropic && Models.prefix_bound_thinking?(model)
     end

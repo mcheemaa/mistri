@@ -24,8 +24,7 @@ module Mistri
     MAX_ARGUMENT_ERROR_BYTES = 2048
     MAX_VIOLATION_SOURCE_BYTES = 4096
     TOOL_ARGUMENT_VALIDATOR = Tool.instance_method(:validate_arguments)
-    # Sent with the wrap-up turn and never stored: without it a model cut
-    # off mid-task answers as if it will keep working.
+    # Without it, a model cut off mid-task answers as if it will keep working.
     WRAP_UP = "This run has reached its limit and cannot continue or call tools. Reply to " \
               "the user now: give your best answer from the work so far, and say what is " \
               "done and what is not."
@@ -323,7 +322,6 @@ module Mistri
       end
     end
 
-    # Persists and announces the attempt request_turn accepted.
     def run_turn(signal, output_schema = nil, &emit)
       message, held, usage = request_turn(signal, output_schema, &emit)
       emit&.call(held) if held
@@ -332,9 +330,8 @@ module Mistri
       [message, usage]
     end
 
-    # One provider turn with its retries. The accepted attempt returns
-    # unpersisted with its terminal event held: the caller decides what the
-    # session and the subscriber see of it.
+    # One provider turn with retries. The caller persists the accepted
+    # attempt and emits its held terminal event.
     #
     # transform_context reshapes what the model sees each turn (reminders,
     # redaction, windowing) without touching what the session stores. The
@@ -352,7 +349,7 @@ module Mistri
         transform.call(messages)
       end
       history += [Message.user(WRAP_UP)] if wrap_up
-      # The APIs reject a tool choice on a request that declares no tools.
+      # APIs reject tool_choice without tools.
       options = wrap_up && @tool_specs.any? ? { tool_choice: :none } : {}
       attempt = 0
       usage = Usage.zero
@@ -1012,15 +1009,13 @@ module Mistri
       budget_stopped(reason, usage, &)
     end
 
-    # The model answers under a spent budget with tool calls forbidden. A
-    # provider that calls a tool anyway has the call dropped: nothing will
-    # run it, and an unanswered call makes the transcript unreplayable.
+    # Tool calls are forbidden; any sent anyway are dropped, since an
+    # unanswered call makes the transcript unreplayable.
     def wrap_up(reason, usage, signal, &emit)
-      # The final answer must see a steer or report that arrived in the
-      # last tool batch; the first budget check runs before the loop folds.
+      # The budget check runs before the loop folds, so a steer from the
+      # last tool batch is still pending.
       fold_inbox
-      # No output schema: it would force a made-up value, and a task's
-      # output comes only from a validated completion.
+      # No schema: it would force the model to invent output.
       message, held, turn_usage = request_turn(signal, nil, wrap_up: true, &emit)
       usage += turn_usage
       content = message.content.grep_v(ToolCall)
