@@ -113,8 +113,8 @@ looping or allocating without bound.
 
 `Mistri::MCP.tools` filters remote names with `allow:` and `deny:`. `prefix:`
 creates local names such as `linear__create_issue` while the remote call still
-uses `create_issue`. Duplicate local tool names make Agent construction fail;
-one server can never silently shadow another.
+uses `create_issue`. Duplicate local tool names from two servers make Agent
+construction fail; one server can never silently shadow another.
 
 A local name is one every provider takes: letters, digits, underscores and
 hyphens, 64 characters at most, not starting with a digit or a hyphen. A name
@@ -127,6 +127,31 @@ the same in every run, whatever else the server lists.
 `Mistri::MCP.local_name(remote, prefix)` gives it. A host that keeps names of
 its own passes one with `bridge(client, definition, name:)`, and that name is
 used as given.
+
+A tool that cannot be bridged is left out, and the server's other tools stay
+usable. That is a tool whose schema is not one Mistri can validate, one with
+no name, one whose name or description is not UTF-8 text, a definition that
+is not an object, and a tool whose local name is already taken by one listed
+before it. Without a block the tool and the reason are written as a warning.
+With one, the block is given what the server listed and the error, whose
+message names the tool:
+
+```ruby
+tools = Mistri::MCP.tools(client, prefix: "tracker") do |_definition, error|
+  connection.note_unusable(error.message)
+end
+```
+
+What the server listed may not be an object, so check before reading a key
+from it. A host that would sooner fail raises the error from the block.
+`Mistri::MCP.bridge`, which takes one definition, still raises.
+
+Two listed tools can get the same local name: the server lists one name twice,
+lists a tool under the name Mistri made for another, or lists two long names
+that share their first 55 characters and the short hash. The first one listed
+keeps the name, so the order the server lists in decides which remote tool the
+name calls. A host that stores local names or holds approvals across runs for
+such a server should raise from the block.
 
 `needs_approval:` gates every bridged tool. `gates:` sets policy by remote name
 and overrides the shared default.

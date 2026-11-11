@@ -11,6 +11,8 @@ class TestMcpBridge < Minitest::Test
                             allow_non_public: Mistri::Test::ALLOW_LOOPBACK)
   end
 
+  def bridge_first(client, **) = Mistri::MCP.bridge(client, client.tools.first, **)
+
   def recording_client(listed)
     Class.new do
       def initialize(listed)
@@ -74,7 +76,7 @@ class TestMcpBridge < Minitest::Test
                 } }]
     client = Struct.new(:tools).new(listed)
 
-    error = assert_raises(Mistri::ConfigurationError) { Mistri::MCP.tools(client) }
+    error = assert_raises(Mistri::ConfigurationError) { bridge_first(client) }
 
     assert_match(/MCP tool "labels"/, error.message)
     validated = []
@@ -95,7 +97,7 @@ class TestMcpBridge < Minitest::Test
       [{ "name" => "disabled", "description" => "Disabled.", "inputSchema" => false }]
     )
 
-    error = assert_raises(Mistri::ConfigurationError) { Mistri::MCP.tools(client) }
+    error = assert_raises(Mistri::ConfigurationError) { bridge_first(client) }
 
     assert_match(/MCP tool "disabled"/, error.message)
     assert_match(/must declare type object/, error.message)
@@ -108,7 +110,7 @@ class TestMcpBridge < Minitest::Test
     )
 
     tool = Mistri::MCP.tools(omitted).first
-    error = assert_raises(Mistri::ConfigurationError) { Mistri::MCP.tools(null) }
+    error = assert_raises(Mistri::ConfigurationError) { bridge_first(null) }
 
     assert_equal({ "type" => "object", "properties" => {},
                    "additionalProperties" => false }, tool.input_schema)
@@ -165,7 +167,7 @@ class TestMcpBridge < Minitest::Test
                 } }]
     client = Struct.new(:tools).new(listed)
 
-    error = assert_raises(Mistri::ConfigurationError) { Mistri::MCP.tools(client) }
+    error = assert_raises(Mistri::ConfigurationError) { bridge_first(client) }
 
     assert_match(/pattern properties require a complete argument validator/, error.message)
   end
@@ -190,7 +192,7 @@ class TestMcpBridge < Minitest::Test
          "inputSchema" => { "type" => "object", "dependentRequired" => [] } }]
     )
 
-    error = assert_raises(Mistri::ConfigurationError) { Mistri::MCP.tools(client) }
+    error = assert_raises(Mistri::ConfigurationError) { bridge_first(client) }
 
     assert_match(/MCP tool "broken_dependencies"/, error.message)
     assert_match(/dependentRequired must be an object/, error.message)
@@ -227,13 +229,13 @@ class TestMcpBridge < Minitest::Test
                                complete_argument_validator: complete).first
     end
     error = assert_raises(Mistri::ConfigurationError) do
-      Mistri::MCP.tools(external, complete_argument_validator: complete)
+      bridge_first(external, complete_argument_validator: complete)
     end
 
     assert_match(/MCP tool "external"/, error.message)
     assert_match(/same-document reference beginning with #/, error.message)
 
-    default_mode = assert_raises(Mistri::ConfigurationError) { Mistri::MCP.tools(external) }
+    default_mode = assert_raises(Mistri::ConfigurationError) { bridge_first(external) }
 
     assert_match(/same-document reference beginning with #/, default_mode.message)
   end

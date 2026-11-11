@@ -5,6 +5,12 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+- `MCP.tools` leaves out a tool it cannot bridge and keeps the rest of the
+  server. One tool with a schema Mistri could not validate used to raise for
+  the whole list, and a name the server listed twice failed Agent
+  construction. The tool and the reason go to a warning, or to the block
+  when one is given, and a host that would sooner fail raises from the block.
+  `MCP.bridge` still raises for the one definition it is given.
 - A bridged MCP tool gets a name every provider takes. MCP allows dots,
   slashes and any length in a tool name, and one name the model's API refused
   failed the whole request. A name of letters, digits, underscores and

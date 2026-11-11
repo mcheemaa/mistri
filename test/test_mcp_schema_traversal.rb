@@ -14,7 +14,7 @@ class TestMcpSchemaTraversal < Minitest::Test
 
     invalid.each do |dependencies, message|
       error = assert_raises(Mistri::ConfigurationError) do
-        Mistri::MCP.tools(client_for("dependencies" => dependencies))
+        bridge_first(client_for("dependencies" => dependencies))
       end
 
       assert_match message, error.message
@@ -62,13 +62,15 @@ class TestMcpSchemaTraversal < Minitest::Test
     }
     client = client_for(schema)
 
-    error = assert_raises(Mistri::ConfigurationError) { Mistri::MCP.tools(client) }
+    error = assert_raises(Mistri::ConfigurationError) { bridge_first(client) }
 
     assert_match(/dependencies\.labels\.patternProperties/, error.message)
     assert Mistri::MCP.tools(client, complete_argument_validator: ->(*) { [] }).first
   end
 
   private
+
+  def bridge_first(client, **) = Mistri::MCP.bridge(client, client.tools.first, **)
 
   def client_for(schema)
     schema = { "type" => "object" }.merge(schema)
@@ -81,7 +83,7 @@ class TestMcpSchemaTraversal < Minitest::Test
     [nil, ->(*) { [] }].each do |validator|
       options = validator ? { complete_argument_validator: validator } : {}
       error = assert_raises(Mistri::ConfigurationError) do
-        Mistri::MCP.tools(client_for(schema), **options)
+        bridge_first(client_for(schema), **options)
       end
 
       assert_match path, error.message
