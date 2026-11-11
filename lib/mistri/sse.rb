@@ -22,6 +22,9 @@ module Mistri
       unless max_record_bytes.is_a?(Integer) && max_record_bytes.positive?
         raise ConfigurationError, "max_record_bytes: must be a positive integer"
       end
+      unless max_record_tokens.is_a?(Integer) && max_record_tokens.positive?
+        raise ConfigurationError, "max_record_tokens: must be a positive integer"
+      end
 
       @max_record_bytes = max_record_bytes
       @max_record_tokens = max_record_tokens

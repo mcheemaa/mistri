@@ -99,13 +99,10 @@ module Mistri
 
     # POST and stream the SSE response, yielding each decoded data record.
     # Returns :aborted when the signal cancelled the stream, else nil.
-    def stream_post(path, body:, headers: {}, signal: nil,
-                    max_record_tokens: ToolArguments::MAX_LEXICAL_TOKENS, &block)
+    def stream_post(path, body:, headers: {}, signal: nil, echoes_request: false, &block)
       return :aborted if signal&.aborted?
 
-      @mutex.synchronize do
-        stream_locked(path, body, headers, signal, max_record_tokens, &block)
-      end
+      @mutex.synchronize { stream_locked(path, body, headers, signal, echoes_request, &block) }
     end
 
     # POST for Streamable-HTTP endpoints (the MCP shape) that answer either
@@ -163,7 +160,7 @@ module Mistri
       end
     end
 
-    def stream_locked(path, body, headers, signal, max_record_tokens, &block)
+    def stream_locked(path, body, headers, signal, echoes_request, &block)
       retried = false
       begin
         started = false
@@ -174,10 +171,12 @@ module Mistri
         # socket.
         closer = signal&.on_abort { quietly_finish(conn) }
         begin
-          conn.request(build_request(path, body, headers, streaming: true)) do |response|
+          request = build_request(path, body, headers, streaming: true)
+          tokens = record_tokens(request, echoes_request)
+          conn.request(request) do |response|
             started = true
             raise_for_status(response)
-            aborted = read_stream(response, signal, max_record_tokens, &block)
+            aborted = read_stream(response, signal, tokens, &block)
           end
         ensure
           signal&.remove_callback(closer) if closer
@@ -201,6 +200,14 @@ module Mistri
         end
         raise ProviderError, "connection lost mid-stream: #{e.message}"
       end
+    end
+
+    # A stream that echoes its request may spend as many more tokens in a
+    # record as the request had bytes. A JSON token is at least one byte, so
+    # the echo always fits, and the allowance follows what the host sent.
+    def record_tokens(request, echoes_request)
+      limit = ToolArguments::MAX_LEXICAL_TOKENS
+      echoes_request ? limit + request.body.bytesize : limit
     end
 
     def read_stream(response, signal, max_record_tokens, &block)

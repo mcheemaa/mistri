@@ -8,9 +8,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - A large tool list no longer ends every OpenAI run. The Responses stream
   echoes the request's tool definitions in its own events, and the 20,001
   token ceiling on a stream record refused that echo once the list was large
-  enough. An OpenAI stream record is no longer held to that ceiling. Its byte,
-  depth and number limits stay, and Anthropic, Gemini and MCP records are
-  checked as before.
+  enough. An OpenAI stream record may now hold as many more tokens as the
+  request had bytes, so the echo always fits and a small request still gets
+  a small allowance. Its byte, depth and number limits stay, and Anthropic,
+  Gemini and MCP records are checked as before.
 - A finished worker is read from the end of its log. On a store that answers
   `size`, the first `Child#status`, `report` or `error` reads its last entry,
   and the first `Child#transcript(tail:)` reads only the entries it returns.

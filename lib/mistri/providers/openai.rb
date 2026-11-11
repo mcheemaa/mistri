@@ -47,10 +47,9 @@ module Mistri
         assembler.start(&delivery)
         body = build_body(model, messages, system, tools, overrides)
         # The Responses stream echoes the request in its own events, tool
-        # definitions included, so a record's tokens follow what the host
-        # sent. Its bytes, depth and numbers stay bounded.
+        # definitions included.
         outcome = @transport.stream_post(
-          "/v1/responses", body:, headers:, signal:, max_record_tokens: Float::INFINITY
+          "/v1/responses", body:, headers:, signal:, echoes_request: true
         ) { |record| assembler.feed(record, &delivery) }
         outcome == :aborted ? assembler.abort(&delivery) : assembler.finish(&delivery)
       rescue EventDelivery::Failure => e

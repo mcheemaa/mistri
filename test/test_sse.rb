@@ -89,6 +89,16 @@ class TestSSE < Minitest::Test
     end
   end
 
+  def test_rejects_an_invalid_token_limit
+    [nil, 0, -1, 1.5, "10", Float::NAN].each do |value|
+      error = assert_raises(Mistri::ConfigurationError) do
+        Mistri::SSE.new(max_record_tokens: value)
+      end
+
+      assert_equal "max_record_tokens: must be a positive integer", error.message
+    end
+  end
+
   def test_rejects_a_structurally_wide_record_before_json_parsing
     arguments = Mistri.const_get(:ToolArguments, false)
     line = "data: [#{Array.new(20_002, "0").join(",")}]"
