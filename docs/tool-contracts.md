@@ -340,8 +340,12 @@ up to 500 characters.
 
 A load is stored with the tool result that made it. A later run on the same
 session offers the same tools with no new search. A load the model no longer
-sees is no longer in effect: after a compaction that summarizes the search,
-the model searches again.
+sees is no longer in effect. After a compaction that summarizes the search,
+the summary is followed by the names of the tools that were loaded before it.
+The model is told that their parameters are no longer in front of it and to
+load the ones it needs again by name. A call to one of them that it makes
+without loading still runs, through the argument check as always: it is a
+tool the model has used.
 
 Any tool can load deferred tools with its result:
 

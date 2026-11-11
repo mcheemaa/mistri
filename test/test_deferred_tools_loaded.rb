@@ -43,4 +43,44 @@ class TestDeferredToolsLoaded < Minitest::Test
 
     assert_equal %w[refund_charge], session.messages.reverse_each.find(&:tool?).loads
   end
+
+  def test_a_compaction_carries_the_names_of_the_tools_that_were_loaded
+    session = Mistri::Session.new(store: Mistri::Stores::Memory.new)
+    turn = lambda do |id, loads|
+      call = Mistri::ToolCall.new(id:, name: "tool_search", arguments: {})
+      [Mistri::Message.user("Go."),
+       Mistri::Message.assistant(tool_calls: [call], stop_reason: :tool_use),
+       Mistri::Message.tool(content: "Loaded.", tool_call_id: id, tool_name: "tool_search", loads:),
+       Mistri::Message.assistant(content: "Done.", stop_reason: :stop)]
+        .each { |message| session.append_message(message) }
+    end
+    turn.call("a", %w[tracker__create_issue tracker__list_issues])
+    turn.call("b", %w[docs__search_pages])
+
+    session.checkpoint(summary: "First.", kept_from: 4)
+    first = session.messages.first.text
+    turn.call("c", %w[tracker__create_issue])
+    session.checkpoint(summary: "Second.", kept_from: 9)
+
+    assert_match(/before this summary: tracker__create_issue, tracker__list_issues\. .*select:/,
+                 first)
+    assert_includes session.messages.first.text,
+                    "before this summary: tracker__list_issues, docs__search_pages."
+  end
+
+  def test_a_tool_loaded_before_a_compaction_can_still_be_called
+    tools = [tool("refund_charge"), tool("void_charge")]
+    first, = agent([{ tool_calls: [search("select:refund_charge")] }, { text: "Loaded." }], tools:)
+    first.run("Get ready.")
+    first.session.checkpoint(summary: "Ready.", kept_from: 4)
+    later, = agent([{ tool_calls: [{ name: "refund_charge" }, { name: "void_charge" }] },
+                    { text: "Done." }], tools:, session: first.session)
+
+    later.run("Refund it.")
+    refunded, voided = first.session.messages.select(&:tool?).last(2)
+
+    assert_equal "ran refund_charge", refunded.text
+    assert_predicate voided, :tool_error?
+    assert_match(/not loaded/, voided.text)
+  end
 end
