@@ -307,11 +307,11 @@ agent = Mistri.agent("claude-haiku-5-5", tools: [lookup_order, refund, *tracker]
 An agent that holds a deferred tool adds one of its own, `tool_search`. The
 model asks it in words for what it needs to do. The search ranks the deferred
 tools by their name, their description and the names and descriptions of their
-parameters, loads the best matches (eight by default, twenty at most) and
+parameters, loads the best matches (five by default, twenty at most) and
 answers with their names. From its next step the model calls them like any
-other tool. One load also holds no more than 20 KB of definitions, which is
-eight of the size that nine in ten real MCP definitions stay under. A first
-match larger than that still loads, alone. When more tools matched than fit,
+other tool. One load also holds no more than 20 KB of definitions; nine in
+ten real MCP definitions are under 2.2 KB. A first match larger than that
+still loads, alone. When more tools matched than fit,
 the answer says so and the next search loads them. The description of `tool_search` tells the model how many tools it
 searches under each name prefix, so give a server a prefix that says what it
 is.
@@ -323,7 +323,7 @@ loads `tracker__create_issue`. The model can name several tools in one query:
 separated by spaces. The result lists the names that match no tool. A name
 that many tools share, such as `list` under thirty prefixes, loads no more
 than the limit, and the result gives the number that remain. When the query
-gives no limit, a search loads eight tools, or as many as the query names
+gives no limit, a search loads five tools, or as many as the query names
 when that is more, up to twenty.
 
 A tool that is already loaded is not loaded again. The result names it, and

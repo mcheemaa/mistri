@@ -6,10 +6,10 @@ module Mistri
   # best matches are loaded, and it can call them from its next step.
   module ToolSearch
     NAME = "tool_search"
-    LIMIT = 8
+    LIMIT = 5
     MAX_LIMIT = 20
-    # The definitions of one load, in bytes: eight of the size that nine in
-    # ten real MCP definitions stay under.
+    # The definitions of one load, in bytes. Nine in ten real MCP definitions
+    # stay under 2,200.
     LOAD_BYTES = 20_000
     QUERY_LIMIT = 500
     SELECT = /\Aselect:/i
