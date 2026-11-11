@@ -342,7 +342,8 @@ module Mistri
         # A failed response is the provider's verdict on this input, not a
         # transport accident: only its documented transient codes retry
         # (rate limits, server errors, timeouts). Everything else, like
-        # invalid_prompt and the image family, cannot succeed on a retry.
+        # invalid_prompt, a policy refusal and the image family, is not
+        # retried.
         def failure_error(error)
           return ProviderError.new("the response failed without an error") unless error
 
