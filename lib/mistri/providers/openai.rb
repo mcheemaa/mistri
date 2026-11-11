@@ -42,8 +42,8 @@ module Mistri
       end
 
       # The API makes a tool callable from an item in the input, so an agent
-      # hands every deferred tool over as deferred_tools and the request's
-      # own tools never change. Another origin may not take the item, and a
+      # hands the loaded deferred tools over as deferred_tools and the
+      # request's own tools never change. Another origin may not take the item, and a
       # model that does not use such tools steadily is sent the loaded tools
       # as tools.
       def defers_tools? = @official && Models.tool_loading?(@model)

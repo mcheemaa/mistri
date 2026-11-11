@@ -14,6 +14,15 @@ module Mistri
       # defer_loading, which keeps it out of the prompt, and a result that
       # loads one carries a tool_reference to it.
       module Serializer
+        # The first deferred definition to appear in a conversation rebuilds
+        # its cached prefix. This one is there from the first request, so a
+        # load never does. The model is not shown it.
+        RESERVED = { name: "mistri_deferred_tools",
+                     description: "Reserved. Keeps tool loading in place. Never call it.",
+                     input_schema: { type: "object", properties: {}.freeze }.freeze,
+                     defer_loading: true }.freeze
+        private_constant :RESERVED
+
         module_function
 
         def system_blocks(system, cache:)
@@ -35,9 +44,13 @@ module Mistri
           wire
         end
 
-        def tools(definitions, deferred = [])
-          definitions.map { |tool| definition(tool) } +
-            deferred.map { |tool| definition(tool).merge(defer_loading: true) }
+        # deferred is nil for an agent that defers nothing, and the loaded
+        # deferred tools for one that does.
+        def tools(definitions, deferred = nil)
+          eager = definitions.map { |tool| definition(tool) }
+          return eager unless deferred
+
+          eager + [RESERVED] + deferred.map { |tool| definition(tool).merge(defer_loading: true) }
         end
 
         def definition(tool)

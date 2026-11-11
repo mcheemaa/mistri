@@ -4,8 +4,8 @@ require "securerandom"
 require_relative "test_helper"
 
 # Deferred tools against the real Messages API. Every catalogued model must
-# take deferred definitions and a result that references one, and a load must
-# leave the cached prefix in place.
+# take the reserved definition, a loaded one and a result that references it,
+# and a load must leave the cached prefix in place.
 class TestAnthropicDeferredToolsLive < Minitest::Test
   MODELS = Mistri::Models::CATALOG.each_value.select { |model| model.provider == :anthropic }
   RULES = Array.new(320) do |index|
@@ -56,7 +56,7 @@ class TestAnthropicDeferredToolsLive < Minitest::Test
       message = Mistri::Test.retry_transient do
         provider(model.id).stream(messages: history,
                                   tools: [Mistri::ToolSearch.tool(tools).spec],
-                                  deferred_tools: tools.map(&:spec))
+                                  deferred_tools: [tools.first.spec])
       end
 
       assert_equal :tool_use, message.stop_reason,

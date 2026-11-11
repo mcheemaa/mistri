@@ -40,9 +40,9 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   session, so a later run offers the same tools. A compaction keeps the names
   of the loaded tools, and the summary message lists them with an instruction
   to load the needed ones again. A tool result can load tools itself with
-  `ToolResult.new(content:, loads:)`. On Anthropic the deferred definitions
-  travel marked to stay out of the prompt and a load is a reference to one, so
-  the tool list never changes and the prompt cache holds across a load. On
+  `ToolResult.new(content:, loads:)`. On Anthropic a loaded definition
+  travels marked to stay out of the prompt and a load is a reference to it, so
+  the prompt cache holds across a load. On
   OpenAI, for gpt-5.4 and later except the nano models, a load is an item in
   the input that makes the tools callable from there on, which keeps the cache
   as well.
