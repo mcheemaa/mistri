@@ -236,7 +236,9 @@ not bypass current authorization. A raised hook error blocks conservatively.
 
 `after_tool` receives `(call, result, context)` and may return a replacement
 result. Returning nil keeps the original. If the original result is an error,
-rewriting its text cannot relabel it as success.
+rewriting its text cannot relabel it as success. Text returned for a result
+that [loads tools](#tools-on-demand) replaces what the model reads and the
+tools still load; return a `Mistri::ToolResult` to decide the loads yourself.
 
 ## Results and UI
 

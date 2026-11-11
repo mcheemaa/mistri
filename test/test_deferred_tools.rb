@@ -268,6 +268,19 @@ class TestDeferredTools < Minitest::Test
     assert_equal %w[open_tracker lookup_order tool_search], offered(provider)
   end
 
+  def test_text_from_an_after_tool_hook_keeps_the_load
+    shorten = ->(_call, result, _context) { result.content.lines.first.chomp }
+    agent, provider = agent([{ tool_calls: [search("refund")] }, { text: "Found." }],
+                            after_tool: shorten)
+
+    agent.run("Refund it.")
+    answer = agent.session.messages.find(&:tool?)
+
+    assert_equal "Loaded 1 tool. You can call them from your next step:", answer.text
+    assert_equal %w[refund_charge], answer.loads
+    assert_equal %w[lookup_order tool_search refund_charge], offered(provider)
+  end
+
   def test_a_load_the_model_no_longer_sees_is_no_longer_offered
     forget = ->(messages) { messages.reject(&:tool?).reject(&:tool_calls?) }
     first, = agent([{ tool_calls: [search("refund")] }, { text: "Found." }])

@@ -942,13 +942,13 @@ module Mistri
 
     def rewrite(call, result, context)
       rewritten = @after_tool.call(call, result, context) || result
-      return rewritten unless result.is_a?(ToolResult) && result.error?
+      return rewritten unless result.is_a?(ToolResult)
 
-      if rewritten.is_a?(ToolResult)
-        rewritten.with(error: true)
-      else
-        ToolResult.new(content: rewritten, error: true)
+      # A hook's text is what the model reads. The tool's loads stand.
+      unless rewritten.is_a?(ToolResult)
+        rewritten = ToolResult.new(content: rewritten, loads: result.loads)
       end
+      result.error? ? rewritten.with(error: true) : rewritten
     rescue EventDelivery::Failure => e
       raise EventDelivery.unwrap(e, context.emit)
     rescue StandardError => e
