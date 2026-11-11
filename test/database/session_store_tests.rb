@@ -65,6 +65,19 @@ module SessionStoreTests
     assert_match(/BETWEEN|<=/i, queries.last)
   end
 
+  def test_a_finished_workers_status_is_two_queries_for_one_row
+    worker = Mistri::Session.new(store: @store, id: "s")
+    150.times { |n| worker.append_message(Mistri::Message.user("step #{n}")) }
+    worker.append(Mistri::Child::TERMINAL, "status" => "done", "report" => "Done.")
+
+    status = nil
+    queries = selects { status = Mistri::Child.new(name: "Magpie", session_id: "s", store: @store).status }
+
+    assert_equal :done, status
+    assert_equal 2, queries.length
+    assert_match(/position\W+ = /, queries.last)
+  end
+
   def test_a_session_with_a_deleted_row_is_refused
     3.times { |n| @store.append("s", { "n" => n }) }
     model.where(session_id: "s", position: 2).delete_all

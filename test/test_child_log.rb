@@ -29,7 +29,7 @@ class TestChildLog < Minitest::Test
     Mistri.locks = nil
   end
 
-  def test_a_wait_reads_the_childs_log_once_and_then_only_what_is_new
+  def test_a_wait_looks_at_the_last_entry_reads_the_log_once_and_then_only_what_is_new
     20.times { |n| @session.append_message(Mistri::Message.user("step #{n}")) }
     @child.finished?
     @child.status
@@ -37,22 +37,22 @@ class TestChildLog < Minitest::Test
     @child.finished?
     @child.status
 
-    assert_equal [0, 20, 20, 21], @store.reads("child-1").map(&:from)
-    assert_equal [20, 0, 1, 0], @store.reads("child-1").map(&:entries)
+    assert_equal [19, 0, 20, 20, 21], @store.reads("child-1").map(&:from)
+    assert_equal [1, 20, 0, 1, 0], @store.reads("child-1").map(&:entries)
   end
 
-  def test_a_console_wait_polls_before_the_end_and_reads_each_entry_once
+  def test_a_console_wait_polls_before_the_end_and_reads_the_log_once
     30.times { |n| @session.append_message(Mistri::Message.user("step #{n}")) }
     waiter = Thread.new { Mistri::Console.await(@child, 5, 0.01) }
-    wait_for_loads(2)
+    wait_for_loads(3)
     @session.append(TERMINAL, "status" => "done", "report" => "Found it.")
 
     assert waiter.join(5), "the wait never returned"
     reads = @store.reads("child-1")
 
     assert_match(/Magpie done\./, waiter.value)
-    assert_equal [30, 0], reads.first(2).map(&:entries)
-    assert_equal 31, reads.sum(&:entries)
+    assert_equal [1, 30, 0], reads.first(3).map(&:entries)
+    assert_equal 32, reads.sum(&:entries)
   ensure
     waiter&.kill
     waiter&.join
@@ -141,7 +141,7 @@ class TestChildLog < Minitest::Test
     session.append(DISPATCHED, {})
     session.append(TERMINAL, "status" => "done", "report" => "Done.")
     store.hold_next_load
-    first = Thread.new { child.status }
+    first = Thread.new { child.transcript(tail: nil) }
 
     assert store.entered.pop(timeout: 5), "the first reader never reached the store"
     second = Thread.new { child.report }
@@ -149,7 +149,7 @@ class TestChildLog < Minitest::Test
     store.release
 
     assert first.join(5) && second.join(5), "a reader never returned"
-    assert_equal [:done, "Done."], [first.value, second.value]
+    assert_equal [2, "Done."], [first.value.length, second.value]
     assert_equal [0, 2], store.starts
   ensure
     store&.release

@@ -271,6 +271,13 @@ child.say("Check pricing too") # queues a steer
 child.stop                     # durable if inactive, cooperative if running
 ```
 
+On a store that answers `size`, a finished child is not loaded to be asked
+about. The first `status`, `report` or `error` reads the last entry of its
+log, and the first `transcript(tail:)` reads only the entries it returns. A
+child that has not finished is read whole, and so is one that was sent
+something after it ended. A `Child` that has read its log keeps it and reads
+on from there, so a wait loads the log once and then only what is new.
+
 `read_agent` with `wait: true` waits for a terminal, including across an
 interrupted worker's later queue retry or cancellation. Abort and timeout still
 end the wait in band.

@@ -189,7 +189,7 @@ Successful HTTP bodies are counted incrementally, and a declared oversized body
 fails before it is read. Requests use identity encoding so compressed expansion
 cannot bypass the boundary.
 
-Each completed SSE JSON record also receives fixed structural ceilings before
+Each completed MCP SSE JSON record also receives fixed structural ceilings before
 JSON parsing: 20,001 lexical tokens, 64 levels, and 64 KiB per numeric token.
 These protect allocation even when a record stays under its byte limit.
 

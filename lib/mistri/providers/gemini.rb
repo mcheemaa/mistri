@@ -49,10 +49,11 @@ module Mistri
         assembler.start(&delivery)
         body = build_body(messages, system, tools, overrides)
         path = "/v1beta/models/#{model}:streamGenerateContent?alt=sse"
-        outcome = @transport.stream_post(path, body: body, headers: headers,
-                                               signal: signal) do |record|
-          assembler.feed(record,
-                         &delivery)
+        # A tool call's arguments arrive as an object inside the record, so
+        # the record's tokens are counted before it is parsed.
+        outcome = @transport.stream_post(path, body:, headers:, signal:,
+                                               count_tokens: true) do |record|
+          assembler.feed(record, &delivery)
         end
         outcome == :aborted ? assembler.abort(&delivery) : assembler.finish(&delivery)
       rescue EventDelivery::Failure => e
