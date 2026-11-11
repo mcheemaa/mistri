@@ -78,7 +78,7 @@ class TestPrefixBoundCompactionLive < Minitest::Test
                              tool_call_id: call.id, tool_name: call.name
                            ))
 
-    assert_completed_value(session.messages, secret)
+    assert_completed_value(session.messages, secret, "before the compaction")
     durable = session.entries
 
     compaction = Mistri::Compactor.call(session:, provider: @provider,
@@ -93,7 +93,7 @@ class TestPrefixBoundCompactionLive < Minitest::Test
     assert_empty retained.content.grep(Mistri::Content::Thinking)
     assert_equal durable, session.entries.take(durable.length), "the durable history changed"
 
-    continued = assert_completed_value(session.messages, secret)
+    continued = assert_completed_value(session.messages, secret, "after the compaction")
     session.append_message(continued)
 
     assert_equal continued, session.messages.last, "new post-compaction thinking must remain intact"
@@ -102,7 +102,7 @@ class TestPrefixBoundCompactionLive < Minitest::Test
                              "Repeat the checkpoint value exactly, without calling a tool."
                            ))
 
-    assert_completed_value(session.messages, secret)
+    assert_completed_value(session.messages, secret, "asked to repeat the value")
   end
 
   # The summary request is the compactor's own: no thinking, so no binding
@@ -144,11 +144,12 @@ class TestPrefixBoundCompactionLive < Minitest::Test
     reply
   end
 
-  def assert_completed_value(messages, secret)
+  def assert_completed_value(messages, secret, check)
     reply = stream(messages)
 
-    assert_equal :stop, reply.stop_reason, reply.error_message
-    assert_includes reply.text, secret
+    assert_equal :stop, reply.stop_reason,
+                 "#{check}: #{reply.error_message || reply.tool_calls.map(&:to_h)}"
+    assert_includes reply.text, secret, check
     reply
   end
 

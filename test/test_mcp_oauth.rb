@@ -375,9 +375,26 @@ class TestMcpOauth < Minitest::Test # rubocop:disable Metrics/ClassLength -- one
       exchange = server.token_requests.first
 
       assert_nil exchange["client_secret"], "the secret never rides the form in basic mode"
+      assert_nil exchange["client_id"], "the client id rides only the header in basic mode"
       expected = "Basic #{["app-123:shh"].pack("m0")}"
 
       assert_equal expected, exchange["_authorization"]
+    end
+  end
+
+  def test_client_secret_basic_authenticates_a_refresh_the_same_way
+    with_server(basic_token_auth: true) do |server|
+      flow = start_flow(server)
+      Mistri::MCP::OAuth.refresh(refresh_token: "rt-1",
+                                 allow_non_public: Mistri::Test::ALLOW_LOOPBACK,
+                                 **flow.transform_keys(&:to_sym))
+
+      exchange = server.token_requests.first
+
+      assert_equal "refresh_token", exchange["grant_type"]
+      assert_nil exchange["client_id"]
+      assert_nil exchange["client_secret"]
+      assert_equal "Basic #{["app-123:shh"].pack("m0")}", exchange["_authorization"]
     end
   end
 
