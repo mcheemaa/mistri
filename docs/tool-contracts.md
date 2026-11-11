@@ -313,29 +313,30 @@ other tool. The description of `tool_search` tells the model how many tools it
 searches under each name prefix, so give a server a prefix that says what it
 is.
 
-A query that is a tool's name loads that tool and no other. That holds for
-the name without its prefix and for words that spell it, so `create issue`
-loads `tracker__create_issue`. The model can name several tools at once:
-`select:` and their names, separated by commas, or their whole names side by
-side. The answer says which of the names no tool has. A name that many tools
-share, such as `list` under thirty prefixes, loads no more than the limit, and
-the answer says how many are left. When the model gives no limit, a search
-loads eight tools, or as many as the names it wrote when that is more, twenty
-at most.
+A query that is a tool's name loads that tool and no other. The same applies
+to the name without its prefix and to the words of the name, so `create issue`
+loads `tracker__create_issue`. The model can name several tools in one query:
+`select:` followed by their names, separated by commas, or their full names
+separated by spaces. The result lists the names that match no tool. A name
+that many tools share, such as `list` under thirty prefixes, loads no more
+than the limit, and the result gives the number that remain. When the query
+gives no limit, a search loads eight tools, or as many as the query names
+when that is more, up to twenty.
 
-A tool that is already loaded is not loaded again. The answer names it, and
-the search goes on to the next matches, so a repeated search reaches further
-down the list. A search also counts a tool as loaded once another search of
-the same turn has chosen it, so two searches in one turn do not load the same
-tool. Should an `after_tool` hook then cancel that load, the tool can be
-searched for again from the next request.
+A tool that is already loaded is not loaded again. The result names it, and
+the search continues with the next matches, so a repeated search loads tools
+further down the ranking. A search also treats a tool as loaded once another
+search of the same turn has selected it, so two searches in one turn do not
+load the same tool. If an `after_tool` hook then cancels that load, a search
+can load the tool again from the next request.
 
-Any other query is words. The search matches words, so it finds what a name,
-a description or a parameter says and not what they mean. A run of Han, kana or Hangul characters, which often has no spaces
-between its words, is matched by pairs of characters, and by one character
-when the query is one. In words, half-width and full-width forms match each
-other; a name is matched as it is written. Other scripts written without
-spaces match poorly. A query is read up to 500 characters.
+Any other query is a word search. It matches the words of a name, a
+description or a parameter, not their meaning. A run of Han, kana or Hangul
+characters, which often has no spaces between its words, is matched by pairs
+of characters, and by one character when the query is one. In words,
+half-width and full-width forms match each other; a name is matched as it is
+written. Other scripts written without spaces match poorly. A query is read
+up to 500 characters.
 
 A load is stored with the tool result that made it. A later run on the same
 session offers the same tools with no new search. A load the model no longer

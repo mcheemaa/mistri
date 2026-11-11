@@ -34,27 +34,28 @@ module Mistri
 
     module_function
 
-    # The tool an agent adds when it holds deferred tools. loaded answers
-    # with the names the model already has, which a search does not load
-    # again. A search adds the names it loads to that list, so two searches
-    # of one turn do not load the same tool.
+    # The tool an agent adds when it holds deferred tools. loaded returns
+    # the names of the tools already loaded, which a search skips. A search
+    # appends the names it loads to that list, so two searches in one turn
+    # do not load the same tool.
     def tool(deferred, loaded: -> { [] })
       documents = nil
       turn = Mutex.new
       Tool.define(NAME, description(deferred), schema: lambda {
-        string :query, "Words for what you need to do, or select: and the exact names of " \
-                       "tools to load, separated by commas", required: true
+        string :query, "Words that describe what you need to do, or select: followed by " \
+                       "the exact names of the tools to load, separated by commas",
+               required: true
         integer :limit, "How many tools to load at most (default #{LIMIT}, at most #{MAX_LIMIT})"
       }) do |args|
         query = args["query"].to_s[0, QUERY_LIMIT]
         documents ||= deferred.map { |tool| document(tool) }
-        chosen, missing, asked = named_tools(query, documents)
+        chosen, missing, requested = named_tools(query, documents)
         unless chosen || words(query).any?
-          next ToolResult.new(content: "There is nothing to search by in that query. Say what " \
+          next ToolResult.new(content: "The query has no words to search for. Describe what " \
                                        "you need to do in a few words.", error: true)
         end
 
-        limit = args.fetch("limit") { [LIMIT, asked.to_i].max }.to_i.clamp(1, MAX_LIMIT)
+        limit = args.fetch("limit") { [LIMIT, requested.to_i].max }.to_i.clamp(1, MAX_LIMIT)
         matches = chosen || search(query, documents)
         names = loaded.call
         fresh, held, left = turn.synchronize do
@@ -93,12 +94,12 @@ module Mistri
     end
     private_class_method :search
 
-    # The tools a query names, the names it gives that no tool has, and how
-    # many names it gives. Nil when the query is words to search by. select:
-    # lists names. A query that reads as one tool's name names that tool. So
-    # does a list in which every part is a whole name or is written like
-    # one, with an underscore, when it names a tool at all: read file is two
-    # words, never the tools x__read and y__file.
+    # The tools a query names, the names in it that match no tool, and the
+    # number of names. Nil when the query is a word search. A query that
+    # starts with select: is a list of names. A query that matches one tool's
+    # name selects that tool. So does a list whose every part is a full name
+    # or contains an underscore, when at least one part matches a tool: read
+    # file is two words, never the tools x__read and y__file.
     def named_tools(query, documents)
       text = query.strip
       if text.match?(SELECT)
@@ -117,8 +118,8 @@ module Mistri
     end
     private_class_method :named_tools
 
-    # For each part, the tools it names in the closest way, no looser than
-    # the block allows for it.
+    # For each part, the tools at its closest matching rank, up to the rank
+    # the block allows for that part.
     def pick(parts, documents)
       found = []
       missing = []
@@ -132,8 +133,8 @@ module Mistri
     end
     private_class_method :pick
 
-    # The matches to load, limit at most, the loaded ones passed on the way
-    # to them, and how many more are not loaded.
+    # The matches to load, up to limit, the loaded matches ranked before
+    # them, and the number of matches left unloaded.
     def unloaded(matches, loaded, limit)
       have = loaded.to_set
       fresh = []
@@ -191,9 +192,9 @@ module Mistri
         lines << "Loaded #{count(fresh.length, "tool")}. You can call them from your next step:"
         lines.concat(fresh.map { |document| "- #{document.tool.name}: #{document.summary}" })
       end
-      lines << "Already loaded, call them as they are: #{held_names(held)}." if held.any?
+      lines << "Already loaded, call them directly: #{held_names(held)}." if held.any?
       if left.positive?
-        lines << "#{count(left, "more tool")} with these names. Search again for them."
+        lines << "#{count(left, "more tool")} with these names. Search again to load them."
       end
       lines << "No tool is named #{missing.join(", ")}." if missing.any?
       return "No tool matches. Try other words." if lines.empty?

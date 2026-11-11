@@ -127,7 +127,7 @@ class TestDeferredTools < Minitest::Test
     answer = agent.session.messages.find(&:tool?)
 
     assert_predicate answer, :tool_error?
-    assert_match(/nothing to search by/i, answer.text)
+    assert_match(/no words to search for/, answer.text)
     assert_nil answer.loads
   end
 
@@ -249,7 +249,7 @@ class TestDeferredTools < Minitest::Test
     answer = agent.session.messages.find(&:tool?)
 
     assert_predicate answer, :tool_error?
-    assert_match(/nothing to search by/i, answer.text)
+    assert_match(/no words to search for/, answer.text)
   end
 
   def test_a_failed_result_loads_nothing

@@ -2,8 +2,9 @@
 
 require_relative "test_helper"
 
-# What an agent counts as loaded: a tool that a result the model can see has
-# loaded. A search does not load it again, in a later turn or in the same one.
+# What an agent counts as loaded: a tool that a successful result in the
+# history has loaded. A search does not load it again, in a later turn or in
+# the same one.
 class TestDeferredToolsLoaded < Minitest::Test
   def tool(name, description = "Does #{name.tr("_", " ")}.")
     Mistri::Tool.define(name, description, deferred: true) { "ran #{name}" }

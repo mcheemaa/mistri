@@ -69,10 +69,10 @@ class TestToolSearchRanking < Minitest::Test
     assert_equal %w[lookup crm__list docs__list], first.loads
     assert_match(/^No tool is named nope\.$/, first.content)
     assert_equal %w[crm__lookup], second.loads
-    assert_match(/^Already loaded, call them as they are: docs__list\.$/, second.content)
+    assert_match(/^Already loaded, call them directly: docs__list\.$/, second.content)
     assert_match(/^No tool is named crm__missing\.$/, second.content)
     assert_empty third.loads
-    assert_match(/^Already loaded, call them as they are: .*crm__lookup/, third.content)
+    assert_match(/^Already loaded, call them directly: .*crm__lookup/, third.content)
   end
 
   def test_a_name_many_tools_share_loads_no_more_than_the_limit
@@ -86,7 +86,7 @@ class TestToolSearchRanking < Minitest::Test
     none = search.call({ "query" => "list" })
 
     assert_equal %w[s0__list], one.loads
-    assert_match(/^29 more tools with these names\. Search again for them\.$/, one.content)
+    assert_match(/^29 more tools with these names\. Search again to load them\.$/, one.content)
     assert_equal 20, many.loads.length
     assert_equal %w[s1__list], another.loads
     assert_match(/^8 more tools with these names\./, another.content)

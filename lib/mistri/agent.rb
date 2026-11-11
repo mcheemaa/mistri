@@ -399,10 +399,10 @@ module Mistri
       end
     end
 
-    # A deferred tool is loaded once a tool result the model can see has
-    # loaded it. A provider that can hold a definition back is handed every
-    # deferred tool, and says in its own way when a result loads one. Any
-    # other is sent the loaded tools after the rest, in the order they came.
+    # A deferred tool is loaded once a tool result in the history has loaded
+    # it. A provider that defers natively receives every deferred definition
+    # and marks the loading result in its own wire form. Any other provider
+    # receives the loaded tools after the eager ones, in load order.
     def tool_options(history)
       return { tools: @eager_specs } if @deferred_specs.empty?
 
