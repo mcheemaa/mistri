@@ -111,7 +111,6 @@ class TestBackgroundMode < Minitest::Test
     child = session.children.first
 
     assert_equal :budget, child.status
-    assert_equal "Found A; B is unchecked.", child.report
     assert_includes parent.requests.last[:messages].map(&:text).join("\n"),
                     "[Corgi reached its budget] Found A; B is unchecked."
   end

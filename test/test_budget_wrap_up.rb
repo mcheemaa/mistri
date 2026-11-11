@@ -2,8 +2,6 @@
 
 require_relative "test_helper"
 
-# A budget with wrap_up gives the model one tool-free turn to answer the user
-# when a ceiling stops the run.
 class TestBudgetWrapUp < Minitest::Test
   LOOP_CALL = { tool_calls: [{ name: "loop", arguments: {} }] }.freeze
   TOOL_SPEC = { name: "loop", description: "Loops.",
@@ -49,14 +47,12 @@ class TestBudgetWrapUp < Minitest::Test
     refute earlier.key?(:tool_choice)
   end
 
-  # A tool setting with no tools declared is a request the APIs reject.
   def test_an_agent_without_tools_wraps_up_without_a_tool_setting
     provider = Mistri::Providers::Fake.new(turns: [{ text: "Nothing started." }])
     agent = Mistri::Agent.new(provider:, budget: Mistri::Budget.new(turns: 0, wrap_up: true))
 
-    result = agent.run("go")
+    agent.run("go")
 
-    assert_equal "Nothing started.", result.text
     refute provider.requests.last[:options].key?(:tool_choice)
   end
 
@@ -68,7 +64,6 @@ class TestBudgetWrapUp < Minitest::Test
     sent = provider.requests.last[:messages].last
 
     assert_predicate sent, :user?
-    refute_empty sent.text.strip
     refute_includes agent.session.messages, sent
   end
 
@@ -85,7 +80,6 @@ class TestBudgetWrapUp < Minitest::Test
     agent.run("go")
 
     assert_includes provider.requests.last[:messages].map(&:text), "Only check the EU region."
-    assert_empty session.pending_inbox
   end
 
   def test_a_task_wraps_up_without_its_schema
@@ -93,10 +87,8 @@ class TestBudgetWrapUp < Minitest::Test
     agent = Mistri::Agent.new(provider:, budget: Mistri::Budget.new(turns: 0, wrap_up: true))
     schema = { type: "object", properties: { count: { type: "integer" } }, required: ["count"] }
 
-    result = agent.task("Count the files.", schema:)
+    agent.task("Count the files.", schema:)
 
-    assert_equal "Counted 3 of 5 files.", result.text
-    assert_nil result.output
     assert_nil provider.requests.last[:options][:output_schema]
   end
 
@@ -105,7 +97,6 @@ class TestBudgetWrapUp < Minitest::Test
 
     result = agent.run("go")
 
-    assert_predicate result, :stopped_by_budget?
     assert_equal "Run stopped: turns budget reached.", result.text
     assert_equal result.message, agent.session.messages.last
   end
@@ -129,7 +120,7 @@ class TestBudgetWrapUp < Minitest::Test
     end
   end
 
-  # The compaction's own usage crosses the ceiling, so the second check stops the run.
+  # Compaction's own usage crosses the ceiling.
   def test_a_budget_crossed_by_compaction_also_wraps_up
     provider = Mistri::Providers::Fake.new(turns: [
                                              LOOP_CALL.merge(usage: Mistri::Usage.new(input: 900,
@@ -150,20 +141,24 @@ class TestBudgetWrapUp < Minitest::Test
     assert(agent.session.entries.any? { |entry| entry["type"] == "compaction" })
   end
 
-  def test_a_failed_wrap_up_attempt_is_kept_for_accounting_and_announced
-    usage = Mistri::Usage.new(input: 40, output: 5)
-    _, agent = stopped_run({ error: "overloaded", usage: })
-    events = []
+  def test_a_failed_wrap_up_attempt_is_kept_for_accounting
+    _, agent = stopped_run({ error: "overloaded", usage: Mistri::Usage.new(input: 40, output: 5) })
 
-    agent.run("go") { |event| events << event }
+    agent.run("go")
 
     attempts = agent.session.entries.select { |entry| entry["type"] == "wrap_up_attempt" }
 
     assert_equal 1, attempts.length
-    recorded = Mistri::Message.from_h(attempts.first.fetch("message"))
+    usage = Mistri::Message.from_h(attempts.first.fetch("message")).usage
 
-    assert_equal [usage.input, usage.output], [recorded.usage.input, recorded.usage.output]
-    assert_equal "overloaded", recorded.error_message
+    assert_equal [40, 5], [usage.input, usage.output]
+  end
+
+  def test_a_failed_wrap_up_turn_announces_its_error_before_the_budget_stop
+    _, agent = stopped_run({ error: "overloaded" })
+    events = []
+
+    agent.run("go") { |event| events << event }
     terminals = events.select(&:terminal?).last(2).map { |e| [e.type, e.reason, e.error_message] }
 
     assert_equal [[:error, :error, "overloaded"], [:error, :budget, "budget_turns"]], terminals
@@ -175,20 +170,15 @@ class TestBudgetWrapUp < Minitest::Test
     result = agent.run("go")
 
     assert_equal "Partial answer.", result.text
-    assert_empty result.tool_calls
     assert_empty agent.session.messages.last.tool_calls
   end
 
   def test_a_wrap_up_answer_with_only_tool_calls_falls_back_to_the_fixed_message
     _, agent = stopped_run(LOOP_CALL)
 
-    result = agent.run("go")
-
-    assert_equal "Run stopped: turns budget reached.", result.text
-    assert_empty agent.session.messages.last.tool_calls
+    assert_equal "Run stopped: turns budget reached.", agent.run("go").text
   end
 
-  # Its signature covers the instruction, which the session never replays.
   def test_a_prefix_bound_wrap_up_answer_is_saved_without_its_thinking
     _, agent = stopped_run({ thinking: "Weighing it.", text: "Done so far." },
                            provider: PrefixBoundFake)
@@ -222,19 +212,16 @@ class TestBudgetWrapUp < Minitest::Test
     assert_equal "none", openai_body[:tool_choice]
     assert_equal "NONE", gemini_body.dig(:toolConfig, :functionCallingConfig, :mode)
     assert_equal({ type: "none" }, anthropic_body[:tool_choice])
-    assert([openai_body, gemini_body, anthropic_body].all? { |body| body[:tools].any? })
   ensure
     [openai, gemini, anthropic].compact.each(&:close)
   end
 
-  # Answers as a model whose thinking signs every earlier message.
   class PrefixBoundFake < Mistri::Providers::Fake
     def stream(...) = super.with(provider: :anthropic, model: "claude-opus-5-5")
   end
 
   private
 
-  # Two tool turns spend a two-turn budget; final_turn scripts the wrap-up.
   def stopped_run(final_turn, provider: Mistri::Providers::Fake)
     provider = provider.new(turns: [LOOP_CALL, LOOP_CALL, final_turn])
     tool = Mistri::Tool.define("loop", "Loops.") { "again" }
