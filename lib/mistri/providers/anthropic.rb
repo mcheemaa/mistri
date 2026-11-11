@@ -86,17 +86,17 @@ module Mistri
       def official_origin?(origin) = origin.to_s.delete_suffix("/") == DEFAULT_ORIGIN
 
       def build_body(model, messages, system, tools, overrides)
-        deferred = overrides.fetch(:deferred_tools, [])
-        names = deferred.map { |tool| tool[:name] || tool["name"] }
+        definitions = Serializer.tools(tools, overrides.fetch(:deferred_tools, []))
+        deferred = definitions.filter_map { |tool| tool[:name] if tool[:defer_loading] }
         body = {
           model: model,
           max_tokens: max_tokens_for(model, overrides),
           stream: true,
-          messages: Serializer.messages(messages, cache: @cache, deferred: names)
+          messages: Serializer.messages(messages, cache: @cache, deferred:)
         }
         system_blocks = Serializer.system_blocks(system, cache: @cache)
         body[:system] = system_blocks if system_blocks
-        body[:tools] = Serializer.tools(tools, deferred) if tools.any? || deferred.any?
+        body[:tools] = definitions if definitions.any?
         service_tier = overrides.fetch(:service_tier, @service_tier)
         body[:service_tier] = service_tier if service_tier
         thinking = thinking_for(model, overrides)

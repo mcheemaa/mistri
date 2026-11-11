@@ -143,6 +143,25 @@ class TestAnthropicDeferredTools < Minitest::Test
                  replay["messages"].last["content"].first["content"]
   end
 
+  def test_a_tool_is_referenced_by_the_name_its_definition_is_sent_with
+    @server = Mistri::Test::StubServer.new do |socket, _request|
+      @server.start_sse(socket)
+      @server.sse_data(socket, { "type" => "message_stop" })
+      @server.finish_sse(socket)
+    end
+    @provider = Mistri::Providers::Anthropic.new(api_key: "k", origin: @server.origin)
+    renamed = [spec("lookup").merge("name" => "crm__lookup")]
+
+    @provider.stream(messages: history(loading(%w[crm__lookup])), deferred_tools: renamed)
+    @provider.stream(messages: history(loading(%w[lookup])), deferred_tools: renamed)
+    sent, other = @server.requests.map { |request| JSON.parse(request[:body]) }
+
+    assert_equal(%w[crm__lookup], sent["tools"].map { |tool| tool["name"] })
+    assert_equal [{ "type" => "tool_reference", "tool_name" => "crm__lookup" }],
+                 sent["messages"].last["content"].first["content"]
+    refute_includes JSON.generate(other["messages"]), "tool_reference"
+  end
+
   def test_an_agent_gives_such_a_provider_the_same_tools_every_turn
     provider = Class.new(Mistri::Providers::Fake) { def defers_tools? = true }.new(
       turns: [{ tool_calls: [{ name: "tool_search", arguments: { "query" => "issue" } }] },
