@@ -11,6 +11,12 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   enough. An OpenAI stream record is no longer held to that ceiling. Its byte,
   depth and number limits stay, and Anthropic, Gemini and MCP records are
   checked as before.
+- A finished worker is read from the end of its log. On a store that answers
+  `size`, the first `Child#status`, `report` or `error` reads its last entry,
+  and the first `Child#transcript(tail:)` reads only the entries it returns.
+  The check before a spawn and `list_agents` used to load the whole log of
+  every worker the session ever had. A worker that has not finished is still
+  read whole, once, and a `Child` that holds its log reads on from it.
 - A session starts at its newest checkpoint. A compaction entry carries the
   sub-agent links, the delivered reports and the old-style call ids with an
   approval from before it, and a session reads, replays and audits from its
