@@ -101,6 +101,46 @@ class TestBudgetWrapUp < Minitest::Test
     assert_equal result.message, agent.session.messages.last
   end
 
+  def test_an_aborted_or_errored_wrap_up_turn_with_text_falls_back
+    %i[aborted error].each do |stop_reason|
+      _, agent = stopped_run({ text: "Half an answ", stop_reason: })
+
+      assert_equal "Run stopped: turns budget reached.", agent.run("go").text, stop_reason
+    end
+  end
+
+  def test_the_wrap_up_turn_counts_toward_usage_whether_it_answers_or_fails
+    usage = Mistri::Usage.new(input: 40, output: 5)
+    [{ text: "Done so far.", usage: }, { error: "overloaded", usage: }].each do |final_turn|
+      _, agent = stopped_run(final_turn)
+
+      result = agent.run("go")
+
+      assert_equal [40, 5], [result.usage.input, result.usage.output]
+    end
+  end
+
+  # The compaction's own usage crosses the ceiling, so the second check stops the run.
+  def test_a_budget_crossed_by_compaction_also_wraps_up
+    provider = Mistri::Providers::Fake.new(turns: [
+                                             LOOP_CALL.merge(usage: Mistri::Usage.new(input: 900,
+                                                                                      output: 100)),
+                                             { text: "## Goal\nLoop.",
+                                               usage: Mistri::Usage.new(input: 600, output: 10) },
+                                             { text: "Wrapped after compaction." }
+                                           ])
+    agent = Mistri::Agent.new(provider:, tools: [Mistri::Tool.define("loop", "Loops.") { "again" }],
+                              retries: nil,
+                              compaction: Mistri::Compaction.new(window: 1_000, reserve: 50,
+                                                                 keep_recent: 1),
+                              budget: Mistri::Budget.new(tokens: 1_500, wrap_up: true))
+
+    result = agent.run("go")
+
+    assert_equal "Wrapped after compaction.", result.text
+    assert(agent.session.entries.any? { |entry| entry["type"] == "compaction" })
+  end
+
   def test_a_failed_wrap_up_attempt_is_kept_for_accounting_and_announced
     usage = Mistri::Usage.new(input: 40, output: 5)
     _, agent = stopped_run({ error: "overloaded", usage: })
