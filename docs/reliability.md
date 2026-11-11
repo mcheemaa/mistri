@@ -277,16 +277,22 @@ budget = Mistri::Budget.new(turns: 20, wrap_up: true)
 ```
 
 The run then spends one more turn past the ceiling, after folding in any steer
-or sub-agent report that is waiting. The model keeps its tools
-but cannot call them, and is told to give its best answer and say what is
-unfinished. That instruction is sent to the model and not stored in the
-session. The result keeps status `:budget`, and the turn counts toward usage.
-Under `task` the turn is sent without the output schema, so the answer is free
-text and `output` stays nil.
+or sub-agent report that is waiting. It does not compact first, so a context
+that no longer fits fails that turn. The model keeps its tools but cannot call
+them, and is told to give its best answer and say what is unfinished. That
+instruction is sent to the model and not stored in the session. Under `task`
+the turn is sent without the output schema, so the answer is free text and
+`output` stays nil. The result keeps status `:budget`, and the turn counts
+toward usage.
+
 If the turn fails, is aborted, or returns no text, the run ends on the fixed
 message. The subscriber first receives that attempt's own `:done` or `:error`,
 and the session keeps it as a `wrap_up_attempt` entry, never as a conversation
 message, so its usage and error remain available for accounting.
+
+A budget stop's final event always has `reason: :budget`. It is `:done` when
+the model answered and `:error` when the run ended on the fixed message, so
+detect a budget stop by its reason, not its event type.
 
 ### Cost budgets
 
@@ -488,8 +494,8 @@ the requested task contract. Returning nil leaves the prompt and local
 validation path intact.
 
 A budget with `wrap_up: true` passes `tool_choice: :none` to `stream` on its
-final turn. Forbid tool calls for that request; any the provider returns are
-dropped.
+final turn when the agent declares tools. Forbid tool calls for that request;
+any the provider returns are dropped.
 
 To support cost budgets, return true from `prices_usage?` and attach a known
 cost to every response, commonly with `Mistri::Usage#with_cost`. Missing or

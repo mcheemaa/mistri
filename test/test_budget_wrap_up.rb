@@ -27,6 +27,16 @@ class TestBudgetWrapUp < Minitest::Test
     assert_equal 3, provider.requests.length
   end
 
+  def test_an_answered_budget_stop_ends_on_done_with_the_budget_reason
+    _, agent = stopped_run({ text: "Done so far." })
+    events = []
+
+    result = agent.run("go") { |event| events << event }
+    final = events.select(&:terminal?).last
+
+    assert_equal [:done, :budget, result.message], [final.type, final.reason, final.message]
+  end
+
   def test_the_wrap_up_turn_keeps_the_tools_and_forbids_calling_them
     provider, agent = stopped_run({ text: "Done so far." })
 
