@@ -63,6 +63,12 @@ instructions. The model may select only tools in the pool and only model IDs in
 provider object. A background child records that provider's model identity and
 the Runtime factory reconstructs its provider inside the worker.
 
+A pool may hold [deferred tools](tool-contracts.md#tools-on-demand). The
+spawner then names only the tools that are at hand in its own definition, so
+the deferred ones cost the parent nothing. A child that is given the whole
+pool gets its own `tool_search` and finds them itself. The parent can grant
+one by the name `tool_search` gave it.
+
 Do not place `spawn_agent` inside its own tool pool. Mistri rejects that host
 configuration.
 

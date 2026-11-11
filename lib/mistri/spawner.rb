@@ -255,15 +255,22 @@ module Mistri
 
       by_name = @pool.to_h { |tool| [tool.name, tool] }
       names.map do |name|
-        by_name.fetch(name) do
-          raise ArgumentError,
-                "unknown tool #{name.inspect}; available: #{by_name.keys.join(", ")}"
-        end
+        by_name.fetch(name) { raise ArgumentError, "unknown tool #{name.inspect}; #{available}" }
       end
     end
 
+    # The pool for an error the model reads. Tools that load on demand are
+    # counted, as tool_search counts them, and not named.
+    def available
+      later, ready = @pool.partition(&:deferred?)
+      names = ready.map(&:name).join(", ")
+      return "available: #{names}" if later.empty?
+
+      "available: #{names} and #{later.length} that load#{"s" if later.length == 1} on demand"
+    end
+
     def schema
-      pool_names = @pool.map(&:name)
+      granting = tools_argument
       type_names = ["general-purpose", *@types.keys]
       types = @types
       models = @models
@@ -280,11 +287,7 @@ module Mistri
         else
           string :instructions, "The child's system prompt", required: true
         end
-        if pool_names.any?
-          array :tools, "Exact tools to grant (omit for all, or the type's own list; " \
-                        "an empty list grants none)",
-                items: { type: "string", enum: pool_names }, uniqueItems: true
-        end
+        array :tools, granting.first, items: granting.last, uniqueItems: true if granting
         string :model, "Model for the child#{fallback}", enum: models if models.any?
         if dispatcher
           string :mode, "inline blocks until the report; background returns a receipt " \
@@ -292,6 +295,21 @@ module Mistri
                  enum: %w[inline background]
         end
       end
+    end
+
+    # How the tools argument reads and what it takes. A pool that holds
+    # tools that load on demand names only the ones at hand.
+    def tools_argument
+      names = @pool.map(&:name)
+      return if names.empty?
+
+      ready = @pool.reject(&:deferred?).map(&:name)
+      text = "Exact tools to grant (omit for all, or the type's own list; an empty list " \
+             "grants none)"
+      return [text, { type: "string", enum: names }] if ready.length == names.length
+
+      ["#{text}. At hand: #{ready.join(", ")}. A tool that loads on demand goes by the name " \
+       "tool_search gives it.", { type: "string" }]
     end
 
     def description
