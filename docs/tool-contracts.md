@@ -315,9 +315,9 @@ A query that is a tool's name finds that tool first. The search matches words,
 so it finds what a name, a description or a parameter says and not what they
 mean. A run of Han, kana or Hangul characters, which often has no spaces
 between its words, is matched by pairs of characters, and by one character
-when the query is one. Half-width and full-width forms match each other. Other
-scripts written without spaces match poorly. A query is read up to 500
-characters.
+when the query is one. In words, half-width and full-width forms match each
+other; a name is matched as it is written. Other scripts written without
+spaces match poorly. A query is read up to 500 characters.
 
 A load is stored with the tool result that made it. A later run on the same
 session offers the same tools with no new search. A load the model no longer
