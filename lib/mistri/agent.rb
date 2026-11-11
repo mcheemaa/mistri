@@ -332,8 +332,9 @@ module Mistri
       [message, usage]
     end
 
-    # One provider turn with its retries, neither persisted nor announced:
-    # the caller decides what the session and the subscriber see of it.
+    # One provider turn with its retries. The accepted attempt returns
+    # unpersisted with its terminal event held: the caller decides what the
+    # session and the subscriber see of it.
     #
     # transform_context reshapes what the model sees each turn (reminders,
     # redaction, windowing) without touching what the session stores. The
