@@ -5,6 +5,12 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+- An OpenAI stream failure keeps its reason. The Responses API can send a
+  failure's code and message nested under `error`, and Mistri read them only
+  at the top of the record. The turn ended as `provider error`, and a refusal
+  under a content policy was taken for an unknown failure and retried. The
+  error now carries the code and the message, and such a refusal fails at
+  once, as the reliability guide says it does.
 - `read_agent` reads a worker's log a page at a time. It showed the last 200
   entries at most, so the model could not see how a long piece of work began.
   Each line now starts with the entry's number, `offset` reads from any

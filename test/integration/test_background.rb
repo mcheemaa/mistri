@@ -12,16 +12,16 @@ class TestBackgroundIntegration < Minitest::Test
 
   Integration.scenario(self, :model_backgrounds_a_worker_and_collects_its_report) do |model|
     Mistri.locks = Mistri::Locks::Memory.new
-    secret = Integration.marker
+    part = Integration.marker
     release = Queue.new
     released = false
     child = nil
     cleanup_attempted = false
     store = Mistri::Stores::Memory.new
-    oracle = oracle_tool(secret)
-    tools = Mistri::SubAgent.pack(provider: Mistri.provider(model), tools: [oracle],
+    catalog = catalog_tool(part)
+    tools = Mistri::SubAgent.pack(provider: Mistri.provider(model), tools: [catalog],
                                   dispatcher: Mistri::Dispatchers::Thread.new,
-                                  runtime_factory: runtime_factory(secret, release))
+                                  runtime_factory: runtime_factory(part, release))
     parent = Mistri::Agent.new(
       provider: Mistri.provider(model), tools: tools,
       session: Mistri::Session.new(store:),
@@ -31,9 +31,9 @@ class TestBackgroundIntegration < Minitest::Test
 
     begin
       first = parent.run(
-        "Spawn a background worker named Beagle (instructions: call the oracle " \
-        "tool and report its exact SECRET_VALUE) with the task of fetching the " \
-        "secret value. Then, without waiting for Beagle, reply with exactly: " \
+        "Spawn a background worker named Beagle (instructions: call the catalog " \
+        "tool and report its exact PART_NUMBER) with the task of looking up the " \
+        "part number. Then, without waiting for Beagle, reply with exactly: " \
         "receipt acknowledged."
       )
 
@@ -49,7 +49,7 @@ class TestBackgroundIntegration < Minitest::Test
       reports = []
       second = parent.run(
         "Now read Beagle with read_agent using wait true, and tell me its exact " \
-        "SECRET_VALUE in one sentence."
+        "PART_NUMBER in one sentence."
       ) do |event|
         if event.type == :tool_started && event.tool_call.name == "read_agent"
           release << true
@@ -60,7 +60,7 @@ class TestBackgroundIntegration < Minitest::Test
       end
 
       assert_predicate second, :completed?
-      assert(reports.any? { |report| Integration.carried?(report, secret) },
+      assert(reports.any? { |report| Integration.carried?(report, part) },
              "read_agent never returned the report: #{reports.inspect}")
 
       reopened = Mistri::Session.new(store:, id: parent.session.id).children.first
@@ -81,16 +81,16 @@ class TestBackgroundIntegration < Minitest::Test
   # answers from it.
   Integration.scenario(self, :a_workers_report_arrives_without_being_asked_for) do |model|
     Mistri.locks = Mistri::Locks::Memory.new
-    secret = Integration.marker
+    part = Integration.marker
     release = Queue.new
     released = false
     child = nil
     cleanup_attempted = false
     store = Mistri::Stores::Memory.new
-    oracle = oracle_tool(secret)
-    tools = Mistri::SubAgent.pack(provider: Mistri.provider(model), tools: [oracle],
+    catalog = catalog_tool(part)
+    tools = Mistri::SubAgent.pack(provider: Mistri.provider(model), tools: [catalog],
                                   dispatcher: Mistri::Dispatchers::Thread.new,
-                                  runtime_factory: runtime_factory(secret, release))
+                                  runtime_factory: runtime_factory(part, release))
     parent = Mistri::Agent.new(
       provider: Mistri.provider(model), tools: tools,
       session: Mistri::Session.new(store:),
@@ -100,8 +100,8 @@ class TestBackgroundIntegration < Minitest::Test
 
     begin
       first = parent.run(
-        "Spawn a background worker named Terrier (instructions: call the oracle " \
-        "tool and report its exact SECRET_VALUE) to fetch the secret value. Then, " \
+        "Spawn a background worker named Terrier (instructions: call the catalog " \
+        "tool and report its exact PART_NUMBER) to look up the part number. Then, " \
         "without waiting for Terrier, reply with exactly: receipt acknowledged."
       )
 
@@ -118,19 +118,19 @@ class TestBackgroundIntegration < Minitest::Test
       released = true
       report = wait_for_report(parent.session)
 
-      assert Integration.carried?(report["report"], secret),
-             "the durable report lost the secret: #{report.inspect}"
+      assert Integration.carried?(report["report"], part),
+             "the durable report lost the part number: #{report.inspect}"
 
       session = Mistri::Session.new(store:, id: parent.session.id)
       reader = Mistri::Agent.new(
         provider: Mistri.provider(model), tools: [], session:,
         system: "A worker report appears in context before the current request. " \
-                "Return its exact SECRET_VALUE when asked."
+                "Return its exact PART_NUMBER when asked."
       )
-      second = reader.run("What exact SECRET_VALUE did Terrier report? Answer with only it.")
+      second = reader.run("What exact PART_NUMBER did Terrier report? Answer with only it.")
 
       assert_predicate second, :completed?
-      assert Integration.carried?(second.text, secret),
+      assert Integration.carried?(second.text, part),
              "the folded report never reached the model: #{second.text}"
       assert session.entries.any? { |entry| entry["report_id"] == report["id"] },
              "the durable report was never folded into the conversation"
@@ -146,19 +146,19 @@ class TestBackgroundIntegration < Minitest::Test
 
   private
 
-  def oracle_tool(secret, release = nil)
-    Mistri::Tool.define("oracle", "Returns the exact SECRET_VALUE.") do
+  def catalog_tool(part, release = nil)
+    Mistri::Tool.define("catalog", "Returns the exact PART_NUMBER.") do
       release&.pop
-      "SECRET_VALUE=#{secret}"
+      "PART_NUMBER=#{part}"
     end
   end
 
-  def runtime_factory(secret, release)
+  def runtime_factory(part, release)
     lambda do |spec|
       provider = Mistri.provider(spec.fetch("model"))
       Mistri::SubAgent::Runtime.new(
         provider:, system: spec.fetch("instructions"),
-        tools: [oracle_tool(secret, release)], cleanup: -> { provider.close }
+        tools: [catalog_tool(part, release)], cleanup: -> { provider.close }
       )
     end
   end
