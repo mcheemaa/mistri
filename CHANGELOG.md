@@ -36,7 +36,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   and it calls them from its next step. A query that is a tool's name, or
   `select:` and a list of names, loads those tools and no others, and a tool
   is not loaded twice. A call to a deferred tool that was not loaded does not
-  run, and the model is told to load it first. A load is stored with the
+  run, and its error names the search to run. A load is stored with the
   session, so a later run offers the same tools. A tool result can load tools
   itself with `ToolResult.new(content:, loads:)`. On Anthropic the deferred
   definitions travel marked to stay out of the prompt and a load is a

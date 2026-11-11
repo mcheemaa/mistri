@@ -832,9 +832,9 @@ module Mistri
       ToolResult.new(content: utf8_prefix(content, MAX_ARGUMENT_ERROR_BYTES), error: true)
     end
 
-    # Why a call has no tool it may run: none has the name, or the model was
-    # never shown it. A call that waited for approval was loaded when the
-    # model made it.
+    # The error for a call that cannot run: no tool has the name, or the tool
+    # is deferred and no result has loaded it. A call that waited for approval
+    # was loaded when the model made it.
     def uncallable(name, tool, fresh:)
       return unavailable_tool(name) unless tool
 
