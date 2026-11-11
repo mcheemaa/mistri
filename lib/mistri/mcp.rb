@@ -54,16 +54,19 @@ module Mistri
     # collisions, and gates marks tools needing human approval
     # (gates: { "create_issue" => true }, or needs_approval: for all). A tool
     # that cannot be bridged is left out: the block is given its definition
-    # and the error, and without a block it is named in a warning.
+    # and the error, and without a block it is named in a warning. deferred
+    # keeps the server's tools out of the model's sight until a search loads
+    # them.
     def tools(client, allow: nil, deny: [], prefix: nil, needs_approval: false, gates: {},
-              complete_argument_validator: nil)
+              complete_argument_validator: nil, deferred: false)
       taken = {}
       client.tools.filter_map do |tool|
         remote = tool["name"] if tool.is_a?(Hash)
         next if deny.include?(remote) || (allow && !allow.include?(remote))
 
         bridged = bridge(client, tool, prefix: prefix, gate: gates.fetch(remote, needs_approval),
-                                       complete_argument_validator: complete_argument_validator)
+                                       complete_argument_validator: complete_argument_validator,
+                                       deferred: deferred)
         claim(taken, bridged.name, remote)
         bridged
       rescue ConfigurationError => e
@@ -97,7 +100,7 @@ module Mistri
     # The model calls the tool by name, or by a safe name made from prefix and
     # the remote name. The server is always called with the remote name.
     def bridge(client, spec, prefix: nil, name: nil, gate: false,
-               complete_argument_validator: nil)
+               complete_argument_validator: nil, deferred: false)
       raise ConfigurationError, "the definition is not an object" unless spec.is_a?(Hash)
 
       remote = spec["name"]
@@ -120,7 +123,7 @@ module Mistri
       )
       Tool.define(local, description,
                   input_schema: input_schema,
-                  needs_approval: gate,
+                  needs_approval: gate, deferred: deferred,
                   complete_argument_validator: complete_argument_validator) do |args|
         answer(client.call_tool(remote, args || {}))
       end
