@@ -1,6 +1,7 @@
 # frozen_string_literal: true
 
 require_relative "test_helper"
+require_relative "../eval/compaction"
 require "tmpdir"
 
 # A process with no UTF-8 locale (cron, a systemd unit, an image with no
@@ -43,6 +44,24 @@ class TestUtf8Reads < Minitest::Test
     skill = Mistri::Skills.load(@dir).first
 
     assert_equal ["Say #{TEXT}", "Say #{TEXT}."], [skill.description, skill.body.strip]
+  end
+
+  def test_a_skill_named_after_a_file_with_a_non_ascii_name_is_found_by_that_name
+    File.binwrite(File.join(@dir, "#{TEXT}.md"), "---\ndescription: Coffee\n---\nBrew it.\n")
+
+    skills = Mistri::Skills.load(@dir)
+    answer = Mistri::Skills.reader(skills).call({ "name" => TEXT }, nil)
+
+    assert_equal [TEXT], skills.map(&:name)
+    assert_match(/Brew it/, answer.to_s)
+    assert_includes JSON.parse(JSON.generate(Mistri::Skills.section(skills))), TEXT
+  end
+
+  def test_an_eval_report_with_a_non_ascii_character_reads_back
+    path = File.join(@dir, "rows.jsonl")
+    File.binwrite(path, "#{JSON.generate(scenario: TEXT)}\n")
+
+    assert_equal [{ scenario: TEXT }], CompactionEval::Report.read(path)
   end
 
   def test_a_definition_with_a_non_ascii_character_loads
