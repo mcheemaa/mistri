@@ -455,6 +455,7 @@ module Mistri
           credentials = [form["client_id"], client_secret].map do |part|
             URI.encode_www_form_component(part)
           end
+          form = form.except("client_id")
         when "client_secret_post"
           raise Error, "client_secret_post requires a client_secret" unless client_secret
 
