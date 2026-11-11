@@ -130,14 +130,20 @@ class TestDeferredTools < Minitest::Test
     assert_nil answer.loads
   end
 
-  def test_the_search_tool_says_how_many_tools_wait_under_each_prefix
-    agent, provider = agent([{ text: "Hello." }])
+  def test_the_model_is_told_what_can_be_loaded_once_and_in_the_conversation
+    agent, provider = agent([{ text: "Hello." }, { text: "Again." }])
 
     agent.run("Hello.")
-    description = provider.requests.first.dig(:options, :tools)
-                          .find { |spec| spec[:name] == "tool_search" }.fetch(:description)
+    agent.run("Again.")
+    told = provider.requests.first[:messages].last.text
+    search = provider.requests.first.dig(:options, :tools)
+                     .find { |spec| spec[:name] == "tool_search" }
 
-    assert_match(/It searches: tracker \(2 tools\), docs \(1 tool\), 1 other\./, description)
+    assert_match(/\A<system-reminder>\n.*^tracker__create_issue$.*^refund_charge$/m, told)
+    refute_includes told, "lookup_order"
+    refute_includes search.fetch(:description), "tracker"
+    assert_equal %w[deferred_tools], agent.session.messages.filter_map(&:reminder)
+    assert_equal "Hello.", provider.requests.first[:messages].first.text
   end
 
   def test_an_agent_without_deferred_tools_is_as_before

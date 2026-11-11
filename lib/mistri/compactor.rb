@@ -127,6 +127,7 @@ module Mistri
         previous = session.last_compaction&.fetch("summary", nil)
         head = replay.take_while { |(_, index)| index.nil? || index < cut }.map(&:first)
         head.shift if previous # the synthetic summary rides in <previous-summary>
+        head = head.reject(&:reminder) # the harness wrote it and says it again; the user never did
         return nil if head.empty?
 
         emit&.call(Event.new(type: :compacting))

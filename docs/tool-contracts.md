@@ -313,8 +313,20 @@ other tool. One load also holds no more than 20 KB of definitions; of 303
 definitions measured on 22 public servers, nine in ten were under 2.2 KB. A
 first match larger than that still loads, alone. When the size bound stops a
 load before its count, the result states that more tools match, and the next
-search loads them. The description of `tool_search` gives the number of tools
-under each name prefix, so give a server a prefix that describes it.
+search loads them.
+
+The deferred tools are listed in the conversation. With its first request an
+agent appends a reminder to the session, after the user's message, that names
+every deferred tool. It appends one again when the list has changed, and
+after a compaction that summarized the previous one. Past 20 KB of names the
+reminder gives the number of tools under each name prefix instead, so give a
+server a prefix that describes it. The definition of `tool_search` is the
+same whatever the list holds. Connecting a server therefore changes neither
+the tools nor the system prompt of a request, and the prompt cache holds.
+
+The reminder is a user message whose `reminder` is `"deferred_tools"`. The
+user did not write it, so a host that shows a conversation to a person hides
+a message with `reminder` set. A compaction does not summarize it.
 
 A query that is a tool's name loads that tool and no other. The same applies
 to the name without its prefix and to the words of the name, so `create issue`
@@ -418,8 +430,9 @@ Mistri.agent("claude-opus-5-5", tools: tools,
 What it costs in the process is small. Building an agent with deferred tools
 costs what a flat list costs. The search index is built once, on an agent's
 first search, from each deferred tool's description and schema. Building a
-request adds one pass over the history to find what was loaded, and on
-OpenAI one pass over the loaded definitions to index them by name.
+request adds two passes over the history, one to find what was loaded and one
+to find the reminder that lists what can be, and on OpenAI one pass over the
+loaded definitions to index them by name.
 
 On the wire no request carries the definition of a deferred tool until a
 result loads it, on any provider.

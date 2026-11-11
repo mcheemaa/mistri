@@ -65,5 +65,6 @@ class TestMessage < Minitest::Test
       Mistri::Message.tool(content: "x", tool_call_id: "c1", tool_error: "yes")
     end
     assert_raises(ArgumentError) { Mistri::Message.new(role: :user, tool_error: false) }
+    assert_raises(ArgumentError) { Mistri::Message.new(role: :assistant, reminder: "deferred_tools") }
   end
 end
