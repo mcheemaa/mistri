@@ -101,16 +101,4 @@ class TestMcpToolNames < Minitest::Test
     assert_equal "open_issues", tool.name
     assert_equal ["issues.list/open"], client.calls
   end
-
-  def test_a_server_that_lists_a_tool_under_another_tools_changed_name_makes_a_duplicate
-    taken = Mistri::MCP.local_name("a.b")
-    tools = Mistri::MCP.tools(client_for("a.b", taken))
-
-    error = assert_raises(Mistri::ConfigurationError) do
-      Mistri::Agent.new(provider: Mistri::Providers::Fake.new(turns: []), tools:)
-    end
-
-    assert_equal [taken, taken], tools.map(&:name)
-    assert_match(/duplicate tool names/, error.message)
-  end
 end

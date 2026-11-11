@@ -43,6 +43,37 @@ class TestMcpUnusableTools < Minitest::Test
     assert_equal [nameless], left_out
   end
 
+  def test_a_tool_whose_local_name_is_taken_in_the_same_list_is_left_out
+    taken = Mistri::MCP.local_name("a.b")
+    left_out = []
+
+    tools = Mistri::MCP.tools(client_for(good("a.b"), good(taken), good("search"))) do |tool, error|
+      left_out << [tool["name"], error.message]
+    end
+
+    assert_equal [taken, "search"], tools.map(&:name)
+    assert_equal [[taken, %(MCP tool "#{taken}": the name "#{taken}" is taken by "a.b")]], left_out
+    Mistri::Agent.new(provider: Mistri::Providers::Fake.new(turns: []), tools:)
+  end
+
+  def test_a_name_the_server_lists_twice_is_bridged_once
+    left_out = []
+
+    tools = Mistri::MCP.tools(client_for(good("search"), good("search"))) do |tool, _error|
+      left_out << tool["name"]
+    end
+
+    assert_equal %w[search], tools.map(&:name)
+    assert_equal %w[search], left_out
+  end
+
+  def test_a_tool_that_was_left_out_does_not_hold_its_name
+    tools = Mistri::MCP.tools(client_for(broken, good("broken"))) { |_tool, _error| nil }
+
+    assert_equal %w[broken], tools.map(&:name)
+    assert_equal "Does broken.", tools.first.description
+  end
+
   def test_a_host_that_wants_the_old_behaviour_raises_from_the_block
     assert_raises(Mistri::ConfigurationError) do
       Mistri::MCP.tools(client_for(good("search"), broken)) { |_tool, error| raise error }

@@ -113,8 +113,8 @@ looping or allocating without bound.
 
 `Mistri::MCP.tools` filters remote names with `allow:` and `deny:`. `prefix:`
 creates local names such as `linear__create_issue` while the remote call still
-uses `create_issue`. Duplicate local tool names make Agent construction fail;
-one server can never silently shadow another.
+uses `create_issue`. Duplicate local tool names from two servers make Agent
+construction fail; one server can never silently shadow another.
 
 A local name is one every provider takes: letters, digits, underscores and
 hyphens, 64 characters at most, not starting with a digit or a hyphen. A name
@@ -128,9 +128,10 @@ the same in every run, whatever else the server lists.
 its own passes one with `bridge(client, definition, name:)`, and that name is
 used as given.
 
-A tool that cannot be bridged, because its schema is not one Mistri can
-validate or it has no name, is left out, and the server's other tools stay
-usable. Without a block the tool and the reason are written as a warning. With
+A tool that cannot be bridged is left out, and the server's other tools stay
+usable. That is a tool whose schema is not one Mistri can validate, one with
+no name, and one whose local name is already taken by a tool listed before
+it. Without a block the tool and the reason are written as a warning. With
 one, the block is given the remote definition and the error:
 
 ```ruby

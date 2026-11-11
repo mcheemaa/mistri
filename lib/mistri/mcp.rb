@@ -60,14 +60,29 @@ module Mistri
       listed = client.tools
       listed = listed.select { |tool| allow.include?(tool["name"]) } if allow
       listed = listed.reject { |tool| deny.include?(tool["name"]) }
+      taken = {}
       listed.filter_map do |tool|
-        bridge(client, tool, prefix: prefix, gate: gates.fetch(tool["name"], needs_approval),
-                             complete_argument_validator: complete_argument_validator)
+        bridged = bridge(client, tool, prefix: prefix,
+                                       gate: gates.fetch(tool["name"], needs_approval),
+                                       complete_argument_validator: complete_argument_validator)
+        claim(taken, bridged.name, tool["name"])
+        bridged
       rescue ConfigurationError => e
         block_given? ? yield(tool, e) : warn("mistri: #{e.message}; the tool was left out")
         nil
       end
     end
+
+    def claim(taken, local, remote)
+      holder = taken[local]
+      if holder
+        raise ConfigurationError,
+              "MCP tool #{remote.inspect}: the name #{local.inspect} is taken by #{holder.inspect}"
+      end
+
+      taken[local] = remote
+    end
+    private_class_method :claim
 
     # The model calls the tool by name, or by a safe name made from prefix and
     # the remote name. The server is always called with the remote name.
