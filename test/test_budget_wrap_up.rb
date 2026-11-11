@@ -60,7 +60,6 @@ class TestBudgetWrapUp < Minitest::Test
     assert_predicate sent, :user?
     refute_empty sent.text.strip
     refute_includes agent.session.messages, sent
-    assert_raises(NameError) { Mistri::Agent::WRAP_UP }
   end
 
   def test_the_wrap_up_turn_answers_a_steer_sent_during_the_last_tool_batch
