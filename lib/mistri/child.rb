@@ -9,6 +9,7 @@ module Mistri
   #   child.status                # queued, running, interrupted, or terminal
   #   child.report                # the terminal entry's report, once finished
   #   child.transcript(tail: 20)  # recent entries, image bytes stripped
+  #   child.transcript(from: 40, to: 60)  # entries 40 to 59
   #   child.say("Also check their pricing page")
   #
   # Status is a walk over the child's own entries: a terminal entry wins; a
@@ -75,10 +76,20 @@ module Mistri
 
     # Recent entries, oldest first, with inline image bytes replaced by a
     # marker: transcripts are for reading and re-sending, not for hauling
-    # screenshots back into a context window.
-    def transcript(tail: 20)
-      entries = tail ? last_entries(tail) : read_log
+    # screenshots back into a context window. from: reads another part of
+    # the log instead: the entries from that position up to, and not
+    # including, to:, counted the way the store counts them.
+    def transcript(tail: 20, from: nil, to: nil)
+      entries = if !from.nil? || !to.nil? then entries_between(from, to)
+                elsif tail then last_entries(tail)
+                else read_log
+                end
       entries.map { |entry| Session::Log.owned(self.class.strip_images(entry)) }
+    end
+
+    # How many entries the child's log holds.
+    def size
+      from_the_end? ? @store.size(@session_id) : read_log.length
     end
 
     # Queue a message the child folds at its next turn boundary. Delivery is
@@ -208,6 +219,21 @@ module Mistri
       first = (0...size).last(count).first || size
       @store.load(@session_id, from: first, to: size)
     end
+
+    # Positions mean the same on every store and every path, so they are
+    # checked before either is chosen. An end at or before the start is an
+    # empty range.
+    def entries_between(from, to)
+      unless position?(from) && (to.nil? || position?(to))
+        raise ArgumentError, "from: and to: are positions in the log, whole numbers from 0"
+      end
+      return [] if to && to <= from
+      return read_log[from...to].to_a unless from_the_end?
+
+      @store.load(@session_id, from:, to:)
+    end
+
+    def position?(value) = value.is_a?(Integer) && !value.negative?
 
     # A log that is already held is read on from where it stopped, which
     # is cheaper than asking the store for its end again.

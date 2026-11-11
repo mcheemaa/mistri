@@ -104,13 +104,13 @@ class TestConsole < Minitest::Test
     assert_match(/done: The answer is 42\./, output)
   end
 
-  def test_read_agent_tails_to_the_requested_length
+  def test_read_agent_reads_no_more_than_the_limit
     _store, parent, _done, running = setup_family
     3.times { |i| running.append_message(Mistri::Message.user("note #{i}")) }
-    output = Mistri::Console.read_agent.call({ "agent" => "Husky", "tail" => 2 },
+    output = Mistri::Console.read_agent.call({ "agent" => "Husky", "limit" => 2 },
                                              context_for(parent))
 
-    assert_match(/last 2 entries/, output)
+    assert_match(/entries 2 to 3 of 4/, output)
     refute_match(/long task/, output)
   end
 
@@ -322,7 +322,7 @@ class TestConsole < Minitest::Test
 
     output = Mistri::Console.read_agent.call({ "agent" => "Terrier" }, context_for(parent))
 
-    assert_match(/last 2 entries/, output, "steer and image-only entries render to nothing")
+    assert_equal 3, output.lines.length, "steer and image-only entries render to nothing"
     assert_match(/user: and a block/, output, "bare strings inside content arrays are skipped")
     assert_match(/user: plain string/, output)
     refute_match(%r{image/png}, output)
