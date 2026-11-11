@@ -111,6 +111,34 @@ client = Mistri::MCP::Client.new(
 Repeated cursors, malformed collections, and exceeded limits raise instead of
 looping or allocating without bound.
 
+### Storing a server's listing
+
+Listing a server's tools takes a connection, and a stdio server must be
+started first. With many servers that is too slow to repeat each time an
+agent is built. `client.listing` returns the server's tools, and its
+`instructions` when it sent any, as plain JSON. Store it, and pass it to the
+clients built later:
+
+```ruby
+# Once, in a job.
+kept = Mistri::MCP::Client.new(url: server_url, token: token).listing
+store.write("tracker", kept)
+
+# Each time an agent is built.
+client = Mistri::MCP::Client.new(url: server_url, token: token,
+                                 listing: store.read("tracker"))
+tools = Mistri::MCP.tools(client, prefix: "tracker", deferred: true)
+```
+
+A client built with `listing:` returns `tools` and `instructions` from it and
+sends no request. It connects when a tool is first called, and a stdio server
+is not started before that. Building an agent over many servers then opens no
+connection.
+
+`client.listing(refresh: true)` lists the server again. When to do that is
+the host's decision. Until then a tool the server has removed fails when it
+is called, and a tool it has added is not offered.
+
 `Mistri::MCP.tools` filters remote names with `allow:` and `deny:`. `prefix:`
 creates local names such as `linear__create_issue` while the remote call still
 uses `create_issue`. Duplicate local tool names from two servers make Agent

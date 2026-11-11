@@ -5,6 +5,13 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+- An MCP client can be built from a stored listing. `Client#listing` returns
+  the server's tools and its instructions as JSON for a host to store, and a
+  client built with `listing:` returns them without a request and connects
+  only when a tool is called. Building an agent over many servers then opens
+  no connection, and a stdio server is not started until one of its tools is
+  called. `Client#instructions` returns the instructions the server sent in
+  its initialize result.
 - An OpenAI stream failure keeps its reason. The Responses API can send a
   failure's code and message nested under `error`, and Mistri read them only
   at the top of the record. The turn ended as `provider error`, and a refusal
