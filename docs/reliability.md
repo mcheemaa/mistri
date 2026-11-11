@@ -436,7 +436,9 @@ To avoid that cost, keep the prefix stable for the life of a session:
   `Reminder.every` does so each time it fires.
 
 Mistri drops pre-compaction thinking itself, because its own
-[compaction boundary](sessions.md#compaction) changes the prefix. Mistri sends
+[compaction boundary](sessions.md#compaction) changes the prefix. For the same
+reason it saves a budget wrap-up answer without its thinking, which was signed
+against an instruction the session does not keep. Mistri sends
 the control only to `api.anthropic.com`. For another `origin:`, pass
 `block_binding` in `thinking:`; see [Upgrading](../UPGRADING.md#unreleased).
 Do not rewrite the stored transcript or tool-call/result pairs.

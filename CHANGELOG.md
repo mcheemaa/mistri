@@ -10,6 +10,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   answer in place of the fixed "Run stopped" message. The result still has
   status `:budget`. Off by default. A custom provider receives
   `tool_choice: :none` on that turn.
+- `Message#prefix_bound_thinking?` tells whether a message's thinking verifies
+  only after the exact history it was produced under.
 - A session's string id is fixed when the Session is built. `Session.new`
   keeps its own copy of it and `Session#id` returns a copy. Changing the string
   a session was given used to redirect it, and could mix two sessions' entries

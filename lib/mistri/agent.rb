@@ -1017,8 +1017,11 @@ module Mistri
     def wrap_up(reason, usage, signal, output_schema, &emit)
       message, held, turn_usage = request_turn(signal, output_schema, wrap_up: true, &emit)
       usage += turn_usage
-      answer = message.with(content: message.content.grep_v(ToolCall),
-                            stop_reason: StopReason::BUDGET, error_message: "budget_#{reason}")
+      content = message.content.grep_v(ToolCall)
+      # Signed against the instruction, which the session never replays.
+      content = content.grep_v(Content::Thinking) if message.prefix_bound_thinking?
+      answer = message.with(content:, stop_reason: StopReason::BUDGET,
+                            error_message: "budget_#{reason}")
       failed = [StopReason::ERROR, StopReason::ABORTED].include?(message.stop_reason)
       return budget_stopped(reason, usage, &emit) if failed || answer.text.to_s.strip.empty?
 

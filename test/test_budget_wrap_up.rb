@@ -92,6 +92,25 @@ class TestBudgetWrapUp < Minitest::Test
     assert_empty agent.session.messages.last.tool_calls
   end
 
+  # Its signature covers the instruction, which the session never replays.
+  def test_a_prefix_bound_wrap_up_answer_is_saved_without_its_thinking
+    _, agent = stopped_run({ thinking: "Weighing it.", text: "Done so far." },
+                           provider: PrefixBoundFake)
+
+    agent.run("go")
+
+    assert_equal [Mistri::Content::Text], agent.session.messages.last.content.map(&:class)
+  end
+
+  def test_a_wrap_up_answer_from_another_provider_keeps_its_thinking
+    _, agent = stopped_run({ thinking: "Weighing it.", text: "Done so far." })
+
+    agent.run("go")
+
+    assert_equal [Mistri::Content::Thinking, Mistri::Content::Text],
+                 agent.session.messages.last.content.map(&:class)
+  end
+
   def test_every_built_in_provider_forbids_tool_calls_in_its_own_field
     openai = Mistri::Providers::OpenAI.new(api_key: "k")
     gemini = Mistri::Providers::Gemini.new(api_key: "k")
@@ -112,11 +131,16 @@ class TestBudgetWrapUp < Minitest::Test
     [openai, gemini, anthropic].compact.each(&:close)
   end
 
+  # Answers as a model whose thinking signs every earlier message.
+  class PrefixBoundFake < Mistri::Providers::Fake
+    def stream(...) = super.with(provider: :anthropic, model: "claude-opus-5-5")
+  end
+
   private
 
   # Two tool turns spend a two-turn budget; final_turn scripts the wrap-up.
-  def stopped_run(final_turn)
-    provider = Mistri::Providers::Fake.new(turns: [LOOP_CALL, LOOP_CALL, final_turn])
+  def stopped_run(final_turn, provider: Mistri::Providers::Fake)
+    provider = provider.new(turns: [LOOP_CALL, LOOP_CALL, final_turn])
     tool = Mistri::Tool.define("loop", "Loops.") { "again" }
     agent = Mistri::Agent.new(provider:, tools: [tool], retries: nil,
                               budget: Mistri::Budget.new(turns: 2, wrap_up: true))
