@@ -128,6 +128,18 @@ class TestMcpUnusableTools < Minitest::Test
     JSON.generate(tools.map(&:spec))
   end
 
+  def test_a_plain_ascii_name_in_another_encoding_meets_the_filters_and_gates
+    client = client_for({ "name" => "search".b }, { "name" => "create".b })
+
+    allowed = Mistri::MCP.tools(client, allow: ["search"])
+    denied = Mistri::MCP.tools(client, deny: ["search"])
+    gated = Mistri::MCP.tools(client, gates: { "create" => true })
+
+    assert_equal %w[search], allowed.map(&:name)
+    assert_equal %w[create], denied.map(&:name)
+    assert_equal([false, true], gated.map { |tool| tool.needs_approval?({}) })
+  end
+
   def test_what_the_block_returns_never_joins_the_tools
     stray = Mistri::Tool.define("stray", "Should not appear.") { "no" }
 
