@@ -276,7 +276,8 @@ A stopped run ends on a fixed "Run stopped" message and status `:budget`. Pass
 budget = Mistri::Budget.new(turns: 20, wrap_up: true)
 ```
 
-The run then spends one more turn past the ceiling. The model keeps its tools
+The run then spends one more turn past the ceiling, after folding in any steer
+or sub-agent report that is waiting. The model keeps its tools
 but cannot call them, and is told to give its best answer and say what is
 unfinished. That instruction is sent to the model and not stored in the
 session. The result keeps status `:budget`, and the turn counts toward usage.

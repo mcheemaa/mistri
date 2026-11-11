@@ -1015,6 +1015,9 @@ module Mistri
     # provider that calls a tool anyway has the call dropped: nothing will
     # run it, and an unanswered call makes the transcript unreplayable.
     def wrap_up(reason, usage, signal, &emit)
+      # The final answer must see a steer or report that arrived in the
+      # last tool batch; the first budget check runs before the loop folds.
+      fold_inbox
       # No output schema: it would force a made-up value, and a task's
       # output comes only from a validated completion.
       message, held, turn_usage = request_turn(signal, nil, wrap_up: true, &emit)

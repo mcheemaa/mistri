@@ -63,6 +63,22 @@ class TestBudgetWrapUp < Minitest::Test
     assert_raises(NameError) { Mistri::Agent::WRAP_UP }
   end
 
+  def test_the_wrap_up_turn_answers_a_steer_sent_during_the_last_tool_batch
+    session = Mistri::Session.new(store: Mistri::Stores::Memory.new)
+    tool = Mistri::Tool.define("loop", "Loops.") do
+      session.steer("Only check the EU region.")
+      "again"
+    end
+    provider = Mistri::Providers::Fake.new(turns: [LOOP_CALL, { text: "EU checked." }])
+    agent = Mistri::Agent.new(provider:, tools: [tool], session:,
+                              budget: Mistri::Budget.new(turns: 1, wrap_up: true))
+
+    agent.run("go")
+
+    assert_includes provider.requests.last[:messages].map(&:text), "Only check the EU region."
+    assert_empty session.pending_inbox
+  end
+
   def test_a_task_wraps_up_without_its_schema
     provider = Mistri::Providers::Fake.new(turns: [{ text: "Counted 3 of 5 files." }])
     agent = Mistri::Agent.new(provider:, budget: Mistri::Budget.new(turns: 0, wrap_up: true))
