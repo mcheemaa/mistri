@@ -1,5 +1,6 @@
 # frozen_string_literal: true
 
+require "digest"
 require "json"
 
 module Mistri
@@ -20,6 +21,10 @@ module Mistri
     EMPTY_INPUT_SCHEMA = {
       "type" => "object", "properties" => {}.freeze, "additionalProperties" => false
     }.freeze
+    # What every catalogued provider takes for a tool name: letters, digits,
+    # underscores and hyphens, 64 at most, not starting with a digit or hyphen.
+    NAME_LIMIT = 64
+    UNSAFE_NAME = /[^A-Za-z0-9_-]/
 
     # A protocol-level failure: a JSON-RPC error, a missing response, an
     # unsupported negotiation.
@@ -53,15 +58,20 @@ module Mistri
       listed = client.tools
       listed = listed.select { |tool| allow.include?(tool["name"]) } if allow
       listed = listed.reject { |tool| deny.include?(tool["name"]) }
+      names = local_names(listed.map { |tool| tool["name"] }, prefix)
       listed.map do |tool|
-        bridge(client, tool, prefix: prefix, gate: gates.fetch(tool["name"], needs_approval),
+        bridge(client, tool, name: names[tool["name"]],
+                             gate: gates.fetch(tool["name"], needs_approval),
                              complete_argument_validator: complete_argument_validator)
       end
     end
 
-    def bridge(client, spec, prefix: nil, gate: false, complete_argument_validator: nil)
+    # The model calls the tool by name, or by a safe name made from prefix and
+    # the remote name. The server is always called with the remote name.
+    def bridge(client, spec, prefix: nil, name: nil, gate: false,
+               complete_argument_validator: nil)
       remote = spec.fetch("name")
-      local = prefix ? "#{prefix}__#{remote}" : remote
+      local = name || local_name(remote, prefix)
       if spec.key?("inputSchema") && spec["inputSchema"].nil?
         raise ConfigurationError, "inputSchema must be an object, not null"
       end
@@ -78,6 +88,27 @@ module Mistri
       end
     rescue ConfigurationError => e
       raise ConfigurationError, "MCP tool #{remote.inspect}: #{e.message}"
+    end
+
+    # A remote name that is already safe stays as it is. Any other is made
+    # safe from the remote name alone, so it is the same in every run.
+    def local_name(remote, prefix = nil)
+      name = (prefix ? "#{prefix}__#{remote}" : remote.to_s).gsub(UNSAFE_NAME, "_")
+      name = "_#{name}" unless name.match?(/\A[A-Za-z_]/)
+      name.length > NAME_LIMIT ? distinct_name(name, remote) : name
+    end
+
+    def local_names(remotes, prefix)
+      names = remotes.to_h { |remote| [remote, local_name(remote, prefix)] }
+      shared = names.values.tally.select { |_name, count| count > 1 }.keys
+      names.to_h do |remote, name|
+        kept = name == (prefix ? "#{prefix}__#{remote}" : remote)
+        [remote, shared.include?(name) && !kept ? distinct_name(name, remote) : name]
+      end
+    end
+
+    def distinct_name(name, remote)
+      "#{name[0, NAME_LIMIT - 9]}_#{Digest::SHA256.hexdigest(remote.to_s)[0, 8]}"
     end
 
     # An MCP result becomes model-readable content: text joins, images ride
@@ -119,6 +150,8 @@ module Mistri
     def resource_text(resource)
       resource["text"] || "[resource: #{resource["uri"]}]"
     end
+
+    private_class_method :local_names, :distinct_name
   end
 end
 
@@ -127,4 +160,4 @@ require_relative "mcp/wires"
 require_relative "mcp/client"
 require_relative "mcp/oauth"
 
-Mistri::MCP.private_constant :Egress, :WireError, :EMPTY_INPUT_SCHEMA
+Mistri::MCP.private_constant :Egress, :WireError, :EMPTY_INPUT_SCHEMA, :NAME_LIMIT, :UNSAFE_NAME
