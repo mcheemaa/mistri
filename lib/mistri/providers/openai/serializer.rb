@@ -14,11 +14,32 @@ module Mistri
       # pairing needs: Thinking.signature holds the whole reasoning item,
       # Text.signature the message item id, ToolCall.signature the
       # function_call item id.
+      #
+      # A result that loads deferred tools is followed by an additional_tools
+      # item, which makes them callable from that point on and leaves the
+      # request's own tools, and so the cached prefix, as they were.
       module Serializer
         module_function
 
-        def input_items(history)
-          history.reject(&:system?).flat_map { |msg| items_for(msg) }
+        # The deferred tools are indexed by the name they are sent with. One
+        # is converted when a result loads it, not on every request.
+        def input_items(history, deferred: [])
+          specs = deferred.to_h { |tool| [tool.transform_keys(&:to_sym)[:name], tool] }
+          declared = {}
+          history.reject(&:system?).flat_map do |msg|
+            items = items_for(msg, declared)
+            msg.tool? ? items + additions(msg, specs, declared) : items
+          end
+        end
+
+        def additions(msg, specs, declared)
+          return [] if msg.tool_error?
+
+          fresh = msg.loads.to_a.uniq.select { |name| specs.key?(name) && !declared.key?(name) }
+          return [] if fresh.empty?
+
+          fresh.each { |name| declared[name] = true }
+          [{ type: "additional_tools", role: "developer", tools: tools(specs.values_at(*fresh)) }]
         end
 
         # Left unset, the API makes each schema strict, which makes every
@@ -31,11 +52,11 @@ module Mistri
           end
         end
 
-        def items_for(msg)
+        def items_for(msg, declared = {})
           case msg.role
           when :user then [user_item(msg)]
           when :tool then [tool_result_item(msg)]
-          when :assistant then assistant_items(msg)
+          when :assistant then assistant_items(msg, declared)
           else []
           end
         end
@@ -63,16 +84,16 @@ module Mistri
           { type: "function_call_output", call_id: msg.tool_call_id, output: text }
         end
 
-        def assistant_items(msg)
+        def assistant_items(msg, declared = {})
           own = msg.provider == :openai
-          msg.content.filter_map { |block| assistant_item(block, own:) }
+          msg.content.filter_map { |block| assistant_item(block, own:, declared:) }
         end
 
-        def assistant_item(block, own: true)
+        def assistant_item(block, own: true, declared: {})
           case block
           when Content::Thinking then reasoning_item(block, own:)
           when Content::Text then message_item(block, own:)
-          when ToolCall then function_call_item(block, own:)
+          when ToolCall then function_call_item(block, own:, declared:)
           end
         end
 
@@ -95,9 +116,13 @@ module Mistri
           item
         end
 
-        def function_call_item(block, own: true)
+        # A tool that came through additional_tools sits in a namespace of its
+        # own name. gpt-5.4 and gpt-5.5 refuse a call to it without one, and
+        # every model takes one, whoever made the call.
+        def function_call_item(block, own: true, declared: {})
           item = { type: "function_call", call_id: block.id, name: block.name,
                    arguments: JSON.generate(ToolArguments.replay_value(block)) }
+          item[:namespace] = block.name if declared.key?(block.name)
           item[:id] = block.signature if own && block.signature && !block.arguments_error
           item
         end
