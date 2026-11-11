@@ -169,8 +169,10 @@ A schema may declare JSON Schema 2020-12 or draft-07, which is what common
 schema generators emit. The two read the same for everything Mistri validates
 locally, apart from three shapes that are refused for that one tool: `items`
 as an array, a constraint beside a `$ref` (draft-07 ignores it and 2020-12
-applies it), and `prefixItems` in a draft-07 schema. Any other declared
-dialect is a configuration error.
+applies it), and `prefixItems` in a draft-07 schema. Every other rule on this
+page holds for a draft-07 schema as well, so a shape draft-07 allows and
+Mistri does not, such as an `$id` that is only a fragment, is still refused.
+Any other declared dialect is a configuration error.
 
 ## Results and large data
 

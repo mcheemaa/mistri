@@ -31,14 +31,33 @@ class TestMcpDraft7Schema < Minitest::Test
     assert_empty tool.argument_violations({})
   end
 
-  def test_the_keywords_draft7_names_differently_are_read
-    tool = bridge(draft7(
-                    "properties" => { "card" => { "$ref" => "#/definitions/card" } },
-                    "definitions" => { "card" => { "type" => "string" } },
-                    "dependencies" => { "card" => ["billing"] }
-                  ))
+  def test_the_keywords_draft7_names_differently_are_kept_for_the_model
+    definitions = { "card" => { "type" => "string" } }
+    dependencies = { "card" => ["billing"] }
+    tool = bridge(draft7("properties" => { "card" => { "$ref" => "#/definitions/card" } },
+                         "definitions" => definitions, "dependencies" => dependencies))
 
-    assert_empty tool.argument_violations("card" => "4242", "billing" => "x")
+    assert_equal definitions, tool.input_schema["definitions"]
+    assert_equal dependencies, tool.input_schema["dependencies"]
+    assert_equal DRAFT7, tool.input_schema["$schema"]
+    assert_empty tool.argument_violations("card" => "4242")
+  end
+
+  def test_a_nested_schema_may_declare_the_same_draft
+    nested = { "$schema" => DRAFT7, "type" => "string" }
+    tool = bridge(draft7("properties" => { "card" => nested }))
+
+    assert_equal ["$.card must be string, got integer"], tool.argument_violations("card" => 7)
+  end
+
+  def test_the_rules_for_a_definition_still_hold_in_draft7
+    reference = { "$ref" => "#card" }
+    error = assert_raises(Mistri::ConfigurationError) do
+      bridge(draft7("properties" => { "card" => reference },
+                    "definitions" => { "card" => { "$id" => "#card", "type" => "string" } }))
+    end
+
+    assert_match(/\$\.definitions\.card\.\$id must not contain a non-empty fragment/, error.message)
   end
 
   def test_items_as_an_array_means_something_else_in_draft7_and_is_refused
