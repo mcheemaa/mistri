@@ -6,8 +6,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 ## [Unreleased]
 
 - With `client_secret_basic`, an MCP token request carries the client id only
-  in the Basic header. It was also sent in the form, and a strict token
-  endpoint refuses a request that identifies the client twice.
+  in the Basic header. It was also sent in the form, and some token endpoints
+  refuse that combination.
 - Files are read as UTF-8 wherever the process runs. In a process with no
   UTF-8 locale (cron, a systemd unit, an image with no `LANG`) the JSONL store
   could not load a session that held a non-ASCII character, a skill or a
