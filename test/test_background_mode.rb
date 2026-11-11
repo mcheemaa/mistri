@@ -94,6 +94,27 @@ class TestBackgroundMode < Minitest::Test
                     "[Corgi finished] The answer is 7."
   end
 
+  def test_a_background_child_stopped_by_its_budget_reports_its_answer
+    child_fake = fake({ text: "Found A; B is unchecked." })
+    factory = lambda do |spec|
+      Mistri::SubAgent::Runtime.new(provider: child_fake, system: spec["instructions"],
+                                    budget: Mistri::Budget.new(turns: 0, wrap_up: true))
+    end
+    spawn = Mistri::SubAgent.spawner(provider: child_fake,
+                                     dispatcher: Mistri::Dispatchers::Inline.new,
+                                     runtime_factory: factory)
+    parent = spawn_call({ "name" => "Corgi", "task" => "look", "instructions" => "Look.",
+                          "mode" => "background" })
+    session = Mistri::Session.new(store: Mistri::Stores::Memory.new)
+
+    Mistri::Agent.new(provider: parent, tools: [spawn], session:).run("go")
+    child = session.children.first
+
+    assert_equal :budget, child.status
+    assert_includes parent.requests.last[:messages].map(&:text).join("\n"),
+                    "[Corgi reached its budget] Found A; B is unchecked."
+  end
+
   def test_thread_dispatcher_runs_the_child_while_the_parent_moves_on
     Mistri.locks = Mistri::Locks::Memory.new
     store = Mistri::Stores::Memory.new

@@ -5,6 +5,16 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+- `Budget.new(wrap_up: true)` gives the model one tool-free turn to answer when
+  a ceiling stops the run, in place of the fixed "Run stopped" message. Status
+  stays `:budget`. Off by default. Custom providers get `tool_choice: :none` on
+  that turn when the agent has tools. A failed wrap-up turn is kept as a
+  `wrap_up_attempt` entry.
+- A sub-agent stopped by its budget ends as `:budget`, not `:failed`, and its
+  answer reaches the parent's tool result, `Child#report`, and the background
+  report.
+- `Message#prefix_bound_thinking?` tells whether a message's thinking verifies
+  only after its exact original history.
 - An OpenAI stream failure keeps its reason. The Responses API can send a
   failure's code and message nested under `error`, and Mistri read them only
   at the top of the record. The turn ended as `provider error`, and a refusal

@@ -271,6 +271,29 @@ Limits are checked between model-visible turns. A turn already in progress,
 including its retry attempts, completes before the next check. Every budget is
 therefore a soft ceiling and may exceed its configured value by one turn.
 
+A stopped run ends on a fixed "Run stopped" message with status `:budget`.
+`wrap_up: true` lets the model answer instead:
+
+```ruby
+budget = Mistri::Budget.new(turns: 20, wrap_up: true)
+```
+
+The run spends one more turn past the ceiling. It folds in waiting steers and
+sub-agent reports first, but does not compact, so a context that no longer
+fits fails the turn. The model keeps its tools but cannot call them, and is
+told to give its best answer and say what is unfinished; that instruction is
+never stored. Under `task` the turn omits the output schema, so `output` stays
+nil. The turn counts toward usage, and the status stays `:budget`.
+
+If the turn fails, is aborted, or returns no text, the run ends on the fixed
+message. The subscriber first gets that attempt's own `:done` or `:error`, and
+the session keeps it as a `wrap_up_attempt` entry for accounting, not as a
+message.
+
+A budget stop's final event always has `reason: :budget`: `:done` when the
+model answered, `:error` on the fixed message. Check the reason, not the event
+type.
+
 ### Cost budgets
 
 Unknown price is not zero. Constructing a cost-budgeted Agent requires a
@@ -432,7 +455,9 @@ To avoid that cost, keep the prefix stable for the life of a session:
   `Reminder.every` does so each time it fires.
 
 Mistri drops pre-compaction thinking itself, because its own
-[compaction boundary](sessions.md#compaction) changes the prefix. Mistri sends
+[compaction boundary](sessions.md#compaction) changes the prefix. It also strips
+thinking from a budget wrap-up answer, which was signed against an unstored
+instruction. Mistri sends
 the control only to `api.anthropic.com`. For another `origin:`, pass
 `block_binding` in `thinking:`; see [Upgrading](../UPGRADING.md#unreleased).
 Do not rewrite the stored transcript or tool-call/result pairs.
@@ -475,6 +500,10 @@ inside the Agent; the provider owns its wire correlation.
 Custom providers may return `native_output_schema(schema)` when they can enforce
 the requested task contract. Returning nil leaves the prompt and local
 validation path intact.
+
+A `wrap_up: true` budget passes `tool_choice: :none` to `stream` on its final
+turn when the agent has tools. Forbid tool calls for that request; any returned
+are dropped.
 
 To support cost budgets, return true from `prices_usage?` and attach a known
 cost to every response, commonly with `Mistri::Usage#with_cost`. Missing or

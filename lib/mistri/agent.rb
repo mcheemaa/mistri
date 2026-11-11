@@ -24,8 +24,12 @@ module Mistri
     MAX_ARGUMENT_ERROR_BYTES = 2048
     MAX_VIOLATION_SOURCE_BYTES = 4096
     TOOL_ARGUMENT_VALIDATOR = Tool.instance_method(:validate_arguments)
+    # Without it, a model cut off mid-task answers as if it will keep working.
+    WRAP_UP = "This run has reached its limit and cannot continue or call tools. Reply to " \
+              "the user now: give your best answer from the work so far, and say what is " \
+              "done and what is not."
     private_constant :MAX_ARGUMENT_VIOLATIONS, :MAX_ARGUMENT_ERROR_BYTES,
-                     :MAX_VIOLATION_SOURCE_BYTES, :TOOL_ARGUMENT_VALIDATOR
+                     :MAX_VIOLATION_SOURCE_BYTES, :TOOL_ARGUMENT_VALIDATOR, :WRAP_UP
 
     # compaction defaults on so long sessions survive their context window;
     # pass false to disable, or a tuned Compaction. It only ever triggers
@@ -272,7 +276,7 @@ module Mistri
       started = monotonic_now
       loop do
         reason = @budget.exceeded(turns: turns, usage: usage, elapsed: monotonic_now - started)
-        return stop_for_budget(reason, usage, &emit) if reason
+        return stop_for_budget(reason, usage, signal, &emit) if reason
 
         fold_inbox
         compacted = auto_compact(&emit)
@@ -281,7 +285,7 @@ module Mistri
           validate_usage!(compaction_usage, kind: "compaction", &emit)
           usage += compaction_usage
           reason = @budget.exceeded(turns:, usage:, elapsed: monotonic_now - started)
-          return stop_for_budget(reason, usage, &emit) if reason
+          return stop_for_budget(reason, usage, signal, &emit) if reason
         end
         last, turn_usage = run_turn(signal, output_schema, &emit)
         turns += 1
@@ -354,6 +358,17 @@ module Mistri
       end
     end
 
+    def run_turn(signal, output_schema = nil, &emit)
+      message, held, usage = request_turn(signal, output_schema, &emit)
+      emit&.call(held) if held
+      @session.append_message(message)
+      reserve_tool_call_ids(message.tool_calls)
+      [message, usage]
+    end
+
+    # One provider turn with retries. The caller persists the accepted
+    # attempt and emits its held terminal event.
+    #
     # transform_context reshapes what the model sees each turn (reminders,
     # redaction, windowing) without touching what the session stores. The
     # lambda gets the replay messages and returns the messages to send; it
@@ -365,10 +380,14 @@ module Mistri
     # (:done or :error) holds at a gate, so retries stay invisible to the
     # model and a recovered retry never shows the subscriber an error it
     # walks back. Only the accepted attempt persists and terminates.
-    def run_turn(signal, output_schema = nil, &emit)
+    def request_turn(signal, output_schema, wrap_up: false, &emit)
       history = @transform_context.reduce(@session.messages) do |messages, transform|
         transform.call(messages)
       end
+      history += [Message.user(WRAP_UP)] if wrap_up
+      options = tool_options(history)
+      # APIs reject tool_choice without tools.
+      options[:tool_choice] = :none if wrap_up && options[:tools].any?
       attempt = 0
       usage = Usage.zero
       schema = provider_output_schema(output_schema)
@@ -376,7 +395,7 @@ module Mistri
         held = nil
         gate = emit && ->(event) { event.terminal? ? held = event : emit.call(event) }
         message = @provider.stream(messages: history, system: @system,
-                                   **tool_options(history), signal: signal,
+                                   **options, signal: signal,
                                    output_schema: schema, &gate)
         message, held = enforce_tool_call_envelope(message, held)
         attempt_usage = message.usage || Usage.new
@@ -390,10 +409,7 @@ module Mistri
           wait(pause, signal)
           next unless signal&.aborted?
         end
-        emit&.call(held) if held
-        @session.append_message(message)
-        reserve_tool_call_ids(message.tool_calls)
-        return [message, usage]
+        return [message, held, usage]
       end
     end
 
@@ -1042,7 +1058,40 @@ module Mistri
       Result.new(message: message, status: :awaiting_approval, pending: parked, usage: usage)
     end
 
-    def stop_for_budget(reason, usage, &emit)
+    def stop_for_budget(reason, usage, signal, &)
+      return wrap_up(reason, usage, signal, &) if @budget.wrap_up?
+
+      budget_stopped(reason, usage, &)
+    end
+
+    # Tool calls are forbidden; any sent anyway are dropped, since an
+    # unanswered call makes the transcript unreplayable.
+    def wrap_up(reason, usage, signal, &emit)
+      # The budget check runs before the loop folds, so a steer from the
+      # last tool batch is still pending.
+      fold_inbox
+      # No schema: it would force the model to invent output.
+      message, held, turn_usage = request_turn(signal, nil, wrap_up: true, &emit)
+      usage += turn_usage
+      content = message.content.grep_v(ToolCall)
+      # Signed against the instruction, which the session never replays.
+      content = content.grep_v(Content::Thinking) if message.prefix_bound_thinking?
+      answer = message.with(content:, stop_reason: StopReason::BUDGET,
+                            error_message: "budget_#{reason}")
+      failed = [StopReason::ERROR, StopReason::ABORTED].include?(message.stop_reason)
+      if failed || answer.text.to_s.strip.empty?
+        # Kept like a retry: a paid attempt, never a conversation message.
+        @session.append("wrap_up_attempt", "message" => message.to_h)
+        emit&.call(held) if held
+        return budget_stopped(reason, usage, &emit)
+      end
+
+      emit&.call(held.with(reason: StopReason::BUDGET, message: answer)) if held
+      @session.append_message(answer)
+      Result.new(message: answer, status: :budget, usage: usage)
+    end
+
+    def budget_stopped(reason, usage, &emit)
       message = Message.assistant(content: "Run stopped: #{reason} budget reached.",
                                   stop_reason: StopReason::BUDGET,
                                   error_message: "budget_#{reason}")

@@ -105,9 +105,11 @@ module Mistri
           body[:output_config] = { format: { type: "json_schema",
                                              schema: Schema.strict(schema) } }
         end
-        body.merge(PASSTHROUGH.each_with_object({}) do |key, params|
+        body = body.merge(PASSTHROUGH.each_with_object({}) do |key, params|
           params[key] = overrides[key] if overrides.key?(key)
         end)
+        body[:tool_choice] = { type: "none" } if overrides[:tool_choice] == :none
+        body
       end
 
       # Adaptive thinking 400s on budget-only models like Haiku 4.5, so the

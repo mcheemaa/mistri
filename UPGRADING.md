@@ -13,6 +13,14 @@ test.
 
 Most hosts need no code change. Read the points that apply to you.
 
+### A child stopped by its budget reads `:budget`
+
+It used to end as `:failed` with error `budget_<reason>`. It now ends as
+`:budget`, with its last answer in `Child#report`.
+
+- Code that lists ending statuses must add `:budget`, or use `Child#finished?`.
+- Children that ended before the upgrade still read `:failed`.
+
 ### Gemini 2.5 models are removed
 
 Google retired `gemini-2.5-pro` and `gemini-2.5-flash`. The catalog no longer

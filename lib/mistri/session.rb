@@ -753,9 +753,7 @@ module Mistri
     # replay drops it: the transcript and thoughts from the new prefix survive.
     def replay_message(entry, before_compaction:)
       message = Message.from_h(Log.owned(entry["message"]))
-      return message unless before_compaction && message.assistant? &&
-                            message.provider == :anthropic &&
-                            Models.prefix_bound_thinking?(message.model)
+      return message unless before_compaction && message.prefix_bound_thinking?
 
       content = message.content.grep_v(Content::Thinking)
       return message if content.length == message.content.length
@@ -884,6 +882,7 @@ module Mistri
     def report_label(name, status, text)
       case status
       when "done" then "[#{name} finished] #{text}"
+      when "budget" then "[#{name} reached its budget] #{text}"
       when "failed" then "[#{name} failed] #{text}"
       when "stopped" then "[#{name} was stopped]"
       else "[#{name} ended: #{status}]"

@@ -100,6 +100,12 @@ module Mistri
 
     def tool_calls? = content.any?(ToolCall)
 
+    # Its thinking signs every earlier message, so it verifies only after
+    # that exact history.
+    def prefix_bound_thinking?
+      assistant? && provider == :anthropic && Models.prefix_bound_thinking?(model)
+    end
+
     # A serialization shape, not the member hash: rebuild with .from_h,
     # never with new(**to_h).
     def to_h

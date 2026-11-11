@@ -32,6 +32,15 @@ class TestMessage < Minitest::Test
     assert_equal message, restored
   end
 
+  def test_only_anthropic_assistant_turns_from_binding_models_have_prefix_bound_thinking
+    bound = Mistri::Message.assistant(content: "x", model: "claude-opus-5-5", provider: :anthropic)
+
+    assert_predicate bound, :prefix_bound_thinking?
+    refute_predicate bound.with(model: "claude-opus-4-8"), :prefix_bound_thinking?
+    refute_predicate bound.with(provider: :openai, model: nil), :prefix_bound_thinking?
+    refute_predicate bound.with(role: :user), :prefix_bound_thinking?
+  end
+
   def test_tool_result_links_back_to_its_call
     message = Mistri::Message.tool(content: "42", tool_call_id: "call_1", tool_name: "calc")
 

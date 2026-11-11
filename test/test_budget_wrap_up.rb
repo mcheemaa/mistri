@@ -1,0 +1,232 @@
+# frozen_string_literal: true
+
+require_relative "test_helper"
+
+class TestBudgetWrapUp < Minitest::Test
+  LOOP_CALL = { tool_calls: [{ name: "loop", arguments: {} }] }.freeze
+  TOOL_SPEC = { name: "loop", description: "Loops.",
+                input_schema: { type: "object", properties: {} } }.freeze
+
+  def test_wrap_up_is_off_unless_asked_for
+    refute_predicate Mistri::Budget.new(turns: 2), :wrap_up?
+    assert_predicate Mistri::Budget.new(turns: 2, wrap_up: true), :wrap_up?
+  end
+
+  def test_a_budget_stop_ends_with_the_models_answer
+    provider, agent = stopped_run({ text: "Two files checked, one left." })
+
+    result = agent.run("go")
+
+    assert_predicate result, :stopped_by_budget?
+    assert_equal "Two files checked, one left.", result.text
+    assert_equal :budget, result.stop_reason
+    assert_equal "budget_turns", result.error_message
+    assert_equal result.message, agent.session.messages.last
+    assert_equal 3, provider.requests.length
+  end
+
+  def test_an_answered_budget_stop_ends_on_done_with_the_budget_reason
+    _, agent = stopped_run({ text: "Done so far." })
+    events = []
+
+    result = agent.run("go") { |event| events << event }
+    final = events.select(&:terminal?).last
+
+    assert_equal [:done, :budget, result.message], [final.type, final.reason, final.message]
+  end
+
+  def test_the_wrap_up_turn_keeps_the_tools_and_forbids_calling_them
+    provider, agent = stopped_run({ text: "Done so far." })
+
+    agent.run("go")
+
+    earlier, final = provider.requests.last(2).map { |request| request[:options] }
+
+    assert_equal :none, final[:tool_choice]
+    assert_equal earlier[:tools], final[:tools]
+    refute earlier.key?(:tool_choice)
+  end
+
+  def test_an_agent_without_tools_wraps_up_without_a_tool_setting
+    provider = Mistri::Providers::Fake.new(turns: [{ text: "Nothing started." }])
+    agent = Mistri::Agent.new(provider:, budget: Mistri::Budget.new(turns: 0, wrap_up: true))
+
+    agent.run("go")
+
+    refute provider.requests.last[:options].key?(:tool_choice)
+  end
+
+  def test_the_wrap_up_instruction_reaches_the_model_and_not_the_session
+    provider, agent = stopped_run({ text: "Done so far." })
+
+    agent.run("go")
+
+    sent = provider.requests.last[:messages].last
+
+    assert_predicate sent, :user?
+    refute_includes agent.session.messages, sent
+  end
+
+  def test_the_wrap_up_turn_answers_a_steer_sent_during_the_last_tool_batch
+    session = Mistri::Session.new(store: Mistri::Stores::Memory.new)
+    tool = Mistri::Tool.define("loop", "Loops.") do
+      session.steer("Only check the EU region.")
+      "again"
+    end
+    provider = Mistri::Providers::Fake.new(turns: [LOOP_CALL, { text: "EU checked." }])
+    agent = Mistri::Agent.new(provider:, tools: [tool], session:,
+                              budget: Mistri::Budget.new(turns: 1, wrap_up: true))
+
+    agent.run("go")
+
+    assert_includes provider.requests.last[:messages].map(&:text), "Only check the EU region."
+  end
+
+  def test_a_task_wraps_up_without_its_schema
+    provider = Mistri::Providers::Fake.new(turns: [{ text: "Counted 3 of 5 files." }])
+    agent = Mistri::Agent.new(provider:, budget: Mistri::Budget.new(turns: 0, wrap_up: true))
+    schema = { type: "object", properties: { count: { type: "integer" } }, required: ["count"] }
+
+    agent.task("Count the files.", schema:)
+
+    assert_nil provider.requests.last[:options][:output_schema]
+  end
+
+  def test_a_failed_wrap_up_turn_falls_back_to_the_fixed_message
+    _, agent = stopped_run({ error: "overloaded" })
+
+    result = agent.run("go")
+
+    assert_equal "Run stopped: turns budget reached.", result.text
+    assert_equal result.message, agent.session.messages.last
+  end
+
+  def test_an_aborted_or_errored_wrap_up_turn_with_text_falls_back
+    %i[aborted error].each do |stop_reason|
+      _, agent = stopped_run({ text: "Half an answ", stop_reason: })
+
+      assert_equal "Run stopped: turns budget reached.", agent.run("go").text, stop_reason
+    end
+  end
+
+  def test_the_wrap_up_turn_counts_toward_usage_whether_it_answers_or_fails
+    usage = Mistri::Usage.new(input: 40, output: 5)
+    [{ text: "Done so far.", usage: }, { error: "overloaded", usage: }].each do |final_turn|
+      _, agent = stopped_run(final_turn)
+
+      result = agent.run("go")
+
+      assert_equal [40, 5], [result.usage.input, result.usage.output]
+    end
+  end
+
+  # Compaction's own usage crosses the ceiling.
+  def test_a_budget_crossed_by_compaction_also_wraps_up
+    provider = Mistri::Providers::Fake.new(turns: [
+                                             LOOP_CALL.merge(usage: Mistri::Usage.new(input: 900,
+                                                                                      output: 100)),
+                                             { text: "## Goal\nLoop.",
+                                               usage: Mistri::Usage.new(input: 600, output: 10) },
+                                             { text: "Wrapped after compaction." }
+                                           ])
+    agent = Mistri::Agent.new(provider:, tools: [Mistri::Tool.define("loop", "Loops.") { "again" }],
+                              retries: nil,
+                              compaction: Mistri::Compaction.new(window: 1_000, reserve: 50,
+                                                                 keep_recent: 1),
+                              budget: Mistri::Budget.new(tokens: 1_500, wrap_up: true))
+
+    result = agent.run("go")
+
+    assert_equal "Wrapped after compaction.", result.text
+    assert(agent.session.entries.any? { |entry| entry["type"] == "compaction" })
+  end
+
+  def test_a_failed_wrap_up_attempt_is_kept_for_accounting
+    _, agent = stopped_run({ error: "overloaded", usage: Mistri::Usage.new(input: 40, output: 5) })
+
+    agent.run("go")
+
+    attempts = agent.session.entries.select { |entry| entry["type"] == "wrap_up_attempt" }
+
+    assert_equal 1, attempts.length
+    usage = Mistri::Message.from_h(attempts.first.fetch("message")).usage
+
+    assert_equal [40, 5], [usage.input, usage.output]
+  end
+
+  def test_a_failed_wrap_up_turn_announces_its_error_before_the_budget_stop
+    _, agent = stopped_run({ error: "overloaded" })
+    events = []
+
+    agent.run("go") { |event| events << event }
+    terminals = events.select(&:terminal?).last(2).map { |e| [e.type, e.reason, e.error_message] }
+
+    assert_equal [[:error, :error, "overloaded"], [:error, :budget, "budget_turns"]], terminals
+  end
+
+  def test_tool_calls_in_a_wrap_up_answer_are_never_saved
+    _, agent = stopped_run({ text: "Partial answer.", tool_calls: LOOP_CALL[:tool_calls] })
+
+    result = agent.run("go")
+
+    assert_equal "Partial answer.", result.text
+    assert_empty agent.session.messages.last.tool_calls
+  end
+
+  def test_a_wrap_up_answer_with_only_tool_calls_falls_back_to_the_fixed_message
+    _, agent = stopped_run(LOOP_CALL)
+
+    assert_equal "Run stopped: turns budget reached.", agent.run("go").text
+  end
+
+  def test_a_prefix_bound_wrap_up_answer_is_saved_without_its_thinking
+    _, agent = stopped_run({ thinking: "Weighing it.", text: "Done so far." },
+                           provider: PrefixBoundFake)
+
+    agent.run("go")
+
+    assert_equal [Mistri::Content::Text], agent.session.messages.last.content.map(&:class)
+  end
+
+  def test_a_wrap_up_answer_from_another_provider_keeps_its_thinking
+    _, agent = stopped_run({ thinking: "Weighing it.", text: "Done so far." })
+
+    agent.run("go")
+
+    assert_equal [Mistri::Content::Thinking, Mistri::Content::Text],
+                 agent.session.messages.last.content.map(&:class)
+  end
+
+  def test_every_built_in_provider_forbids_tool_calls_in_its_own_field
+    openai = Mistri::Providers::OpenAI.new(api_key: "k")
+    gemini = Mistri::Providers::Gemini.new(api_key: "k")
+    anthropic = Mistri::Providers::Anthropic.new(api_key: "k", model: "claude-opus-5-5")
+    history = [Mistri::Message.user("hello")]
+    overrides = { tool_choice: :none }
+
+    openai_body = openai.send(:build_body, "gpt-6.1-sol", history, nil, [TOOL_SPEC], overrides)
+    gemini_body = gemini.send(:build_body, history, nil, [TOOL_SPEC], overrides)
+    anthropic_body = anthropic.send(:build_body, "claude-opus-5-5", history, nil, [TOOL_SPEC],
+                                    overrides)
+
+    assert_equal "none", openai_body[:tool_choice]
+    assert_equal "NONE", gemini_body.dig(:toolConfig, :functionCallingConfig, :mode)
+    assert_equal({ type: "none" }, anthropic_body[:tool_choice])
+  ensure
+    [openai, gemini, anthropic].compact.each(&:close)
+  end
+
+  class PrefixBoundFake < Mistri::Providers::Fake
+    def stream(...) = super.with(provider: :anthropic, model: "claude-opus-5-5")
+  end
+
+  private
+
+  def stopped_run(final_turn, provider: Mistri::Providers::Fake)
+    provider = provider.new(turns: [LOOP_CALL, LOOP_CALL, final_turn])
+    tool = Mistri::Tool.define("loop", "Loops.") { "again" }
+    agent = Mistri::Agent.new(provider:, tools: [tool], retries: nil,
+                              budget: Mistri::Budget.new(turns: 2, wrap_up: true))
+    [provider, agent]
+  end
+end
