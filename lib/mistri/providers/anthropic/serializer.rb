@@ -10,7 +10,9 @@ module Mistri
       # blocks replay with their signature and must never be altered, redacted
       # thinking replays as its opaque payload, and cache_control marks the
       # last system block and the last user message so the stable prefix and
-      # the growing history both cache.
+      # the growing history both cache. A deferred tool travels with
+      # defer_loading, which keeps it out of the prompt, and a result that
+      # loads one carries a tool_reference to it.
       module Serializer
         module_function
 
@@ -22,23 +24,28 @@ module Mistri
           blocks
         end
 
-        def messages(history, cache: false)
+        # deferred names the deferred tools of this request: only those can
+        # be referenced, and the API refuses a reference to any other.
+        def messages(history, cache: false, deferred: [])
           turns = history.reject(&:system?).chunk_while { |a, b| a.tool? && b.tool? }
           wire = turns.filter_map do |group|
-            group.first.tool? ? tool_results(group) : message(group.first)
+            group.first.tool? ? tool_results(group, deferred) : message(group.first)
           end
           mark_last_user_turn(wire) if cache
           wire
         end
 
-        def tools(definitions)
-          definitions.map do |tool|
-            spec = tool.transform_keys(&:to_sym)
-            wire = { name: spec[:name], description: spec[:description],
-                     input_schema: spec[:input_schema] }
-            wire[:eager_input_streaming] = true if spec[:eager_input_streaming]
-            wire
-          end
+        def tools(definitions, deferred = [])
+          definitions.map { |tool| definition(tool) } +
+            deferred.map { |tool| definition(tool).merge(defer_loading: true) }
+        end
+
+        def definition(tool)
+          spec = tool.transform_keys(&:to_sym)
+          wire = { name: spec[:name], description: spec[:description],
+                   input_schema: spec[:input_schema] }
+          wire[:eager_input_streaming] = true if spec[:eager_input_streaming]
+          wire
         end
 
         # The API rejects a user turn with no content.
@@ -48,16 +55,32 @@ module Mistri
           { role: msg.role.to_s, content: blocks } unless msg.user? && blocks.empty?
         end
 
-        def tool_results(group)
-          { role: "user", content: group.map do |msg|
+        # The API takes references alone in a tool_result, so the result's own
+        # content follows the results of the turn.
+        def tool_results(group, deferred = [])
+          after = []
+          results = group.map do |msg|
             blocks = msg.content.filter_map { |content| block(content, own: false) }
+            references = references(msg, deferred)
+            if references.any?
+              after.concat(blocks)
+              blocks = references
+            end
             # The API rejects an empty tool_result; a space stands in for a
             # tool that returned nothing.
             blocks = [{ type: "text", text: " " }] if blocks.empty?
             result = { type: "tool_result", tool_use_id: msg.tool_call_id, content: blocks }
             result[:is_error] = true if msg.tool_error?
             result
-          end }
+          end
+          { role: "user", content: results + after }
+        end
+
+        # A failed result must be text alone.
+        def references(msg, deferred)
+          return [] if msg.tool_error?
+
+          (msg.loads.to_a & deferred).map { |name| { type: "tool_reference", tool_name: name } }
         end
 
         # Returns nil for a block the API would reject (empty text, unusable

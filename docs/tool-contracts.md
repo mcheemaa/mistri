@@ -343,8 +343,20 @@ conversation needs out of deferral, so the model does not search for them. A
 host tool named `tool_search` beside a deferred tool is a duplicate name and
 fails Agent construction.
 
-Each request carries the tools that are not deferred, then the loaded ones in
-the order they were loaded.
+How a loaded tool reaches the model depends on the provider, and a host does
+not choose:
+
+- Anthropic is sent every deferred definition marked to stay out of the
+  prompt, and a result that loads tools carries references to them. The tool
+  list never changes, so the prompt cache holds across a load. The result's
+  own text follows the tool results of that turn. This is used on the official
+  origin; another origin is treated like the providers below.
+- Every other provider is sent the tools that are not deferred, then the
+  loaded ones in the order they were loaded.
+
+A provider of your own is sent the second form. To hold definitions back
+itself it answers `defers_tools?` with true, and `stream` is then given the
+deferred definitions as `deferred_tools:` beside `tools:`.
 
 ## Hand off the turn
 
