@@ -100,21 +100,27 @@ class TestStreamRecordTokens < Minitest::Test
   end
 
   def test_openai_answering_a_small_request_with_a_wide_record_is_refused
+    call = { "type" => "function_call", "name" => "wide", "arguments" => "{}" }
+    wide = [{ "type" => "response.created",
+              "response" => { "tools" => Array.new(30_000) { {} } } },
+            { "type" => "response.completed",
+              "response" => { "status" => "completed", "output" => Array.new(4_000) { call } } }]
     server = Mistri::Test::StubServer.new do |socket, _request|
       server.start_sse(socket)
-      server.sse_data(socket, { "type" => "response.created",
-                                "response" => { "tools" => Array.new(30_000) { {} } } })
+      server.sse_data(socket, wide[server.requests.length - 1])
       server.finish_sse(socket)
     end
     provider = Mistri::Providers::OpenAI.new(api_key: "test", model: "gpt-6.1-sol",
                                              origin: server.origin)
 
-    result = Mistri::Agent.new(provider:).run("go")
-    sent = server.requests.first[:body].bytesize
+    wide.each_index do |index|
+      result = Mistri::Agent.new(provider:).run("go")
+      sent = server.requests[index][:body].bytesize
 
-    assert_predicate result, :errored?
-    assert_equal({ "type" => "ResponseTooComplexError", "kind" => "sse_record_tokens",
-                   "limit" => 20_001 + sent }, result.message.error)
+      assert_predicate result, :errored?
+      assert_equal({ "type" => "ResponseTooComplexError", "kind" => "sse_record_tokens",
+                     "limit" => 20_001 + sent }, result.message.error)
+    end
   ensure
     provider&.close
     server&.stop

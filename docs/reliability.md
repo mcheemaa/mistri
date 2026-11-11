@@ -323,10 +323,10 @@ preview. Requests use identity encoding so compressed expansion cannot evade
 the limit.
 
 Completed SSE JSON records receive a bounded structural scan before parsing.
-An OpenAI record may hold as many more tokens as the request had bytes: the
-Responses stream echoes the request's tool definitions in its own events, and
-a JSON token is at least one byte, so the echo always fits. A record wider
-than that is refused, as is one past the depth or number ceiling.
+An OpenAI record gets room for an echo: the Responses stream repeats the
+request's tool definitions in its own events, so its token ceiling is 20,001
+plus the bytes of the request. A record wider than that is refused, as is one
+past the byte, depth or number ceiling.
 Fragmented Anthropic and OpenAI tool arguments also carry an aggregate 8 MiB
 limit across deltas; their partial preview refreshes on a bounded schedule while
 raw delta events continue.

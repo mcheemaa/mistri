@@ -202,9 +202,9 @@ module Mistri
       end
     end
 
-    # A stream that echoes its request may spend as many more tokens in a
-    # record as the request had bytes. A JSON token is at least one byte, so
-    # the echo always fits, and the allowance follows what the host sent.
+    # A stream that echoes its request gets room for the echo: a record may
+    # spend as many more tokens as the request had bytes, so the allowance
+    # follows what the host sent.
     def record_tokens(request, echoes_request)
       limit = ToolArguments::MAX_LEXICAL_TOKENS
       echoes_request ? limit + request.body.bytesize : limit
