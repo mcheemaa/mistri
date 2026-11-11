@@ -168,6 +168,7 @@ module Mistri
       names = deferred.to_h { |tool| [tool.name, true] }
       later, @eager_specs = specs.partition { |spec| names.key?(spec[:name]) }.map(&:freeze)
       @deferred_specs = later.to_h { |spec| [spec[:name], spec] }.freeze
+      @defers_tools = @provider.respond_to?(:defers_tools?) && @provider.defers_tools?
     end
 
     # run's body outside the lease; task's fix passes share task's lease.
@@ -374,7 +375,7 @@ module Mistri
         held = nil
         gate = emit && ->(event) { event.terminal? ? held = event : emit.call(event) }
         message = @provider.stream(messages: history, system: @system,
-                                   tools: offered_tools(history), signal: signal,
+                                   **tool_options(history), signal: signal,
                                    output_schema: schema, &gate)
         message, held = enforce_tool_call_envelope(message, held)
         attempt_usage = message.usage || Usage.new
@@ -395,11 +396,19 @@ module Mistri
       end
     end
 
+    # A provider that can hold a definition back is handed every deferred
+    # tool, and says in its own way when a result loads one. Any other is
+    # sent the loaded tools as tools.
+    def tool_options(history)
+      return { tools: @eager_specs } if @deferred_specs.empty?
+      return { tools: @eager_specs, deferred_tools: @deferred_specs.values } if @defers_tools
+
+      { tools: offered_tools(history) }
+    end
+
     # A deferred tool is offered once a tool result the model can see has
     # loaded it. Loaded tools follow the others, in the order they came.
     def offered_tools(history)
-      return @eager_specs if @deferred_specs.empty?
-
       loaded = history.flat_map { |message| message.loads.to_a }.uniq
       @eager_specs + @deferred_specs.values_at(*loaded).compact
     end

@@ -5,7 +5,7 @@ require_relative "../support/integration"
 
 # Tools on demand against the real APIs: the model is shown one tool and a
 # search, finds the tool it needs among the deferred ones, calls it, and a
-# later run on the same session is offered it from its first request.
+# later run on the same session calls it again with no new search.
 class TestDeferredToolsIntegration < Minitest::Test
   # Remembers the tool names of every request the agent makes.
   class Recorded < SimpleDelegator
@@ -63,12 +63,14 @@ class TestDeferredToolsIntegration < Minitest::Test
     assert Integration.carried?(result.text, first_refund),
            "the loaded tool's result never reached the answer: #{result.text}"
 
-    later, provider = agent_for(model, session, tools)
+    before = session.messages.length
+    later, = agent_for(model, session, tools)
     result = later.run("Now refund ch_456 as well and give me its refund id.")
+    calls = session.messages.drop(before).flat_map(&:tool_calls).map(&:name)
 
     assert_predicate result, :completed?
-    assert_includes provider.offered.first, "billing__refund_charge",
-                    "a later run was not offered the loaded tool"
+    assert_equal "billing__refund_charge", calls.first,
+                 "a later run searched again or never called the loaded tool: #{calls}"
     assert Integration.carried?(result.text, second_refund),
            "the later run never used the loaded tool: #{result.text}"
   end
