@@ -42,10 +42,12 @@ module Mistri
       Tool.define(
         "read_agent",
         "Read what a worker has done so far without interrupting it, or pass " \
-        "wait to block until it finishes and get its report.",
+        "wait to block until it finishes and get its report. Each line starts " \
+        "with the entry's number, and offset reads from another entry.",
         schema: lambda {
           string :agent, "The worker's name or session id", required: true
-          integer :tail, "How many recent entries to read (default 20)"
+          integer :offset, "The number of the first entry to read (default: the most recent)"
+          integer :limit, "How many entries to read (default 20, at most 200)"
           boolean :wait, "Block until the worker finishes, then return its report"
         }
       ) do |args, context|
@@ -55,7 +57,9 @@ module Mistri
         if args["wait"]
           Console.await(child, timeout, poll, context.signal)
         else
-          Console.render(child, args.fetch("tail", 20).to_i.clamp(1, 200))
+          # tail is what limit was called; a session from before still says it.
+          limit = args.fetch("limit") { args.fetch("tail", 20) }
+          Console.render(child, limit.to_i.clamp(1, 200), offset: args["offset"])
         end
       end
     end
@@ -156,15 +160,42 @@ module Mistri
       "#{child.name} #{child.status}." + (report ? "\n#{report}" : "")
     end
 
-    # A compact, readable transcript for a model: one line per entry, text
-    # extracted, long values truncated. The gem never summarizes; the
-    # caller can.
-    def render(child, tail)
-      entries = child.transcript(tail: tail)
-      return "#{child.name} (#{child.status}): no entries yet." if entries.empty?
+    # A compact, readable page of a transcript for a model: one line per
+    # entry under its number, text extracted, long values truncated. The
+    # most recent entries by default, or the ones from offset. The gem never
+    # summarizes; the caller can.
+    def render(child, limit, offset: nil)
+      who = "#{child.name} (#{child.status})"
+      total = child.size
+      return "#{who}: no entries yet." if total.zero?
 
-      lines = entries.map { |entry| Console.line(entry) }.compact
-      "#{child.name} (#{child.status}), last #{lines.length} entries:\n#{lines.join("\n")}"
+      first = offset ? [offset.to_i, 0].max : [total - limit, 0].max
+      # A worker may write on between the count and the read; the page stays
+      # inside the count it states.
+      entries = child.transcript(from: first, to: [first + limit, total].min)
+      if entries.empty?
+        return "#{who} has #{total} entries, numbered 0 to #{total - 1}. " \
+               "Nothing is at offset #{first}."
+      end
+
+      lines = entries.each_with_index.filter_map do |entry, index|
+        line = Console.line(entry)
+        "#{first + index}: #{line.gsub(/\R/, '\n')}" if line
+      end
+      ["#{who}, entries #{first} to #{first + entries.length - 1} of #{total}:", *lines,
+       *Console.further(first, entries.length, limit, total)].join("\n")
+    end
+
+    # The offset and limit that read on from a page, in either direction,
+    # without reading an entry twice.
+    def further(first, shown, limit, total)
+      lines = []
+      if first.positive?
+        back = [first - limit, 0].max
+        lines << "Earlier entries: offset #{back}, limit #{first - back}."
+      end
+      lines << "Later entries: offset #{first + shown}, limit #{limit}." if first + shown < total
+      lines
     end
 
     def line(entry)

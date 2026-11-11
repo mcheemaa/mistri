@@ -11,6 +11,12 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   under a content policy was taken for an unknown failure and retried. The
   error now carries the code and the message, and such a refusal fails at
   once, as the reliability guide says it does.
+- `read_agent` reads a worker's log a page at a time. It showed the last 200
+  entries at most, so the model could not see how a long piece of work began.
+  Each line now starts with the entry's number, `offset` reads from any
+  entry, `limit` takes the place of `tail`, which is still read, and a page
+  gives the offset and limit that read on. `Child#transcript` takes `from:`
+  and `to:` and `Child#size` counts the log.
 - A tool schema may declare JSON Schema draft-07 as well as 2020-12. Common
   schema generators emit draft-07, and an MCP server that declared it on its
   tools could not be used. The two read the same for what Mistri validates,
