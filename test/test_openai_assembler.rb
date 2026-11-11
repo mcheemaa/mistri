@@ -335,6 +335,33 @@ class TestOpenAIAssembler < Minitest::Test # rubocop:disable Metrics/ClassLength
     assert policy.retryable?(unknown.error)
   end
 
+  def test_a_stream_error_with_its_details_nested_keeps_its_code_and_message
+    policy = Mistri::RetryPolicy.new
+    flagged = { "type" => "error", "sequence_number" => 14,
+                "error" => { "type" => "invalid_request", "code" => "cyber_policy",
+                             "message" => "This content was flagged.", "param" => nil } }
+    failed = { "type" => "response.failed",
+               "response" => { "status" => "failed", "error" => flagged["error"] } }
+
+    message = drive([], [flagged, failed])
+
+    assert_equal :error, message.stop_reason
+    assert_equal "InvalidRequestError", message.error["type"]
+    assert_equal "Mistri::InvalidRequestError: cyber_policy: This content was flagged.",
+                 message.error_message
+    refute policy.retryable?(message.error)
+
+    limit = { "code" => "rate_limit_exceeded", "message" => "Slow down." }
+    busy = drive([], [{ "type" => "error", "error" => limit }])
+
+    assert_equal "RateLimitError", busy.error["type"]
+    assert policy.retryable?(busy.error)
+
+    bare = drive([], [{ "type" => "error", "error" => {} }])
+
+    assert_equal "Mistri::ProviderError: provider error", bare.error_message
+  end
+
   def test_usage_prices_from_the_catalog_and_unknown_models_stay_unknown
     message = drive([], [
                       { "type" => "response.completed",
