@@ -29,7 +29,7 @@ module Mistri
 
       def initialize(api_key:, model: "claude-opus-5-5", origin: DEFAULT_ORIGIN,
                      max_tokens: nil, thinking: DEFAULT_THINKING, cache: true,
-                     service_tier: nil, catalog_pricing: nil,
+                     service_tier: nil, catalog_pricing: nil, defers_tools: nil,
                      **transport_options)
         @api_key = api_key
         @model = model
@@ -39,6 +39,7 @@ module Mistri
         @service_tier = service_tier
         @official = official_origin?(origin)
         @catalog_pricing = catalog_pricing.nil? ? @official : catalog_pricing
+        @defers_tools = defers_tools.nil? ? @official : defers_tools
         @transport = Transport.new(origin: origin, **transport_options)
       end
 
@@ -57,8 +58,9 @@ module Mistri
       # The API keeps a deferred definition out of the prompt until a result
       # references it, so an agent passes the loaded deferred tools as
       # deferred_tools and the eager tools of a request never change. Another
-      # origin may not support this, and receives the loaded tools as tools.
-      def defers_tools? = @official
+      # origin may not support this, and receives the loaded tools as tools
+      # unless the host sets defers_tools: true.
+      def defers_tools? = @defers_tools
 
       def stream(messages:, system: nil, tools: [], signal: nil, **overrides, &emit)
         delivery = EventDelivery.wrap(emit)

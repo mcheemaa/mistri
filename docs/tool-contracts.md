@@ -383,16 +383,32 @@ not choose:
   it, so it never enters the prompt. No result can load it, and a tool of
   that name beside deferred tools fails the request before it is sent. The
   result's own text follows the tool results of that turn. This form is used
-  on the official origin; another origin is treated like the last provider
-  below.
+  on the official origin. Another origin is treated like the last provider
+  below unless the host sets `defers_tools: true`.
 - OpenAI keeps the request's own tools as they are, and a result that loads
   tools is followed by an item in the input that makes them callable from
   that point on. The prompt cache holds across a load here too. This is used
   on the official origin, for the models OpenAI documents it for: gpt-5.4 and
   later, the nano models aside. An older model, a nano model and another
-  origin are treated like the provider below.
+  origin are treated like the provider below unless the host says otherwise.
 - Gemini, and any other provider, is sent the tools that are not deferred,
   then the loaded ones in the order they were loaded.
+
+The growing list costs more for each load than the two forms above. A load
+changes the request's tools, so the prompt cache is built again from the
+start. On Anthropic's API a changed tool list also makes the thinking of
+earlier turns invalid: the request after a load is refused on the models that
+check it, unless the host set `block_binding`, and then that thinking is
+dropped. So a host that reaches Anthropic or OpenAI through a gateway that
+passes requests on as they are says so, and gets the form that keeps the
+tools fixed:
+
+```ruby
+Mistri.agent("claude-opus-5-5", tools: tools,
+             provider_options: { origin: "https://gateway.example", defers_tools: true })
+```
+
+`defers_tools: false` asks for the growing list on the official origin.
 
 What it costs in the process is small. Building an agent with deferred tools
 costs what a flat list costs. The search index is built once, on an agent's

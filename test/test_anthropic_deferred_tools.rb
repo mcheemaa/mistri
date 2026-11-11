@@ -115,7 +115,7 @@ class TestAnthropicDeferredTools < Minitest::Test
     refute wire.last[:content].first.key?(:cache_control)
   end
 
-  def test_the_official_origin_holds_definitions_back_and_another_origin_does_not
+  def test_the_official_origin_holds_definitions_back_and_another_origin_does_not_by_itself
     official = Mistri::Providers::Anthropic.new(api_key: "k")
     other = Mistri::Providers::Anthropic.new(api_key: "k", origin: "https://gateway.example")
 
@@ -124,6 +124,18 @@ class TestAnthropicDeferredTools < Minitest::Test
   ensure
     official&.close
     other&.close
+  end
+
+  def test_a_host_says_what_its_origin_takes
+    gateway = Mistri::Providers::Anthropic.new(api_key: "k", origin: "https://gateway.example",
+                                               defers_tools: true)
+    plain = Mistri::Providers::Anthropic.new(api_key: "k", defers_tools: false)
+
+    assert_predicate gateway, :defers_tools?
+    refute_predicate plain, :defers_tools?
+  ensure
+    gateway&.close
+    plain&.close
   end
 
   def test_the_request_carries_the_loaded_definitions_and_the_references
