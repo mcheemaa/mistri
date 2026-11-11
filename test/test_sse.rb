@@ -89,6 +89,15 @@ class TestSSE < Minitest::Test
     end
   end
 
+  def test_a_wide_record_is_parsed_unless_its_tokens_are_counted
+    wide = { "pad" => Array.new(20_002, 0) }
+    records = []
+
+    Mistri::SSE.new.feed("data: #{JSON.generate(wide)}\n") { |record| records << record }
+
+    assert_equal [wide], records
+  end
+
   def test_rejects_a_structurally_wide_record_before_json_parsing
     arguments = Mistri.const_get(:ToolArguments, false)
     line = "data: [#{Array.new(20_002, "0").join(",")}]"
@@ -99,7 +108,7 @@ class TestSSE < Minitest::Test
     end
 
     error = assert_raises(Mistri::ResponseTooComplexError) do
-      trace.enable { Mistri::SSE.new.feed("#{line}\n") { flunk } }
+      trace.enable { Mistri::SSE.new(count_tokens: true).feed("#{line}\n") { flunk } }
     end
 
     assert_equal :sse_record_tokens, error.kind

@@ -189,9 +189,10 @@ Successful HTTP bodies are counted incrementally, and a declared oversized body
 fails before it is read. Requests use identity encoding so compressed expansion
 cannot bypass the boundary.
 
-Each completed MCP SSE JSON record also receives fixed structural ceilings before
-JSON parsing: 20,001 lexical tokens, 64 levels, and 64 KiB per numeric token.
-These protect allocation even when a record stays under its byte limit.
+Each completed MCP SSE JSON record is also checked before JSON parsing for 64
+levels and 64 KiB per numeric token. The number of values in a record is not
+counted, on a stream or on any other transport, so a server with a long tool
+list answers the same however it replies.
 
 Byte overflow raises `Mistri::ResponseTooLargeError`. Structural overflow raises
 `Mistri::ResponseTooComplexError`. Both expose `kind` and `limit`.

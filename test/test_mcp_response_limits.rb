@@ -52,7 +52,7 @@ class TestMcpResponseLimits < Minitest::Test
   def test_a_structurally_complex_tool_response_is_ambiguous_and_resets_the_wire
     arguments = Mistri.const_get(:ToolArguments, false)
     cases = {
-      tokens: { "content" => Array.new(arguments::MAX_LEXICAL_TOKENS + 1, 0) },
+      depth: { "content" => [nested(arguments::MAX_DEPTH + 1)] },
       numeric_token: { "content" => [1 << ((arguments::MAX_NUMBER_BYTES + 1) * 4)] }
     }
 
@@ -91,7 +91,7 @@ class TestMcpResponseLimits < Minitest::Test
 
   def test_a_confirmed_tool_result_survives_a_complex_trailing_sse_record
     arguments = Mistri.const_get(:ToolArguments, false)
-    trailing = { "noise" => Array.new(arguments::MAX_LEXICAL_TOKENS + 1, 0) }
+    trailing = { "noise" => nested(arguments::MAX_DEPTH + 1) }
     with_server(trailing_after: "tools/call", trailing_record: trailing) do |server|
       client = remote_client(server)
 
@@ -121,6 +121,8 @@ class TestMcpResponseLimits < Minitest::Test
   end
 
   private
+
+  def nested(levels) = Array.new(levels).reduce(0) { |inner, _| [inner] }
 
   def with_server(tools: ECHO, **)
     server = Mistri::Test::McpStubServer.new(tools: tools, **)

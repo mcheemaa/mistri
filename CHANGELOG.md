@@ -5,6 +5,11 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+- An MCP server's answer is no longer held to 20,001 JSON tokens when it
+  arrives as an SSE stream. The same answer as a plain JSON body or over
+  stdio was never counted, so a server with a long tool list could be listed
+  on two transports and refused on the third. The byte, depth and number
+  limits stay.
 - A large tool list no longer ends every OpenAI run. The Responses stream
   repeats the request's tool definitions in its own events, and the 20,001
   token ceiling on a stream record refused that once the list was large

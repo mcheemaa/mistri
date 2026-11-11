@@ -323,8 +323,9 @@ preview. Requests use identity encoding so compressed expansion cannot evade
 the limit.
 
 Completed SSE JSON records are scanned before parsing: 64 levels and 64 KiB
-per numeric token, for every provider. A Gemini record is also held to 20,001
-JSON tokens, because a tool call's arguments arrive as an object inside it.
+per numeric token, for every provider and for an MCP server. A Gemini record
+is also held to 20,001 JSON tokens, because a tool call's arguments arrive as
+an object inside it. No other record is counted.
 OpenAI and Anthropic records are not counted: the arguments of a tool the host
 runs arrive there as an encoded string with its own limits, and the OpenAI
 stream repeats the request's tool definitions in its own events, which a large
