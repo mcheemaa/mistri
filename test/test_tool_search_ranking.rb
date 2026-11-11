@@ -98,6 +98,30 @@ class TestToolSearchRanking < Minitest::Test
     assert_equal %w[docs__find], rank("文書", [other, pets])
   end
 
+  def test_single_characters_do_not_make_a_description_count_as_longer
+    pages = Array.new(8) do |index|
+      tool("docs__page_#{index}", "Explains the refund policy and documents account " \
+                                  "credits, receipts, taxes and billing adjustments.")
+    end
+    apply = tool("billing__apply", "refund 顧客へ返金する")
+
+    assert_equal "billing__apply", rank("refund", [*pages, apply]).first
+  end
+
+  def test_one_character_finds_a_name_that_holds_it
+    assert_equal %w[猫検索], rank("猫", [tool("猫検索", ""), tool("other", "Nothing.")])
+  end
+
+  def test_text_in_another_width_or_form_matches_its_usual_form
+    notes = tool("notes", "ノートを検索します")
+    guide = tool("guide", "ガイドを開く")
+
+    assert_equal %w[notes], rank("ﾉｰﾄ", [guide, notes])
+    assert_equal %w[guide], rank("カ\u3099イド", [notes, guide])
+    assert_equal %w[notes], rank("ノート", [tool("notes", "ﾉｰﾄを検索します"), guide])
+    assert_equal %w[wide], rank("ｐｄｆ", [tool("wide", "Reads a PDF."), guide])
+  end
+
   def test_words_and_text_without_spaces_can_sit_side_by_side
     mixed = tool("docs__find", "PDF文档搜索")
     other = tool("docs__delete", "删除一个页面")

@@ -24,7 +24,9 @@ module Mistri
     UNSPACED = "\\p{Han}\\p{Hiragana}\\p{Katakana}\\p{Hangul}\\u30FC"
     WORD = /[#{UNSPACED}]+|[[:alnum:]&&[^#{UNSPACED}]]+/
     UNSPACED_RUN = /\A[#{UNSPACED}]/
-    private_constant :K1, :B, :NAME_WEIGHT, :STOP_WORDS, :UNSPACED, :WORD, :UNSPACED_RUN
+    UNSPACED_PAIR = /[#{UNSPACED}]{2,}/
+    private_constant :K1, :B, :NAME_WEIGHT, :STOP_WORDS, :UNSPACED, :WORD, :UNSPACED_RUN,
+                     :UNSPACED_PAIR
 
     Document = Data.define(:tool, :summary, :name_words, :local_words, :counts, :length)
     private_constant :Document
@@ -123,13 +125,28 @@ module Mistri
       description = spec[:description].to_s
       parts = [description]
       schema_text(spec[:input_schema], parts)
-      counts = words(parts.join(" "), index: true).tally
+      text = plain(parts.join(" "))
+      terms = words(text)
       Document.new(tool:, summary: summary(description),
-                   name_words: words(tool.name).uniq,
+                   name_words: (words(tool.name) + characters(plain(tool.name))).uniq,
                    local_words: words(tool.name.split("__").last).uniq,
-                   counts:, length: counts.sum { |_word, times| times })
+                   counts: (terms + characters(text)).tally, length: terms.length)
     end
     private_class_method :document
+
+    # The single characters of the runs that are matched by pairs, so that a
+    # query of one character finds them. They are extra entries: a text's
+    # length is counted without them.
+    def characters(text) = text.scan(UNSPACED_PAIR).flat_map(&:chars)
+    private_class_method :characters
+
+    # Text in one width and one composed form, so that half-width kana and a
+    # letter written as two marks match their usual form.
+    def plain(text)
+      text = text.to_s
+      text.ascii_only? ? text : text.unicode_normalize(:nfkc)
+    end
+    private_class_method :plain
 
     # The first line of a description, short enough to list twenty of.
     def summary(description)
@@ -194,24 +211,20 @@ module Mistri
     end
     private_class_method :score
 
-    def words(text, index: false)
-      text.to_s.gsub(/([a-z0-9])([A-Z])/, '\1 \2').gsub(/([A-Z]+)([A-Z][a-z])/, '\1 \2')
-          .downcase.scan(WORD)
-          .flat_map { |word| word.match?(UNSPACED_RUN) ? pieces(word, index) : word }
-          .reject { |word| STOP_WORDS.include?(word) }.map { |word| singular(word) }
+    def words(text)
+      plain(text).gsub(/([a-z0-9])([A-Z])/, '\1 \2').gsub(/([A-Z]+)([A-Z][a-z])/, '\1 \2')
+                 .downcase.scan(WORD)
+                 .flat_map { |word| word.match?(UNSPACED_RUN) ? pairs(word) : word }
+                 .reject { |word| STOP_WORDS.include?(word) }.map { |word| singular(word) }
     end
     private_class_method :words
 
     # A run with no spaces has no words to split at, so it is matched by its
-    # pairs of characters. A tool's text is also indexed by single characters,
-    # which is what a query of one character is.
-    def pieces(run, index)
-      pairs = run.each_char.each_cons(2).map(&:join)
-      return run.chars + pairs if index
-
-      pairs.empty? ? [run] : pairs
+    # pairs of characters, and a run of one character is itself.
+    def pairs(run)
+      run.length < 2 ? [run] : run.each_char.each_cons(2).map(&:join)
     end
-    private_class_method :pieces
+    private_class_method :pairs
 
     def singular(word)
       return "#{word[0...-3]}y" if word.length > 4 && word.end_with?("ies")
