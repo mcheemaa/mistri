@@ -16,6 +16,14 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   construction. The tool and the reason go to a warning, or to the block
   when one is given, and a host that would sooner fail raises from the block.
   `MCP.bridge` still raises for the one definition it is given.
+- Tools can be loaded on demand. A tool marked `deferred: true`, or a whole
+  MCP server bridged with `MCP.tools(client, deferred: true)`, is not shown to
+  the model until it is needed, so a long tool list no longer costs its
+  definitions on every round. An agent that holds a deferred tool adds a
+  `tool_search` tool: the model asks in words, the best matches are loaded,
+  and it calls them from its next step. A load is stored with the session, so
+  a later run offers the same tools. A tool result can load tools itself with
+  `ToolResult.new(content:, loads:)`.
 - A bridged MCP tool gets a name every provider takes. MCP allows dots,
   slashes and any length in a tool name, and one name the model's API refused
   failed the whole request. A name of letters, digits, underscores and

@@ -33,6 +33,8 @@ module Mistri
     # skills: an array of Skill (or a directory path for Skills.load). Their
     # descriptions join the system prompt and a read_skill tool serves full
     # bodies on demand.
+    # A tool marked deferred is not shown to the model until a tool result
+    # loads it; with any present, a tool_search tool finds and loads them.
     # before_tool and after_tool are the programmatic gates around every
     # execution: before_tool(call, context) blocks a call by returning the
     # reason as a String, which answers the model in band (and it runs again
@@ -49,11 +51,7 @@ module Mistri
       @session = session || Session.new(store: Stores::Memory.new)
       skills = skills.is_a?(String) ? Skills.load(skills) : Array(skills)
       @system = Skills.amend(system, skills)
-      @tools = skills.empty? ? tools : tools + [Skills.reader(skills)]
-      @tools_by_name = @tools.to_h { |tool| [tool.name, tool] }
-      raise ConfigurationError, "duplicate tool names" if @tools_by_name.length != @tools.length
-
-      @tool_specs, @external_tool_validators = compile_tool_contracts
+      install_tools(skills.empty? ? tools : tools + [Skills.reader(skills)])
 
       @budget = budget || Budget.new
       @budget.validate_provider!(@provider)
@@ -159,6 +157,18 @@ module Mistri
     end
 
     private
+
+    def install_tools(tools)
+      deferred = tools.select { |tool| tool.respond_to?(:deferred?) && tool.deferred? }
+      @tools = deferred.empty? ? tools : tools + [ToolSearch.tool(deferred)]
+      @tools_by_name = @tools.to_h { |tool| [tool.name, tool] }
+      raise ConfigurationError, "duplicate tool names" if @tools_by_name.length != @tools.length
+
+      specs, @external_tool_validators = compile_tool_contracts
+      names = deferred.to_h { |tool| [tool.name, true] }
+      later, @eager_specs = specs.partition { |spec| names.key?(spec[:name]) }.map(&:freeze)
+      @deferred_specs = later.to_h { |spec| [spec[:name], spec] }.freeze
+    end
 
     # run's body outside the lease; task's fix passes share task's lease.
     def exchange(input, signal:, output_schema:, images: [], &emit)
@@ -364,7 +374,7 @@ module Mistri
         held = nil
         gate = emit && ->(event) { event.terminal? ? held = event : emit.call(event) }
         message = @provider.stream(messages: history, system: @system,
-                                   tools: @tool_specs, signal: signal,
+                                   tools: offered_tools(history), signal: signal,
                                    output_schema: schema, &gate)
         message, held = enforce_tool_call_envelope(message, held)
         attempt_usage = message.usage || Usage.new
@@ -383,6 +393,15 @@ module Mistri
         reserve_tool_call_ids(message.tool_calls)
         return [message, usage]
       end
+    end
+
+    # A deferred tool is offered once a tool result the model can see has
+    # loaded it. Loaded tools follow the others, in the order they came.
+    def offered_tools(history)
+      return @eager_specs if @deferred_specs.empty?
+
+      loaded = history.flat_map { |message| message.loads.to_a }.uniq
+      @eager_specs + @deferred_specs.values_at(*loaded).compact
     end
 
     def provider_output_schema(output_schema)
@@ -938,14 +957,14 @@ module Mistri
     # The tool message carries both channels; the :tool_result event exposes
     # it whole so hosts read event.message.ui for their side of the result.
     def answer(call, result, duration: nil, &emit)
-      content, ui, tool_error = if result.is_a?(ToolResult)
-                                  [result.content, result.ui, result.error?]
-                                else
-                                  [result, nil, false]
-                                end
+      content, ui, tool_error, loads = if result.is_a?(ToolResult)
+                                         [result.content, result.ui, result.error?, result.loads]
+                                       else
+                                         [result, nil, false, nil]
+                                       end
       message = @session.append_message(Message.tool(content: content, tool_call_id: call.id,
                                                      tool_name: call.name, ui: ui,
-                                                     tool_error: tool_error))
+                                                     tool_error: tool_error, loads: loads))
       text = content.is_a?(String) ? content : "[content]"
       emit&.call(Event.new(type: :tool_result, tool_call: call, content: text,
                            message: message, duration: duration, tool_error: tool_error))

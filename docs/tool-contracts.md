@@ -285,6 +285,57 @@ before raising or timing out. Mistri never mechanically replays the same call
 because it is marked failed, but the model may issue another call. The host
 still owns idempotency and reconciliation.
 
+## Tools on demand
+
+A tool definition costs input tokens on every model round, and a host that
+bridges a few MCP servers can hold hundreds of them. Mark a tool
+`deferred: true` and the model is not shown it until it is needed:
+
+```ruby
+refund = Mistri::Tool.define(
+  "refund_charge", "Gives a customer their money back.",
+  deferred: true,
+  schema: -> { string :charge, "Charge id", required: true },
+) { |args| Billing.refund(args.fetch("charge")) }
+tracker = Mistri::MCP.tools(client, prefix: "tracker", deferred: true)
+
+agent = Mistri.agent("claude-haiku-5-5", tools: [lookup_order, refund, *tracker])
+```
+
+An agent that holds a deferred tool adds one of its own, `tool_search`. The
+model asks it in words for what it needs to do. The search ranks the deferred
+tools by their name, their description and the names and descriptions of their
+parameters, loads the best matches (eight by default, twenty at most) and
+answers with their names. From its next step the model calls them like any
+other tool. The description of `tool_search` tells the model how many tools
+wait under each name prefix, so give a server a prefix that says what it is.
+
+A load is stored with the tool result that made it. A later run on the same
+session offers the same tools with no new search. A load the model no longer
+sees is no longer in effect: after a compaction that summarizes the search,
+the model searches again.
+
+Any tool can load deferred tools with its result:
+
+```ruby
+Mistri::ToolResult.new(
+  content: "The tracker is open.",
+  loads: %w[tracker__create_issue tracker__list_issues],
+)
+```
+
+A name that is not a deferred tool of this agent is ignored.
+
+A deferred tool is still one of the agent's tools. Its approval gate, the
+argument check, `before_tool` and `after_tool` apply when it runs, and a call
+to one that was never loaded runs the same way. Keep the few tools every
+conversation needs out of deferral, so the model does not search for them. A
+host tool named `tool_search` beside a deferred tool is a duplicate name and
+fails Agent construction.
+
+Each request carries the tools that are not deferred, then the loaded ones in
+the order they were loaded.
+
 ## Hand off the turn
 
 `ends_turn: true` ends the run after the tool executes instead of asking the
