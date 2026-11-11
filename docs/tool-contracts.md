@@ -374,16 +374,17 @@ fails Agent construction.
 How a loaded tool reaches the model depends on the provider, and a host does
 not choose:
 
-- Anthropic is sent a deferred definition from the request whose result loads
-  it, marked to stay out of the prompt, and that result carries a reference
-  to it. The prompt cache holds across a load. One reserved definition,
-  `mistri_deferred_tools`, is sent the same way from the first request,
-  because the first deferred definition to appear in a conversation would
-  otherwise rebuild the cache once. The model is not shown it, no result can
-  load it, and a tool of that name beside deferred tools fails the request
-  before it is sent. The result's own text follows the tool results of that
-  turn. This is used on the official origin; another origin is treated like
-  the last provider below.
+- Anthropic receives a deferred definition from the request whose result
+  loads it, marked `defer_loading` so that it stays out of the prompt, and
+  that result carries a reference to it. The prompt cache holds across a
+  load. One reserved definition, `mistri_deferred_tools`, is sent the same
+  way from the first request, because the first deferred definition in a
+  conversation would otherwise rebuild the cache once. No result references
+  it, so it never enters the prompt. No result can load it, and a tool of
+  that name beside deferred tools fails the request before it is sent. The
+  result's own text follows the tool results of that turn. This form is used
+  on the official origin; another origin is treated like the last provider
+  below.
 - OpenAI keeps the request's own tools as they are, and a result that loads
   tools is followed by an item in the input that makes them callable from
   that point on. The prompt cache holds across a load here too. This is used

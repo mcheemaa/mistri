@@ -14,9 +14,9 @@ module Mistri
       # defer_loading, which keeps it out of the prompt, and a result that
       # loads one carries a tool_reference to it.
       module Serializer
-        # The first deferred definition to appear in a conversation rebuilds
-        # its cached prefix. This one is there from the first request, so a
-        # load never does. The model is not shown it.
+        # The first deferred definition in a conversation rebuilds its cached
+        # prefix. This one is sent from the first request, so a load never
+        # does. No result references it, so it never enters the prompt.
         RESERVED = { name: "mistri_deferred_tools",
                      description: "Reserved. Keeps tool loading in place. Never call it.",
                      input_schema: { type: "object", properties: {}.freeze }.freeze,

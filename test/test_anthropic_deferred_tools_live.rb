@@ -4,7 +4,7 @@ require "securerandom"
 require_relative "test_helper"
 
 # Deferred tools against the real Messages API. Every catalogued model must
-# take the reserved definition, a loaded one and a result that references it,
+# accept the reserved definition, a loaded one and a result that references it,
 # and a load must leave the cached prefix in place.
 class TestAnthropicDeferredToolsLive < Minitest::Test
   MODELS = Mistri::Models::CATALOG.each_value.select { |model| model.provider == :anthropic }

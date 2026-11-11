@@ -54,10 +54,10 @@ module Mistri
         SchemaCapabilities.derive(schema, :anthropic)
       end
 
-      # The API holds a definition back until a result references it, so an
-      # agent hands the loaded deferred tools over as deferred_tools and the
-      # tools the model sees never change. Another origin may not take this,
-      # and is sent the loaded tools as tools.
+      # The API keeps a deferred definition out of the prompt until a result
+      # references it, so an agent passes the loaded deferred tools as
+      # deferred_tools and the eager tools of a request never change. Another
+      # origin may not support this, and receives the loaded tools as tools.
       def defers_tools? = @official
 
       def stream(messages:, system: nil, tools: [], signal: nil, **overrides, &emit)

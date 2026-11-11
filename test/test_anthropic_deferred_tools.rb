@@ -6,7 +6,7 @@ require_relative "support/stub_server"
 
 # On Anthropic a loaded deferred definition travels with defer_loading, which
 # keeps it out of the prompt, and a result that loads tools carries
-# references to them. One reserved definition is there from the first
+# references to them. One reserved definition is sent from the first
 # request, so the cache holds across every load.
 class TestAnthropicDeferredTools < Minitest::Test
   SERIALIZER = Mistri::Providers::Anthropic::Serializer
@@ -37,7 +37,7 @@ class TestAnthropicDeferredTools < Minitest::Test
     assert_equal({ "type" => "object" }, wire.last[:input_schema])
   end
 
-  def test_the_reserved_definition_is_there_before_any_load_and_only_when_tools_are_deferred
+  def test_the_reserved_definition_is_sent_before_any_load_and_only_when_tools_are_deferred
     waiting = SERIALIZER.tools([spec("lookup")], [])
     plain = SERIALIZER.tools([spec("lookup")])
 
@@ -184,7 +184,7 @@ class TestAnthropicDeferredTools < Minitest::Test
     refute_includes JSON.generate(other["messages"]), "tool_reference"
   end
 
-  def test_an_agent_gives_such_a_provider_the_loaded_definitions_apart
+  def test_an_agent_passes_such_a_provider_the_loaded_definitions_separately
     provider = Class.new(Mistri::Providers::Fake) { def defers_tools? = true }.new(
       turns: [{ tool_calls: [{ name: "tool_search", arguments: { "query" => "issue" } }] },
               { tool_calls: [{ name: "create_issue" }] }, { text: "Created." }]
