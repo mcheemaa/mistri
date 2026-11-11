@@ -2,6 +2,7 @@
 
 require_relative "test_helper"
 require_relative "../eval/compaction"
+require_relative "../script/compaction_eval"
 require "tmpdir"
 
 # A process with no UTF-8 locale (cron, a systemd unit, an image with no
@@ -62,6 +63,17 @@ class TestUtf8Reads < Minitest::Test
     File.binwrite(path, "#{JSON.generate(scenario: TEXT)}\n")
 
     assert_equal [{ scenario: TEXT }], CompactionEval::Report.read(path)
+  end
+
+  def test_the_eval_reads_a_non_ascii_value_from_its_env_file
+    env_file = File.join(@dir, "env")
+    File.binwrite(env_file, "# caf\u00e9\nEVAL_UTF8_KEY=\"#{TEXT}\"\n")
+
+    CompactionEval::CLI.new(env_file:).send(:load_env)
+
+    assert_equal TEXT.b, ENV.fetch("EVAL_UTF8_KEY").b
+  ensure
+    ENV.delete("EVAL_UTF8_KEY")
   end
 
   def test_a_definition_with_a_non_ascii_character_loads
