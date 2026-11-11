@@ -17,17 +17,13 @@ module Mistri
   # fails to parse is skipped rather than killing a live stream. Only the
   # partial line is bounded; the complete stream is not.
   class SSE
-    def initialize(max_record_bytes: DEFAULT_MAX_RECORD_BYTES,
-                   max_record_tokens: ToolArguments::MAX_LEXICAL_TOKENS)
+    def initialize(max_record_bytes: DEFAULT_MAX_RECORD_BYTES, count_tokens: true)
       unless max_record_bytes.is_a?(Integer) && max_record_bytes.positive?
         raise ConfigurationError, "max_record_bytes: must be a positive integer"
       end
-      unless max_record_tokens.is_a?(Integer) && max_record_tokens.positive?
-        raise ConfigurationError, "max_record_tokens: must be a positive integer"
-      end
 
       @max_record_bytes = max_record_bytes
-      @max_record_tokens = max_record_tokens
+      @count_tokens = count_tokens
       @buffer = +""
     end
 
@@ -75,9 +71,10 @@ module Mistri
       line.strip!
       return if line.empty? || line == "[DONE]"
 
-      case ToolArguments.raw_json_resource_error(line, max_tokens: @max_record_tokens)
+      case ToolArguments.raw_json_resource_error(line, count_tokens: @count_tokens)
       when "too_many_nodes"
-        raise ResponseTooComplexError.new(kind: :sse_record_tokens, limit: @max_record_tokens)
+        raise ResponseTooComplexError.new(kind: :sse_record_tokens,
+                                          limit: ToolArguments::MAX_LEXICAL_TOKENS)
       when "too_deep"
         raise ResponseTooComplexError.new(kind: :sse_record_depth,
                                           limit: ToolArguments::MAX_DEPTH)

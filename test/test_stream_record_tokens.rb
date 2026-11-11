@@ -4,41 +4,37 @@ require "json"
 require_relative "test_helper"
 require_relative "support/stub_server"
 
-# How many JSON tokens one stream record may hold before it is parsed. The
-# count bounds what a record can allocate. A stream that echoes its request
-# gets as many more tokens as the request had bytes.
+# The count of JSON tokens in one stream record, taken before the record is
+# parsed. It is kept where it bounds something: Gemini's tool arguments, which
+# arrive as an object inside the record, and an MCP server's answer. An OpenAI
+# or Anthropic record is not counted.
 class TestStreamRecordTokens < Minitest::Test
-  def test_a_stream_that_echoes_its_request_may_spend_as_many_more_tokens_as_it_had_bytes
-    body = { "pad" => "x" * 1_000 }
-    limit = 20_001 + JSON.generate(body).bytesize
-    widths = [limit, limit + 1, limit]
+  WIDE = { "pad" => Array.new(20_002, 0) }.freeze
+
+  def test_a_stream_counts_the_tokens_in_a_record_only_when_asked
     server = Mistri::Test::StubServer.new do |socket, _request|
       server.start_sse(socket)
-      server.sse_data(socket, wide_record(widths[server.requests.length - 1]))
+      server.sse_data(socket, WIDE)
       server.finish_sse(socket)
     end
     transport = Mistri::Transport.new(origin: server.origin)
     records = []
 
-    transport.stream_post("/v1/x", body:, echoes_request: true) { |record| records << record }
-    over = assert_raises(Mistri::ResponseTooComplexError) do
-      transport.stream_post("/v1/x", body:, echoes_request: true) { flunk }
-    end
-    plain = assert_raises(Mistri::ResponseTooComplexError) do
-      transport.stream_post("/v1/x", body:) { flunk }
+    transport.stream_post("/v1/x", body: {}) { |record| records << record }
+    error = assert_raises(Mistri::ResponseTooComplexError) do
+      transport.stream_post("/v1/x", body: {}, count_tokens: true) { flunk }
     end
 
-    assert_equal [wide_record(limit)], records
-    assert_equal [:sse_record_tokens, limit], [over.kind, over.limit]
-    assert_equal [:sse_record_tokens, 20_001], [plain.kind, plain.limit]
+    assert_equal [WIDE], records
+    assert_equal [:sse_record_tokens, 20_001], [error.kind, error.limit]
   ensure
     teardown_all(transport, server)
   end
 
-  def test_a_streamable_http_answer_with_too_many_tokens_is_still_refused
+  def test_a_streamable_http_answer_with_too_many_tokens_is_refused
     server = Mistri::Test::StubServer.new do |socket, _request|
       server.start_sse(socket)
-      server.sse_data(socket, { "tools" => Array.new(20_002, 0) })
+      server.sse_data(socket, WIDE)
       server.finish_sse(socket)
     end
     transport = Mistri::Transport.new(origin: server.origin)
@@ -52,7 +48,7 @@ class TestStreamRecordTokens < Minitest::Test
     teardown_all(transport, server)
   end
 
-  def test_a_stream_that_echoes_its_request_still_bounds_depth_and_numbers
+  def test_a_stream_that_does_not_count_tokens_still_bounds_depth_and_numbers
     lines = ["data: #{"[" * 70}#{"]" * 70}\n\n", "data: {\"value\":#{"1" * 65_537}}\n\n"]
     server = Mistri::Test::StubServer.new do |socket, _request|
       server.start_sse(socket)
@@ -63,7 +59,7 @@ class TestStreamRecordTokens < Minitest::Test
 
     kinds = Array.new(2) do
       assert_raises(Mistri::ResponseTooComplexError) do
-        transport.stream_post("/v1/x", body: {}, echoes_request: true) { flunk }
+        transport.stream_post("/v1/x", body: {}) { flunk }
       end.kind
     end
 
@@ -99,28 +95,26 @@ class TestStreamRecordTokens < Minitest::Test
     server&.stop
   end
 
-  def test_openai_answering_a_small_request_with_a_wide_record_is_refused
-    call = { "type" => "function_call", "name" => "wide", "arguments" => "{}" }
-    wide = [{ "type" => "response.created",
-              "response" => { "tools" => Array.new(30_000) { {} } } },
-            { "type" => "response.completed",
-              "response" => { "status" => "completed", "output" => Array.new(4_000) { call } } }]
+  def test_an_anthropic_record_is_not_counted
+    events = [{ "type" => "message_start", "message" => { "id" => "msg_1" } },
+              { "type" => "ping" }.merge(WIDE),
+              { "type" => "content_block_start", "index" => 0,
+                "content_block" => { "type" => "text", "text" => "" } },
+              { "type" => "content_block_delta", "index" => 0,
+                "delta" => { "type" => "text_delta", "text" => "ready" } },
+              { "type" => "content_block_stop", "index" => 0 },
+              { "type" => "message_delta", "delta" => { "stop_reason" => "end_turn" } },
+              { "type" => "message_stop" }]
     server = Mistri::Test::StubServer.new do |socket, _request|
       server.start_sse(socket)
-      server.sse_data(socket, wide[server.requests.length - 1])
+      events.each { |event| server.sse_data(socket, event) }
       server.finish_sse(socket)
     end
-    provider = Mistri::Providers::OpenAI.new(api_key: "test", model: "gpt-6.1-sol",
-                                             origin: server.origin)
+    provider = Mistri::Providers::Anthropic.new(api_key: "test", origin: server.origin)
 
-    wide.each_index do |index|
-      result = Mistri::Agent.new(provider:).run("go")
-      sent = server.requests[index][:body].bytesize
+    message = provider.stream(messages: [Mistri::Message.user("go")])
 
-      assert_predicate result, :errored?
-      assert_equal({ "type" => "ResponseTooComplexError", "kind" => "sse_record_tokens",
-                     "limit" => 20_001 + sent }, result.message.error)
-    end
+    assert_equal [:stop, "ready"], [message.stop_reason, message.text]
   ensure
     provider&.close
     server&.stop
@@ -128,12 +122,11 @@ class TestStreamRecordTokens < Minitest::Test
 
   def test_openai_tool_arguments_keep_their_own_token_limit
     item = { "type" => "function_call", "id" => "fc_1", "call_id" => "call_1", "name" => "wide" }
-    wide = JSON.generate("values" => Array.new(20_002, 0))
     server = Mistri::Test::StubServer.new do |socket, _request|
       server.start_sse(socket)
       server.sse_data(socket, { "type" => "response.output_item.added", "item" => item })
       server.sse_data(socket, { "type" => "response.output_item.done",
-                                "item" => item.merge("arguments" => wide) })
+                                "item" => item.merge("arguments" => JSON.generate(WIDE)) })
       server.sse_data(socket, { "type" => "response.completed",
                                 "response" => { "status" => "completed", "usage" => {} } })
       server.finish_sse(socket)
@@ -149,9 +142,8 @@ class TestStreamRecordTokens < Minitest::Test
     server&.stop
   end
 
-  def test_gemini_tool_arguments_wider_than_the_guard_allows_still_end_the_turn
-    arguments = Array.new(20_002, 0)
-    call = { "functionCall" => { "name" => "search", "args" => { "values" => arguments } } }
+  def test_gemini_tool_arguments_wider_than_the_count_allows_end_the_turn
+    call = { "functionCall" => { "name" => "search", "args" => WIDE } }
     server = Mistri::Test::StubServer.new do |socket, _request|
       server.start_sse(socket)
       server.sse_data(socket, { "candidates" => [{ "content" => { "parts" => [call] } }] })
@@ -170,10 +162,6 @@ class TestStreamRecordTokens < Minitest::Test
   end
 
   private
-
-  # A record with exactly this many JSON tokens: the object, its key, the
-  # array and one token for each number in it.
-  def wide_record(tokens) = { "tools" => Array.new(tokens - 3, 0) }
 
   def teardown_all(transport, server)
     transport&.close

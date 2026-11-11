@@ -46,11 +46,12 @@ module Mistri
         assembler = OpenAI::Assembler.new(model: model, catalog_pricing: @catalog_pricing)
         assembler.start(&delivery)
         body = build_body(model, messages, system, tools, overrides)
-        # The Responses stream echoes the request in its own events, tool
-        # definitions included.
-        outcome = @transport.stream_post(
-          "/v1/responses", body:, headers:, signal:, echoes_request: true
-        ) { |record| assembler.feed(record, &delivery) }
+        outcome = @transport.stream_post("/v1/responses", body: body, headers: headers,
+                                                          signal: signal) do |record|
+          assembler.feed(
+            record, &delivery
+          )
+        end
         outcome == :aborted ? assembler.abort(&delivery) : assembler.finish(&delivery)
       rescue EventDelivery::Failure => e
         raise EventDelivery.unwrap(e, delivery)
