@@ -29,7 +29,7 @@ module Mistri
     attr_reader :name, :body, :config
 
     def self.load(path)
-      match = FRONTMATTER.match(File.read(path))
+      match = FRONTMATTER.match(File.read(path, encoding: Encoding::UTF_8))
       raise ConfigurationError, "#{path} has no frontmatter" unless match
 
       config = YAML.safe_load(match[:yaml]) || {}

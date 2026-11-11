@@ -5,6 +5,11 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+- Files are read as UTF-8 wherever the process runs. In a process with no
+  UTF-8 locale (cron, a systemd unit, an image with no `LANG`) the JSONL store
+  could not load a session that held a non-ASCII character, a skill or a
+  definition with one failed to load, and a workspace file with one was read
+  as an invalid string.
 - A large tool list no longer ends every OpenAI run. The Responses stream
   repeats the request's tool definitions in its own events, and the 20,001
   token ceiling on a stream record refused that once the list was large
