@@ -74,10 +74,12 @@ module Mistri
         end
 
         # In-stream failures carry a code; rate limits and server errors must
-        # classify as retryable, not fold into prose.
+        # classify as retryable, not fold into prose. The code and the message
+        # sit on the record itself or under "error", as the API sends both.
         def wire_error(record)
-          message = record["message"] || "provider error"
-          code = record["code"].to_s
+          detail = record["error"].is_a?(Hash) ? record["error"] : record
+          code = detail["code"].to_s
+          message = [code, detail["message"] || "provider error"].reject(&:empty?).join(": ")
           classify_error(code, message, unknown: ProviderError)
         end
 

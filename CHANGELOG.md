@@ -5,6 +5,12 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+- An OpenAI stream failure keeps its reason. The Responses API can send a
+  failure's code and message nested under `error`, and Mistri read them only
+  at the top of the record. The turn ended as `provider error`, and a refusal
+  under a content policy was taken for an unknown failure and retried. The
+  error now carries the code and the message, and such a refusal fails at
+  once, as the reliability guide says it does.
 - A tool schema may declare JSON Schema draft-07 as well as 2020-12. Common
   schema generators emit draft-07, and an MCP server that declared it on its
   tools could not be used. The two read the same for what Mistri validates,
