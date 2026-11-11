@@ -113,11 +113,53 @@ looping or allocating without bound.
 
 `Mistri::MCP.tools` filters remote names with `allow:` and `deny:`. `prefix:`
 creates local names such as `linear__create_issue` while the remote call still
-uses `create_issue`. Duplicate local tool names make Agent construction fail;
-one server can never silently shadow another.
+uses `create_issue`. Duplicate local tool names from two servers make Agent
+construction fail; one server can never silently shadow another.
+
+A local name is one every provider takes: letters, digits, underscores and
+hyphens, 64 characters at most, not starting with a digit or a hyphen. A name
+inside that set is not changed. MCP allows more, and so does a single provider
+here and there, such as a dot on Gemini or a leading digit on Anthropic. Any
+such name has its unsafe characters replaced and ends in eight characters of a
+hash of the whole name, so `issues.list/open` becomes `issues_list_open_` and
+the hash. The local name depends only on the prefix and the remote name: it is
+the same in every run, whatever else the server lists.
+`Mistri::MCP.local_name(remote, prefix)` gives it. A host that keeps names of
+its own passes one with `bridge(client, definition, name:)`, and that name is
+used as given.
+
+A tool that cannot be bridged is left out, and the server's other tools stay
+usable. That is a tool whose schema is not one Mistri can validate, one with
+no name, one whose name or description is not UTF-8 text, a definition that
+is not an object, and a tool whose local name is already taken by one listed
+before it. Without a block the tool and the reason are written as a warning.
+With one, the block is given what the server listed and the error, whose
+message names the tool:
+
+```ruby
+tools = Mistri::MCP.tools(client, prefix: "tracker") do |_definition, error|
+  connection.note_unusable(error.message)
+end
+```
+
+What the server listed may not be an object, so check before reading a key
+from it. A host that would sooner fail raises the error from the block.
+`Mistri::MCP.bridge`, which takes one definition, still raises.
+
+Two listed tools can get the same local name: the server lists one name twice,
+lists a tool under the name Mistri made for another, or lists two long names
+that share their first 55 characters and the short hash. The first one listed
+keeps the name, so the order the server lists in decides which remote tool the
+name calls. A host that stores local names or holds approvals across runs for
+such a server should raise from the block.
 
 `needs_approval:` gates every bridged tool. `gates:` sets policy by remote name
 and overrides the shared default.
+
+`deferred: true` keeps a server's tools out of the model's sight until a search
+loads them, so the definitions of a server with a long tool list are left out
+of every request until one of its tools is needed. See
+[Tools on demand](tool-contracts.md#tools-on-demand).
 
 ## Schema authority
 
@@ -151,8 +193,16 @@ external references are rejected even with a complete validator so validation
 never performs hidden file or network resolution.
 
 An omitted `inputSchema` means a closed no-argument object. Explicit null,
-non-object roots, malformed keyword shapes, and an explicit older dialect are
-configuration errors. Mistri compiles MCP input as JSON Schema 2020-12.
+non-object roots and malformed keyword shapes are configuration errors.
+
+A schema may declare JSON Schema 2020-12 or draft-07, which is what common
+schema generators emit. The two read the same for everything Mistri validates
+locally, apart from three shapes that are refused for that one tool: `items`
+as an array, a constraint beside a `$ref` (draft-07 ignores it and 2020-12
+applies it), and `prefixItems` in a draft-07 schema. Every other rule on this
+page holds for a draft-07 schema as well, so a shape draft-07 allows and
+Mistri does not, such as an `$id` that is only a fragment, is still refused.
+Any other declared dialect is a configuration error.
 
 ## Results and large data
 
@@ -189,9 +239,10 @@ Successful HTTP bodies are counted incrementally, and a declared oversized body
 fails before it is read. Requests use identity encoding so compressed expansion
 cannot bypass the boundary.
 
-Each completed SSE JSON record also receives fixed structural ceilings before
-JSON parsing: 20,001 lexical tokens, 64 levels, and 64 KiB per numeric token.
-These protect allocation even when a record stays under its byte limit.
+Each completed MCP SSE JSON record is also checked before JSON parsing for 64
+levels and 64 KiB per numeric token. The number of values in a record is not
+counted, on a stream or on any other transport, so a server with a long tool
+list answers the same however it replies.
 
 Byte overflow raises `Mistri::ResponseTooLargeError`. Structural overflow raises
 `Mistri::ResponseTooComplexError`. Both expose `kind` and `limit`.

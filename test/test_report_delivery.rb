@@ -219,6 +219,46 @@ class TestReportDelivery < Minitest::Test
     assert_equal "Recovered on retry.", session.pending_inbox.first["report"]
   end
 
+  def test_a_refusal_from_inside_a_running_child_fails_it_once
+    Mistri.locks = Mistri::Locks::Memory.new
+    ran = 0
+    count = Mistri::Tool.define("count", "Counts.") { ran += 1 and "counted" }
+    turns = [{ tool_calls: [{ name: "count", arguments: {} }] }, { text: "Done." }]
+    spec, store, session = dispatch(fake(*turns), name: "Corgi", tools: [count])
+    child = Mistri::Session.new(store:, id: spec.fetch("session_id"))
+    intruder = Mistri::Agent.new(provider: fake, session: child)
+    reenter = ->(event) { intruder.resume if event.type == :text_delta }
+
+    assert_raises(Mistri::SessionBusyError) do
+      Mistri::SubAgent.run_dispatched(spec, provider: fake(*turns), system: "You help.",
+                                            tools: [count], store: store, emit: reenter)
+    end
+    Mistri::SubAgent.run_dispatched(spec, provider: fake(*turns), system: "You help.",
+                                          tools: [count], store: store)
+
+    reports = session.pending_inbox.map { |entry| entry["status"] }
+
+    assert_equal 1, ran
+    assert_equal :failed, session.children.first.status
+    assert_equal ["failed"], reports
+  end
+
+  def test_a_busy_error_from_another_session_fails_the_child
+    Mistri.locks = Mistri::Locks::Memory.new
+    child_fake = fake({ text: "Charged." })
+    spec, store, session = dispatch(child_fake, name: "Basenji")
+    # Host code wakes a session another runner holds.
+    elsewhere = Mistri::Agent.new(provider: fake, session: Mistri::Session.new(store:))
+    Mistri.locks.acquire(Mistri::Child.lease_key(elsewhere.session.id), ttl: 60)
+    wake = ->(_event) { elsewhere.run("wake") }
+
+    assert_raises(Mistri::SessionBusyError) do
+      Mistri::SubAgent.run_dispatched(spec, provider: child_fake, system: "You help.",
+                                            tools: [], store: store, emit: wake)
+    end
+    assert_equal :failed, session.children.first.status
+  end
+
   def test_a_redelivered_live_job_leaves_the_owner_alone
     Mistri.locks = Mistri::Locks::Memory.new
     child_fake = fake({ text: "should never run" })
@@ -274,9 +314,9 @@ class TestReportDelivery < Minitest::Test
       def acquire(*) = raise("lock backend down")
       def clear_flag(_key) = nil
     end
-    Mistri.locks = broken.new
     child_fake = fake({ text: "never runs" })
     spec, store, session = dispatch(child_fake, name: "Vizsla")
+    Mistri.locks = broken.new
 
     assert_raises(RuntimeError) do
       Mistri::SubAgent.run_dispatched(spec, provider: child_fake, system: "You help.",

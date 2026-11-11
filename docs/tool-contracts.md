@@ -236,7 +236,9 @@ not bypass current authorization. A raised hook error blocks conservatively.
 
 `after_tool` receives `(call, result, context)` and may return a replacement
 result. Returning nil keeps the original. If the original result is an error,
-rewriting its text cannot relabel it as success.
+rewriting its text cannot relabel it as success. Text returned for a result
+that [loads tools](#tools-on-demand) replaces what the model reads and the
+tools still load; return a `Mistri::ToolResult` to decide the loads yourself.
 
 ## Results and UI
 
@@ -284,6 +286,98 @@ An error flag does not make a replay safe. A handler may have committed a write
 before raising or timing out. Mistri never mechanically replays the same call
 because it is marked failed, but the model may issue another call. The host
 still owns idempotency and reconciliation.
+
+## Tools on demand
+
+A tool definition costs input tokens on every model round, and a host that
+bridges a few MCP servers can hold hundreds of them. Mark a tool
+`deferred: true` and the model is not shown it until it is needed:
+
+```ruby
+refund = Mistri::Tool.define(
+  "refund_charge", "Gives a customer their money back.",
+  deferred: true,
+  schema: -> { string :charge, "Charge id", required: true },
+) { |args| Billing.refund(args.fetch("charge")) }
+tracker = Mistri::MCP.tools(client, prefix: "tracker", deferred: true)
+
+agent = Mistri.agent("claude-haiku-5-5", tools: [lookup_order, refund, *tracker])
+```
+
+An agent that holds a deferred tool adds one of its own, `tool_search`. The
+model asks it in words for what it needs to do. The search ranks the deferred
+tools by their name, their description and the names and descriptions of their
+parameters, loads the best matches (eight by default, twenty at most) and
+answers with their names. From its next step the model calls them like any
+other tool. The description of `tool_search` tells the model how many tools it
+searches under each name prefix, so give a server a prefix that says what it
+is.
+
+A query that is a tool's name finds that tool first. The search matches words,
+so it finds what a name, a description or a parameter says and not what they
+mean. A run of Han, kana or Hangul characters, which often has no spaces
+between its words, is matched by pairs of characters, and by one character
+when the query is one. In words, half-width and full-width forms match each
+other; a name is matched as it is written. Other scripts written without
+spaces match poorly. A query is read up to 500 characters.
+
+A load is stored with the tool result that made it. A later run on the same
+session offers the same tools with no new search. A load the model no longer
+sees is no longer in effect: after a compaction that summarizes the search,
+the model searches again.
+
+Any tool can load deferred tools with its result:
+
+```ruby
+Mistri::ToolResult.new(
+  content: "The tracker is open.",
+  loads: %w[tracker__create_issue tracker__list_issues],
+)
+```
+
+A name that is not a deferred tool of this agent is ignored, and a result
+marked `error: true` loads nothing.
+
+A deferred tool is still one of the agent's tools. Its approval gate, the
+argument check, `before_tool` and `after_tool` apply when it runs, and a call
+to one that was never loaded runs the same way. Keep the few tools every
+conversation needs out of deferral, so the model does not search for them. A
+host tool named `tool_search` beside a deferred tool is a duplicate name and
+fails Agent construction.
+
+How a loaded tool reaches the model depends on the provider, and a host does
+not choose:
+
+- Anthropic is sent every deferred definition marked to stay out of the
+  prompt, and a result that loads tools carries references to them. The tool
+  list never changes, so the prompt cache holds across a load. The result's
+  own text follows the tool results of that turn. This is used on the official
+  origin; another origin is treated like the last provider below.
+- OpenAI keeps the request's own tools as they are, and a result that loads
+  tools is followed by an item in the input that makes them callable from
+  that point on. The prompt cache holds across a load here too. This is used
+  on the official origin, for the models OpenAI documents it for: gpt-5.4 and
+  later, the nano models aside. An older model, a nano model and another
+  origin are treated like the provider below.
+- Gemini, and any other provider, is sent the tools that are not deferred,
+  then the loaded ones in the order they were loaded.
+
+What it costs in the process is small. Building an agent with deferred tools
+costs what a flat list costs. The search index is built once, on an agent's
+first search, from each deferred tool's description and schema. Building a
+request adds one pass over the history to find what was loaded, and on
+OpenAI one pass over the deferred definitions to index them by name.
+
+On the wire the forms differ. On OpenAI and Gemini a request carries no
+deferred definition until a result loads it. On Anthropic every deferred
+definition travels in the body of every request, as the API requires, though
+one is not counted as input until it is loaded. The body grows by the size
+of the definitions: 600 deferred tools of a kilobyte each add 600 KB to
+every request.
+
+A provider of your own is sent the growing tool list. To hold definitions
+back itself it answers `defers_tools?` with true, and `stream` is then given
+the deferred definitions as `deferred_tools:` beside `tools:`.
 
 ## Hand off the turn
 

@@ -19,13 +19,11 @@ module Mistri
 
     def initialize(store:, id: nil)
       @store = store
-      @log = Log.new(store, id || SecureRandom.uuid)
+      @log = Log.new(store, id || SecureRandom.uuid, checkpointed: true)
       @id = @log.id
     end
 
-    # A string id comes back as a copy. The id a session was built with is
-    # fixed: changing the string it was given, or the one returned here, does
-    # not move the session.
+    # A string id is copied, so a caller cannot change which session this is.
     def id = @id.is_a?(String) ? @id.dup : @id
 
     def append_message(message)
@@ -51,9 +49,9 @@ module Mistri
     # it accepts later turns. Approval control entries are audited in the same
     # ordered pass: they may only advance a prior assistant call.
     def tool_control_state
-      audited = audit_history(read_log)
+      audited = audit_history(window)
       approvals = audited.fetch(:approvals).map do |approval|
-        decision = approval[:decision] && own_json(approval[:decision])
+        decision = approval[:decision] && Log.owned(approval[:decision])
         { call: rebuild_call(approval[:call]), decision: }
       end
       { tool_call_ids: audited.fetch(:tool_call_ids), approvals: }
@@ -79,18 +77,19 @@ module Mistri
     # brick every later turn with a provider rejection, so unsettled calls
     # get a synthesized interrupted result. Calls parked for human approval
     # stay open; resume owns those.
-    def replay = replay_from(read_log)
+    def replay = replay_from(window)
 
     # Context accounting ignores provider usage reported before the latest
     # compaction: those prompt counts describe the larger, pre-summary replay.
     # Until a post-compaction assistant turn reports fresh usage, the compacted
     # replay is estimated directly.
     def context_tokens
-      log = read_log
-      replay = replay_from(log)
-      compacted_at = log.rindex { |entry| entry["type"] == "compaction" }
+      held = window
+      replay = replay_from(held)
+      compacted_at = held.entries.rindex { |entry| entry["type"] == "compaction" }
       usage_from = if compacted_at
-                     replay.index { |(_, index)| index && index > compacted_at } || replay.length
+                     position = held.position(compacted_at)
+                     replay.index { |(_, index)| index && index > position } || replay.length
                    else
                      0
                    end
@@ -98,15 +97,36 @@ module Mistri
     end
 
     def last_compaction
-      entry = read_log.reverse_each.find { |candidate| candidate["type"] == "compaction" }
-      entry && own_json(entry)
+      entry = window.entries.reverse_each.find { |candidate| candidate["type"] == "compaction" }
+      entry && Log.owned(entry)
+    end
+
+    # Write a compaction: replay starts at kept_from behind the summary. The
+    # entry carries what the loop needs from before it, so a later read can
+    # start there. The start may only move forward, to a turn boundary that
+    # keeps every open approval and every steer or report not folded in yet.
+    def checkpoint(summary:, kept_from:, model: nil, tokens_before: nil)
+      held = window
+      validate_cut!(held, kept_from)
+      append("compaction", { "summary" => summary, "model" => model, "kept_from" => kept_from,
+                             "tokens_before" => tokens_before,
+                             "carried" => carried_before(held, kept_from) }.compact)
+    end
+
+    # The earliest position replay must keep: the turn of an open approval,
+    # or a steer or report that is not folded in yet. Nil when nothing is open.
+    def open_from
+      held = window
+      open = audit_history(held).fetch(:approvals)
+      first = [approval_turn_start(held.entries, open), unfolded_start(held.entries)].compact.min
+      first && held.position(first)
     end
 
     # Failed summaries since the last checkpoint, all of them or only those
     # of one trigger (:manual or :automatic). Automatic compaction counts its
     # own failures to stop retrying one that has proven persistent.
     def compaction_failures(trigger: nil)
-      log = read_log
+      log = window.entries
       since = (log.rindex { |entry| entry["type"] == "compaction" } || -1) + 1
       log.drop(since).count do |entry|
         entry["type"] == "compaction_failed" && (trigger.nil? || entry["trigger"] == trigger.to_s)
@@ -139,10 +159,7 @@ module Mistri
     # for that. Reports normally arrive via SubAgent.run_dispatched; call this
     # directly only from a custom dispatch path.
     def deliver_report(name:, session_id:, status:, text: nil) # rubocop:disable Naming/PredicateMethod
-      already = read_log.any? do |entry|
-        entry["type"] == "subagent_report" && entry["session_id"] == session_id
-      end
-      return false if already
+      return false if reported?(session_id)
 
       append("subagent_report", "id" => SecureRandom.uuid, "name" => name,
                                 "session_id" => session_id, "status" => status, "report" => text,
@@ -157,10 +174,10 @@ module Mistri
     # every process. A host that wakes an idle session when a steer arrives
     # should watch this instead: a report deserves the same pickup.
     def pending_inbox
-      log = read_log
-      folded = log.flat_map { |entry| entry.values_at(*INBOX.values) }.compact.to_set
+      log = window.entries
+      folded = folded_ids(log)
       log.select { |entry| INBOX.key?(entry["type"]) && !folded.include?(entry["id"]) }
-         .map { |entry| own_json(entry) }
+         .map { |entry| Log.owned(entry) }
     end
 
     # The steer-only slice of the inbox, oldest first.
@@ -172,10 +189,10 @@ module Mistri
     # per link entry, each reading the child's own session. Derived from the
     # log alone, like everything else here.
     def children
-      read_log.filter_map do |entry|
-        next unless entry["type"] == "subagent"
-
-        Child.new(name: own_json(entry["name"]), session_id: own_json(entry["session_id"]),
+      held = window
+      links = carried(held).fetch("children", []) + links_in(held.entries)
+      links.map do |link|
+        Child.new(name: Log.owned(link["name"]), session_id: Log.owned(link["session_id"]),
                   store: @store, parent_session_id: @id)
       end
     end
@@ -205,9 +222,112 @@ module Mistri
 
     private
 
-    # The log as this session has read it, brought up to date. Its entries
+    # The entries from the newest checkpoint on, brought up to date. They
     # are frozen and shared, so a public reader returns copies its caller owns.
-    def read_log = @log.entries
+    def window = @log.window
+
+    # What the checkpoint the window starts at carries from before it.
+    def carried(held)
+      log = held.entries
+      index = log.rindex { |entry| entry["type"] == "compaction" }
+      return {} unless index && Log.checkpoint?(log[index], held.position(index))
+
+      log[index]["carried"]
+    end
+
+    def carried_before(held, kept_from)
+      before = held.entries.take(kept_from - held.offset)
+      state = carried(held)
+      state.merge("children" => state.fetch("children", []) + links_in(before),
+                  "reported" => state.fetch("reported", []) | reports_in(before),
+                  "approvals" => state.fetch("approvals", []) | legacy_approvals_in(before))
+    end
+
+    # A decision written before decisions named their request is told apart
+    # only by its call id, and in such logs only an old call_N id repeats.
+    def legacy_approvals_in(entries)
+      entries.select { |entry| entry["type"] == "approval_request" }
+             .filter_map { |entry| entry.dig("call", "id") }.grep(LEGACY_CALL_ID)
+    end
+
+    def validate_cut!(held, kept_from)
+      log = held.entries
+      audit = audit_history(held)
+      latest = log.reverse_each.find { |entry| entry["type"] == "compaction" }
+      floor = [latest ? latest["kept_from"] : 0, held.offset].max
+      unless kept_from.is_a?(Integer) && kept_from.between?(floor, held.position(log.length))
+        raise ConfigurationError, "a compaction must start between the current start of " \
+                                  "replay and the end of the log"
+      end
+
+      cut = kept_from - held.offset
+      approval = approval_turn_start(log, audit.fetch(:approvals))
+      if approval && cut > approval
+        raise ConfigurationError, "a compaction cannot cut past an open approval"
+      end
+      if (unfolded = unfolded_start(log)) && cut > unfolded
+        raise ConfigurationError, "a compaction cannot cut past a steer or report that is " \
+                                  "not folded in"
+      end
+      return if turn_boundary?(log, cut)
+
+      raise ConfigurationError, "a compaction must start at a user message, at an assistant " \
+                                "turn that calls tools, or at the end of the log"
+    end
+
+    # Everything a tool call leads to (its request, decision and result)
+    # follows it within its turn, so a start on a turn parts none of them.
+    def turn_boundary?(log, cut)
+      return true if cut == log.length
+
+      entry = log[cut]
+      return false unless entry["type"] == "message"
+
+      role = entry.dig("message", "role")
+      role == "user" || (role == "assistant" && tool_calls_from(entry).any?)
+    end
+
+    def splits_call?(states, cut)
+      states.any? do |state|
+        state[:result_index] && state[:source_index] < cut && state[:result_index] >= cut
+      end
+    end
+
+    def unfolded_start(log)
+      folded = folded_ids(log)
+      log.index { |entry| INBOX.key?(entry["type"]) && !folded.include?(entry["id"]) }
+    end
+
+    def links_in(entries)
+      entries.select { |entry| entry["type"] == "subagent" }
+             .map { |entry| entry.slice("name", "session_id") }
+    end
+
+    def reports_in(entries)
+      entries.select { |entry| entry["type"] == "subagent_report" }
+             .map { |entry| entry["session_id"] }
+    end
+
+    def reported?(session_id)
+      held = window
+      carried(held).fetch("reported", []).include?(session_id) ||
+        reports_in(held.entries).include?(session_id)
+    end
+
+    def folded_ids(log) = log.flat_map { |entry| entry.values_at(*INBOX.values) }.compact.to_set
+
+    def approval_turn_start(log, open)
+      return nil if open.empty?
+
+      ids = open.map { |approval| approval[:call]["id"] }
+      request = log.index do |entry|
+        entry["type"] == "approval_request" && ids.include?(entry.dig("call", "id"))
+      end
+      turn = request && log[0...request].rindex do |entry|
+        entry["type"] == "message" && entry.dig("message", "role") == "user"
+      end
+      turn || open.map { |approval| approval[:source_index] }.min
+    end
 
     def tool_calls_from(entry)
       Array(entry.dig("message", "content")).select do |block|
@@ -236,7 +356,8 @@ module Mistri
                   source_provider: message.provider,
                   source_stop_reason: message.stop_reason,
                   source_index: index, source_position: position,
-                  batch:, status: :pending, reused: !reused.nil? }
+                  batch:, status: :pending,
+                  reused: !reused.nil? || audit.fetch(:approval_ids).include?(id) }
         calls[owned] = state
         batch[:calls] << state
         audit.fetch(:states) << state
@@ -264,12 +385,13 @@ module Mistri
       prior
     end
 
-    def audit_history(log)
+    def audit_history(held)
+      log = held.entries
       calls = {}
       unresolved = Set.new
       reserved = Set.new
       states = []
-      approval_ids = Set.new
+      approval_ids = Set.new(carried(held).fetch("approvals", []))
       audit = { calls:, unresolved:, reserved:, states:, approval_ids: }
       latest_compaction = nil
 
@@ -286,9 +408,9 @@ module Mistri
           close_unsettled_calls(calls, unresolved)
           record_assistant_calls(entry, message, index, audit) if message.assistant?
         elsif entry["type"] == "approval_request"
-          record_approval_call(entry, calls, audit)
+          record_approval_call(entry, held.position(index), calls, audit)
         elsif entry["type"] == "approval_decision"
-          record_approval_decision(entry, calls)
+          record_approval_decision(entry, calls, late: held.offset.positive?)
         elsif entry["type"] == "compaction"
           latest_compaction = entry
         end
@@ -296,8 +418,8 @@ module Mistri
 
       interrupt_ambiguous_reused_approvals!(states)
       approvals = open_approval_states(states)
-      validate_compaction!(audit, approvals, latest_compaction)
-      { tool_call_ids: reserved, approvals:, call_states: calls }
+      validate_compaction!(audit, approvals, latest_compaction, held.offset)
+      { tool_call_ids: reserved, approvals:, call_states: calls, states: }
     end
 
     # Control entries can authorize side effects, so every message in the
@@ -379,7 +501,7 @@ module Mistri
       unresolved.clear
     end
 
-    def record_approval_call(entry, calls, audit)
+    def record_approval_call(entry, position, calls, audit)
       call = entry["call"]
       unless call.is_a?(Hash)
         raise ConfigurationError, "session contains an invalid approval request"
@@ -412,7 +534,8 @@ module Mistri
       advance_call_order!(state, :approval_request_position, "approval requests")
       state[:batch][:approval_phase_started] = true
       state[:status] = :approval_requested
-      state[:approval] = { call:, decision: nil, source_index: state[:source_index] }
+      state[:approval] = { call:, decision: nil, source_index: state[:source_index],
+                           request: position }
       state[:ambiguous_approval] = state[:reused] && audit.fetch(:approval_ids).include?(id)
       audit.fetch(:approval_ids) << id
     end
@@ -448,7 +571,7 @@ module Mistri
                                 "same-name tool result"
     end
 
-    def record_approval_decision(entry, calls)
+    def record_approval_decision(entry, calls, late:)
       id = entry["call_id"]
       problem = required_string_problem(id, "approval decision call IDs")
       raise ConfigurationError, "session contains #{problem}" if problem
@@ -459,16 +582,36 @@ module Mistri
       end
 
       state = calls[id]
-      unless state && state[:approval]
+      approval = answered_approval(entry, state, late:)
+      # Store order is the write-once register. A stale loser can append after
+      # execution, so it must not revoke the winner or corrupt the real result.
+      return if approval.nil? || approval[:decision]
+
+      approval[:decision] = entry
+      state[:status] = :decided
+    end
+
+    # A decision names the request it answers and decides no other. One from
+    # before decisions did that goes by its call id, and past a checkpoint
+    # its call may be gone, so there it is skipped.
+    def answered_approval(entry, state, late:)
+      approval = state && state[:approval]
+      if entry.key?("request")
+        approval if approval&.fetch(:request) == named_request(entry)
+      elsif approval || (state.nil? && late)
+        approval
+      else
         raise ConfigurationError, "session contains an approval decision without a prior " \
                                   "matching approval request"
       end
-      # Store order is the write-once register. A stale loser can append after
-      # execution, so it must not revoke the winner or corrupt the real result.
-      return if state[:approval][:decision]
+    end
 
-      state[:approval][:decision] = entry
-      state[:status] = :decided
+    def named_request(entry)
+      request = entry["request"]
+      return request if request.is_a?(Integer) && request >= 0
+
+      raise ConfigurationError, "session contains an approval decision whose request is not " \
+                                "a position in the log"
     end
 
     # An old decision names only call_N. Once that ID has already participated
@@ -489,22 +632,20 @@ module Mistri
       end
     end
 
-    def validate_compaction!(audit, approvals, compaction)
+    def validate_compaction!(audit, approvals, compaction, offset)
       return unless compaction
 
       kept_from = compaction["kept_from"]
       unless kept_from.is_a?(Integer) && kept_from >= 0
         raise ConfigurationError, "session contains an invalid compaction boundary"
       end
+
+      kept_from -= offset
       if approvals.any? { |approval| approval[:source_index] < kept_from }
         raise ConfigurationError, "session contains an open approval whose assistant tool call " \
                                   "was removed by compaction"
       end
-      split = audit.fetch(:states).any? do |state|
-        state[:result_index] && state[:source_index] < kept_from &&
-          state[:result_index] >= kept_from
-      end
-      return unless split
+      return unless splits_call?(audit.fetch(:states), kept_from)
 
       raise ConfigurationError, "session contains a compaction boundary that splits a tool call " \
                                 "from its result"
@@ -592,24 +733,26 @@ module Mistri
       call[field]
     end
 
-    def replay_from(log)
+    def replay_from(held)
+      log = held.entries
       compacted_at = log.rindex { |entry| entry["type"] == "compaction" }
       compaction = log[compacted_at] if compacted_at
-      from = compaction ? compaction["kept_from"] : 0
+      from = compaction ? compaction["kept_from"] - held.offset : 0
       pairs = log.each_with_index.filter_map do |entry, index|
         next unless index >= from && entry["type"] == "message"
 
         message = replay_message(entry, before_compaction: compacted_at && index < compacted_at)
         [message, index] if message
       end
-      pairs = heal(pairs, replay_call_states(log, from:))
+      pairs = heal(pairs, replay_call_states(log, from:, held:))
+      pairs = pairs.map { |message, index| [message, index && held.position(index)] }
       compaction ? [[summary_message(compaction["summary"]), nil], *pairs] : pairs
     end
 
     # A new summary invalidates prefix-bound thinking in the kept tail. Only
     # replay drops it: the transcript and thoughts from the new prefix survive.
     def replay_message(entry, before_compaction:)
-      message = Message.from_h(own_json(entry["message"]))
+      message = Message.from_h(Log.owned(entry["message"]))
       return message unless before_compaction && message.prefix_bound_thinking?
 
       content = message.content.grep_v(Content::Thinking)
@@ -622,8 +765,10 @@ module Mistri
     # Replay only needs occurrence pairing, not the authorization audit. Keep
     # it tolerant enough to render a rejected history while still ensuring a
     # reused call_N cannot borrow an earlier result or approval.
-    def replay_call_states(log, from:)
-      replay = { active: {}, seen: Set.new, approval_ids: Set.new, states: [], from: }
+    def replay_call_states(log, from:, held:)
+      approvals = carried(held).fetch("approvals", [])
+      replay = { active: {}, seen: Set.new(approvals), approval_ids: Set.new(approvals),
+                 states: [], from: }
       log.each_with_index do |entry, index|
         if entry["type"] == "message"
           track_replay_message(entry, index, replay)
@@ -745,7 +890,8 @@ module Mistri
     end
 
     def decide(call_id, approved:, note:)
-      open = open_approvals.find { |approval| approval[:call].id == call_id }
+      open = audit_history(window).fetch(:approvals)
+                                  .find { |approval| approval[:call]["id"] == call_id }
       unless open
         winner = recorded_approval_decision(call_id)
         return nil if winner && winner["approved"] == approved
@@ -762,32 +908,31 @@ module Mistri
         raise ConfigurationError, "approval for #{call_id.inspect} has already been decided"
       end
 
-      entry = { "call_id" => call_id, "approved" => approved }
+      entry = { "call_id" => call_id, "approved" => approved, "request" => open[:request] }
       entry["note"] = note if note
       append("approval_decision", entry)
 
       # The two-method Store contract cannot combine the precheck and append.
       # Re-read its total order so a racing conflicting caller learns it lost.
-      winner = recorded_approval_decision(call_id)
+      winner = decision_on(open[:request])
       return nil if winner && winner["approved"] == approved
 
       raise ConfigurationError, "approval for #{call_id.inspect} has already been decided"
     end
 
     def recorded_approval_decision(call_id)
-      state = audit_history(read_log).fetch(:call_states)[call_id]
+      state = audit_history(window).fetch(:call_states)[call_id]
       return nil if state&.fetch(:ambiguous_approval, false)
 
       state&.dig(:approval, :decision)
     end
 
-    def own_json(value)
-      case value
-      when Hash then value.to_h { |key, nested| [own_json(key), own_json(nested)] }
-      when Array then value.map { |nested| own_json(nested) }
-      when String then value.dup
-      else value
-      end
+    # A request the window no longer holds was settled before the newest
+    # checkpoint, by a decision that cannot be seen from here.
+    def decision_on(request)
+      audit_history(window).fetch(:states)
+                           .find { |state| state.dig(:approval, :request) == request }
+                           &.dig(:approval, :decision)
     end
 
     def rebuild_call(hash)

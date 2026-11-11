@@ -15,6 +15,97 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   report.
 - `Message#prefix_bound_thinking?` tells whether a message's thinking verifies
   only after its exact original history.
+- An OpenAI stream failure keeps its reason. The Responses API can send a
+  failure's code and message nested under `error`, and Mistri read them only
+  at the top of the record. The turn ended as `provider error`, and a refusal
+  under a content policy was taken for an unknown failure and retried. The
+  error now carries the code and the message, and such a refusal fails at
+  once, as the reliability guide says it does.
+- `read_agent` reads a worker's log a page at a time. It showed the last 200
+  entries at most, so the model could not see how a long piece of work began.
+  Each line now starts with the entry's number, `offset` reads from any
+  entry, `limit` takes the place of `tail`, which is still read, and a page
+  gives the offset and limit that read on. `Child#transcript` takes `from:`
+  and `to:` and `Child#size` counts the log.
+- A tool schema may declare JSON Schema draft-07 as well as 2020-12. Common
+  schema generators emit draft-07, and an MCP server that declared it on its
+  tools could not be used. The two read the same for what Mistri validates,
+  apart from three shapes that are refused: `items` as an array, a constraint
+  beside a `$ref`, and `prefixItems` in a draft-07 schema.
+- `MCP.tools` leaves out a tool it cannot bridge and keeps the rest of the
+  server. One tool with a schema Mistri could not validate used to raise for
+  the whole list, and a name the server listed twice failed Agent
+  construction. The tool and the reason go to a warning, or to the block
+  when one is given, and a host that would sooner fail raises from the block.
+  `MCP.bridge` still raises for the one definition it is given.
+- Tools can be loaded on demand. A tool marked `deferred: true`, or a whole
+  MCP server bridged with `MCP.tools(client, deferred: true)`, is not shown to
+  the model until it is needed, so a long tool list no longer costs its
+  definitions on every round. An agent that holds a deferred tool adds a
+  `tool_search` tool: the model asks in words, the best matches are loaded,
+  and it calls them from its next step. A load is stored with the session, so
+  a later run offers the same tools. A tool result can load tools itself with
+  `ToolResult.new(content:, loads:)`. On Anthropic the deferred definitions
+  travel marked to stay out of the prompt and a load is a reference to one,
+  so the tool list never changes and the prompt cache holds across a load.
+  On OpenAI, for gpt-5.4 and later except the nano models, a load is an item
+  in the input that makes the tools callable from there on, which keeps the
+  cache as well.
+- A bridged MCP tool gets a name every provider takes. MCP allows dots,
+  slashes and any length in a tool name, and one name the model's API refused
+  failed the whole request. A name of letters, digits, underscores and
+  hyphens, 64 at most and not starting with a digit or a hyphen, is unchanged.
+  Any other has its unsafe characters replaced and ends in a short hash of the
+  whole name, so it depends only on the prefix and the remote name. That
+  includes a name only one provider took. `MCP.local_name` gives the local
+  name and `MCP.bridge` takes `name:` for a host's own.
+- An MCP server's answer is no longer held to 20,001 JSON tokens when it
+  arrives as an SSE stream. The same answer as a plain JSON body or over
+  stdio was never counted, so a server with a long tool list could be listed
+  on two transports and refused on the third. The byte, depth and number
+  limits stay.
+- With `client_secret_basic`, an MCP token request carries the client id only
+  in the Basic header. It was also sent in the form, and some token endpoints
+  refuse that combination.
+- Files are read as UTF-8 wherever the process runs. In a process with no
+  UTF-8 locale (cron, a systemd unit, an image with no `LANG`) the JSONL store
+  could not load a session that held a non-ASCII character, a skill or a
+  definition with one failed to load, and a workspace file with one was read
+  as an invalid string. A skill named after a file with a non-ASCII name was
+  listed under a name it could not be read by.
+- A large tool list no longer ends every OpenAI run. The Responses stream
+  repeats the request's tool definitions in its own events, and the 20,001
+  token ceiling on a stream record refused that once the list was large
+  enough. OpenAI and Anthropic stream records are no longer held to that
+  ceiling: the arguments of a tool the host runs arrive there as encoded
+  strings with their own limits. Gemini records and MCP SSE records keep it,
+  and every record keeps its byte, depth and number limits.
+- A finished worker is read from the end of its log. On a store that answers
+  `size`, the first `Child#status`, `report` or `error` reads its last entry,
+  and the first `Child#transcript(tail:)` reads only the entries it returns.
+  The check before a spawn and `list_agents` used to load the whole log of
+  every worker the session ever had. A worker that has not finished is still
+  read whole, once, and a `Child` that holds its log reads on from it.
+- A session starts at its newest checkpoint. A compaction entry carries the
+  sub-agent links, the delivered reports and the old-style call ids with an
+  approval from before it, and a session reads, replays and audits from its
+  `kept_from` on, however long the log is. A new `Session` on the memory or
+  Active Record store reads back from the end to find it; `size` and
+  `load(..., to:)` are the opt-in for a custom store. `Session#checkpoint`
+  writes a compaction and refuses an unsafe start, and `Session#open_from` is
+  the earliest position replay must keep. A tool call id is unique within the
+  window, a decision repeated for a call older than it raises, and a
+  compaction never cuts past a steer or report that is not folded in. An
+  approval decision records the request it answers and applies only to it.
+- A compaction is no longer declined when the recent turns end on a tool call
+  whose result was never recorded. The keep budget was measured to the start
+  of the session in that case, so nothing was left to summarize. A kept tail
+  that fits the keep budget is now always left whole. After a compaction
+  entry appended by hand it could be summarized again.
+- A wait on a worker reads the worker's log once and then only what was
+  appended since. `read_agent` with `wait` used to load the whole log twice on
+  every poll. A `Child` keeps its own copy of a string `session_id` and
+  `Child#session_id` returns a copy, as a Session does with its id.
 - A session's string id is fixed when the Session is built. `Session.new`
   keeps its own copy of it and `Session#id` returns a copy. Changing the string
   a session was given used to redirect it, and could mix two sessions' entries
@@ -26,6 +117,16 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   out. On Rails 7.2 and later, the first atomic edit of a job held one until
   the job ended. The single-value workspace recipe in the guide now borrows
   its connection the same way.
+- With `Mistri.locks` set, `run`, `resume`, `task`, and `compact` lease the
+  session; a second runner raises `Mistri::SessionBusyError` (with
+  `session_id`) before appending. A session has one lease: a sub-agent's
+  runner holds it for the child, and `Agent.new(lease: false)` takes none.
+  When the lock backend is down a top-level run warns and goes ahead without
+  it; a sub-agent still fails with a report. After a failed release the
+  session stays busy until the lease expires.
+- A failed lease renewal warns and retries; it used to stop renewing.
+- `Locks::RailsCache` raises `Mistri::Error` when a cache write fails; an
+  outage used to read as a held lease.
 - A session reads its log from the store once and then only the entries
   appended since, where each turn used to load the whole log three times. The
   built-in stores support it through `load(session_id, from: 0)` and

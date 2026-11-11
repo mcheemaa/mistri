@@ -16,7 +16,7 @@ module Mistri
     def load(path)
       raise ConfigurationError, "no skills directory at #{path}" unless File.directory?(path)
 
-      skills = Dir.children(path).sort.filter_map do |child|
+      skills = Dir.children(path, encoding: Encoding::UTF_8).sort.filter_map do |child|
         full = File.join(path, child)
         if File.directory?(full) && File.file?(File.join(full, "SKILL.md"))
           read(File.join(full, "SKILL.md"), default_name: child)
@@ -28,7 +28,7 @@ module Mistri
     end
 
     def read(file, default_name:)
-      meta, body = parse(File.read(file))
+      meta, body = parse(File.read(file, encoding: Encoding::UTF_8))
       Skill.new(name: meta.fetch("name", default_name),
                 description: meta.fetch("description", ""), body: body)
     end

@@ -11,6 +11,38 @@ class TestSessionApprovalAudit < Minitest::Test # rubocop:disable Metrics/ClassL
     assert_rejected_history(session, /without a prior assistant tool call/)
   end
 
+  def test_a_decision_applies_only_to_the_request_it_names
+    session = Mistri::Session.new(store: Mistri::Stores::Memory.new)
+    call = Mistri::ToolCall.new(id: "write-1", name: "write", arguments: {})
+    session.append_message(Mistri::Message.assistant(
+                             tool_calls: [call], stop_reason: Mistri::StopReason::TOOL_USE
+                           ))
+    session.append("approval_request", "call" => call.to_h)
+    session.append("approval_decision", "call_id" => call.id, "approved" => true, "request" => 9)
+
+    assert_nil session.open_approvals.first[:decision]
+
+    session.approve(call.id)
+    decision = session.open_approvals.first[:decision]
+
+    assert_equal [true, 1], decision.values_at("approved", "request")
+  end
+
+  def test_a_decision_whose_request_is_not_a_position_is_rejected
+    [1.0, "1", -1, nil].each do |request|
+      session = Mistri::Session.new(store: Mistri::Stores::Memory.new)
+      call = Mistri::ToolCall.new(id: "write-1", name: "write", arguments: {})
+      session.append_message(Mistri::Message.assistant(
+                               tool_calls: [call], stop_reason: Mistri::StopReason::TOOL_USE
+                             ))
+      session.append("approval_request", "call" => call.to_h)
+      session.append("approval_decision", "call_id" => call.id, "approved" => true,
+                                          "request" => request)
+
+      assert_rejected_history(session, /request is not a position/, request.inspect)
+    end
+  end
+
   def test_legacy_request_is_accepted_when_it_exactly_mirrors_the_assistant_call
     session = Mistri::Session.new(store: Mistri::Stores::Memory.new)
     call = Mistri::ToolCall.new(id: "write-1", name: "write", arguments: { "value" => 7 },

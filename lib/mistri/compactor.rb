@@ -136,8 +136,7 @@ module Mistri
         reject(session, failures.join("; "), trigger, tokens_before, usage, &emit) unless reply
 
         summary = reply.text.strip
-        session.append("compaction", "summary" => summary, "model" => reply.model,
-                                     "kept_from" => cut, "tokens_before" => tokens_before)
+        session.checkpoint(summary:, kept_from: cut, model: reply.model, tokens_before:)
         finish(session, reply, summary, usage, tokens_before, &emit)
       end
 
@@ -151,11 +150,19 @@ module Mistri
           index if index && cut_candidate?(message)
         end
         cut = candidates.find { |index| index >= boundary } || candidates.last
-        cut = clamp_to_open_approvals(cut, session)
+        cut = below_open(cut, candidates, session.open_from)
         return nil unless cut
 
         first = replay.find { |(_, index)| index }&.last
         first && cut > first ? cut : nil
+      end
+
+      # A parked approval's turn and a steer or report not yet folded in must
+      # stay in replay, so the cut steps back to the last boundary before them.
+      def below_open(cut, candidates, open_from)
+        return cut unless cut && open_from && open_from < cut
+
+        candidates.reverse_each.find { |index| index <= open_from }
       end
 
       def cut_candidate?(message)
@@ -164,37 +171,15 @@ module Mistri
 
       # Walk back from the tail until the keep budget is spent; the cut then
       # snaps to the next safe turn boundary, so replay keeps at most about
-      # keep_recent tokens of recent turns.
+      # keep_recent tokens of recent turns. A synthesized message has no
+      # position, so the walk goes on to the entry it stands behind.
       def keep_boundary(replay, keep_recent)
         kept = 0
         replay.reverse_each do |(message, index)|
           kept += Compaction.estimate(message)
-          return index || 0 if kept >= keep_recent
+          return index if index && kept >= keep_recent
         end
         nil
-      end
-
-      # Never cut past a parked approval: its tool call must stay in replay,
-      # paired, for resume to answer.
-      def clamp_to_open_approvals(cut, session)
-        return cut unless cut
-
-        open_ids = session.open_approvals.map { |approval| approval[:call].id }
-        return cut if open_ids.empty?
-
-        turn_start = approval_turn_start(session.entries, open_ids)
-        turn_start && turn_start < cut ? turn_start : cut
-      end
-
-      def approval_turn_start(entries, open_ids)
-        request = entries.index do |entry|
-          entry["type"] == "approval_request" && open_ids.include?(entry.dig("call", "id"))
-        end
-        return nil unless request
-
-        entries[0...request].rindex do |entry|
-          entry["type"] == "message" && entry.dig("message", "role") == "user"
-        end
       end
 
       def prompt_for(messages, previous, settings)

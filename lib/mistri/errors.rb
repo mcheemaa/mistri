@@ -105,6 +105,16 @@ module Mistri
   # A run cancelled by the host, raised only when the caller opts into raising.
   class AbortError < Error; end
 
+  # Another runner holds the session's lease. Nothing was appended.
+  class SessionBusyError < Error
+    attr_reader :session_id
+
+    def initialize(message, session_id:)
+      @session_id = session_id
+      super(message)
+    end
+  end
+
   # A cost-budgeted request returned without trustworthy accounting. Usage and
   # provider_message preserve the uncertain attempt for host reconciliation.
   class BudgetError < Error

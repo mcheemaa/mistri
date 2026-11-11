@@ -9,6 +9,7 @@ module Mistri
   #   child.status                # queued, running, interrupted, or terminal
   #   child.report                # the terminal entry's report, once finished
   #   child.transcript(tail: 20)  # recent entries, image bytes stripped
+  #   child.transcript(from: 40, to: 60)  # entries 40 to 59
   #   child.say("Also check their pricing page")
   #
   # Status is a walk over the child's own entries: a terminal entry wins; a
@@ -24,7 +25,7 @@ module Mistri
     # Interrupted work is nonterminal but not actively live.
     LIVE = %i[running queued].freeze
 
-    attr_reader :name, :session_id
+    attr_reader :name
 
     def self.lease_key(session_id) = "child:#{session_id}"
 
@@ -32,13 +33,20 @@ module Mistri
 
     def initialize(name:, session_id:, store:, parent_session_id: nil)
       @name = name
-      @session_id = session_id
       @store = store
+      @log = Session::Log.new(store, session_id)
+      @session_id = @log.id
       @parent_session_id = parent_session_id
     end
 
+    # A string id is copied, so a caller cannot change which child this window reads.
+    def session_id = @session_id.is_a?(String) ? @session_id.dup : @session_id
+
     def status
-      log = session.entries
+      terminal = terminal_at_end
+      return terminal["status"].to_sym if terminal
+
+      log = read_log
       terminal = log.reverse_each.find { |entry| entry["type"] == TERMINAL }
       return terminal["status"].to_sym if terminal
       if log.any? { |entry| entry["type"] == DISPATCHED } &&
@@ -58,21 +66,30 @@ module Mistri
     end
 
     def report
-      terminal_entry&.fetch("report", nil)
+      Session::Log.owned(terminal_entry&.fetch("report", nil))
     end
 
     # The terminal entry's error string, once failed.
     def error
-      terminal_entry&.fetch("error", nil)
+      Session::Log.owned(terminal_entry&.fetch("error", nil))
     end
 
     # Recent entries, oldest first, with inline image bytes replaced by a
     # marker: transcripts are for reading and re-sending, not for hauling
-    # screenshots back into a context window.
-    def transcript(tail: 20)
-      entries = session.entries
-      entries = entries.last(tail) if tail
-      entries.map { |entry| self.class.strip_images(entry) }
+    # screenshots back into a context window. from: reads another part of
+    # the log instead: the entries from that position up to, and not
+    # including, to:, counted the way the store counts them.
+    def transcript(tail: 20, from: nil, to: nil)
+      entries = if !from.nil? || !to.nil? then entries_between(from, to)
+                elsif tail then last_entries(tail)
+                else read_log
+                end
+      entries.map { |entry| Session::Log.owned(self.class.strip_images(entry)) }
+    end
+
+    # How many entries the child's log holds.
+    def size
+      from_the_end? ? @store.size(@session_id) : read_log.length
     end
 
     # Queue a message the child folds at its next turn boundary. Delivery is
@@ -130,7 +147,7 @@ module Mistri
       return :contended unless lease
 
       begin
-        log = session.entries
+        log = read_log
         terminal = log.reverse_each.find { |entry| entry["type"] == TERMINAL }
         dispatched = log.any? { |entry| entry["type"] == DISPATCHED }
         if terminal
@@ -154,7 +171,7 @@ module Mistri
     # grant; legacy children fall back to the parent link because their
     # dispatched entry did not retain a spec.
     def deliver_cancellation
-      dispatched = session.entries.find { |entry| entry["type"] == DISPATCHED }
+      dispatched = read_log.find { |entry| entry["type"] == DISPATCHED }
       return unless dispatched
 
       spec = dispatched["spec"]
@@ -179,8 +196,47 @@ module Mistri
       @session ||= Session.new(store: @store, id: @session_id)
     end
 
+    def read_log = @log.entries
+
     def terminal_entry
-      session.entries.reverse_each.find { |entry| entry["type"] == TERMINAL }
+      terminal_at_end || read_log.reverse_each.find { |entry| entry["type"] == TERMINAL }
     end
+
+    # A finished child's log nearly always ends on its terminal entry, so
+    # that one entry answers for it without the rest.
+    def terminal_at_end
+      return nil unless from_the_end?
+
+      last = last_entries(1).first
+      last if last && last["type"] == TERMINAL
+    end
+
+    def last_entries(count)
+      return read_log.last(count) unless from_the_end?
+
+      size = @store.size(@session_id)
+      # The count is taken the way Array#last takes it.
+      first = (0...size).last(count).first || size
+      @store.load(@session_id, from: first, to: size)
+    end
+
+    # Positions mean the same on every store and every path, so they are
+    # checked before either is chosen. An end at or before the start is an
+    # empty range.
+    def entries_between(from, to)
+      unless position?(from) && (to.nil? || position?(to))
+        raise ArgumentError, "from: and to: are positions in the log, whole numbers from 0"
+      end
+      return [] if to && to <= from
+      return read_log[from...to].to_a unless from_the_end?
+
+      @store.load(@session_id, from:, to:)
+    end
+
+    def position?(value) = value.is_a?(Integer) && !value.negative?
+
+    # A log that is already held is read on from where it stopped, which
+    # is cheaper than asking the store for its end again.
+    def from_the_end? = @store.respond_to?(:size) && !@log.held?
   end
 end

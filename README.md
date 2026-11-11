@@ -255,8 +255,9 @@ tools = Mistri::MCP.tools(client, prefix: "linear", gates: { "create_issue" => t
 ```
 
 Remote URLs default to public HTTPS with validated, pinned DNS answers, and
-an unconfirmed tool call is never replayed automatically. See
-[MCP](docs/mcp.md).
+an unconfirmed tool call is never replayed automatically. A server with a long
+tool list can be bridged with `deferred: true`, and the model then finds and
+loads the tools it needs. See [MCP](docs/mcp.md).
 
 ## Skills, definitions, and workspaces
 

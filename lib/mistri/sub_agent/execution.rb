@@ -60,7 +60,7 @@ module Mistri
                           signal:, emit:, agent_options:)
         origin = "#{label}##{child.id[0, 8]}"
         agent = Agent.new(provider: provider, session: child, system: system,
-                          tools: tools, log_label: origin, **agent_options)
+                          tools: tools, log_label: origin, lease: false, **agent_options)
         tagged = ->(event) { forward(event, origin, emit) }
         return agent.task(task, schema: schema, signal: signal, &tagged) if schema
 

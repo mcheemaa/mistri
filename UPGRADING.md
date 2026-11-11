@@ -51,6 +51,27 @@ each variable.
   host keeps in its environment, such as `BUNDLE_PATH`, through `env:`.
 - `env: ENV.to_h` passes the whole environment, as before.
 
+### A bridged MCP tool may get another name
+
+`MCP.tools` and `MCP.bridge` now give a tool a name every provider takes:
+letters, digits, underscores and hyphens, 64 characters at most, not starting
+with a digit or a hyphen. The whole name decides: the prefix, two underscores
+and the remote name, or the remote name alone. One inside that set is
+unchanged.
+
+- Any other changes, even where your one provider took it: a dot or a colon
+  on Gemini, a leading digit or more than 64 characters on Anthropic. The new
+  name ends in a short hash of the whole name.
+- The remote name alone does not tell you. `9lives` under the prefix
+  `tracker` stays `tracker__9lives`, and `read` under a prefix with a dot, or
+  a long one, changes.
+- `Mistri::MCP.local_name(remote, prefix)` gives the new name, for a host that
+  stored the old one.
+- To keep a name of your own, bridge that tool with
+  `MCP.bridge(client, definition, name: "yours")`. That name is used as
+  given, so it has to be one your provider takes.
+- `allow:`, `deny:` and `gates:` still go by the remote name.
+
 ### Blank input raises
 
 `Agent#run` and `Session#steer` now raise `ArgumentError` for text that is
@@ -84,25 +105,60 @@ unchanged: without `settled?` it is read whole on every read, as before.
   describes.
 - A subclass of a built-in store, or a wrapper that forwards every method,
   already answers `settled?`. Its own `load` must take `from:`.
-- Inside a transaction that Active Record opened, a session reads the whole
-  log and holds nothing, so what it answers there is unchanged. A transaction
-  begun with raw SQL is invisible to the store; do not read a session inside
-  one.
+- Inside a transaction that Active Record opened, a session reads fresh and
+  holds nothing, so what it answers there is unchanged. A transaction begun
+  with raw SQL is invisible to the store; do not read a session inside one.
 - The Active Record store raises `Mistri::ConfigurationError` when the rows it
   reads are not at consecutive positions. Rows that are only ever appended sit
   at positions 1, 2, 3. Delete a session's rows together, never some of them.
 - The Active Record store needs READ COMMITTED or a stronger isolation level
   on the connection that reads. MySQL and PostgreSQL have that by default.
-- A `Session` object holds every entry it has read in memory, image data
+- A `Session` object holds the entries of its window in memory, image data
   included, for as long as the object lives. After a session's rows are
-  deleted, build a new `Session` object.
+  deleted, build a new `Session` object. A `Child` holds every entry of its
+  worker's log the same way.
+
+### A session starts at its newest checkpoint
+
+A compaction now carries what a turn needs from before it, and a session
+reads, replays and audits from the newest one on, however long its log is. A
+compaction written before this release carries nothing, so such a session is
+read whole until its next compaction.
+
+- A tool call id must be unique within the session's window, the entries from
+  the newest checkpoint's `kept_from` on. It used to be unique over the whole
+  session.
+- `approve` and `deny` repeated for a call that was settled before the newest
+  checkpoint raise `Mistri::ConfigurationError` ("no open approval"). They
+  used to return nil.
+- An entry older than the window is no longer replayed or audited as a
+  message. A store may still decode it while the window is being found.
+- To let a session find its window in a custom store without loading the
+  rest, add `size(id)` and take `to:` in `load`, as
+  [Sessions and control](docs/sessions.md#starting-at-the-newest-checkpoint)
+  describes. Without them the store is read whole, as before.
+- A subclass of the memory or Active Record store, or a wrapper that forwards
+  every method, already answers `size`. Its own `load` must take `to:` as
+  well as `from:`.
+- An `approval_decision` entry now records `request`, the position of the
+  approval request it answers, and applies only to that request. Decisions
+  written earlier have no `request` and keep working as before.
+- Code that appends a compaction entry itself should call
+  `Session#checkpoint(summary:, kept_from:)`, so the entry carries what is
+  needed from before it. The start must be a user message, an assistant turn
+  that calls tools, or the end of the log. It raises
+  `Mistri::ConfigurationError` for any other start, and for one that would
+  move back or pass an open approval or a steer or report not folded in yet.
+  A compaction appended with `Session#append` still replays correctly, and
+  the session is read whole while it is the newest one.
 
 ### A session's string id is fixed
 
 `Session.new` keeps its own copy of a string id, and `Session#id` returns a
 copy. Changing either string in place no longer changes which session is read
 and written. Build a new `Session` to work with another id. An id that is not
-a string is kept as the object it was given.
+a string is kept as the object it was given. A `Child` treats its `session_id`
+the same way.
 
 ### The generated session table has one index
 
@@ -134,6 +190,22 @@ page.class.connection_pool.with_connection(&:transaction_open?)
 ```
 
 The Active Record workspace and session store need no change in your code.
+
+### One runner per session is checked
+
+Only when `Mistri.locks` is set:
+
+- A second concurrent `run`, `resume`, `task`, or `compact` raises
+  `Mistri::SessionBusyError`. Retry, or report the session busy.
+- So does a call back into a running session. From an event subscriber the
+  error reaches the host. From a tool it comes back to the model as that
+  tool's error and the run goes on.
+- After a crash, runs can raise it for up to three minutes. So can runs after
+  a failed release.
+- When the lock backend is down, a top-level run warns and goes ahead without
+  its lease. A sub-agent still fails with a report, as before.
+- A session has one lease. Pass `lease: false` to `Agent.new` when your own
+  code already holds a lock for the session.
 
 ### OpenAI tools are no longer strict
 

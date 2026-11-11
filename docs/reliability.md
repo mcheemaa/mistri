@@ -46,7 +46,9 @@ subscriber bugs into model output.
 
 Only one Agent may actively call `run` or `resume` for a Session at a time. The
 store can accept independent approval, steer, and worker-report appends, but
-active runners are a host scheduling concern.
+active runners are a host scheduling concern. With a lock adapter configured, a
+second runner raises `Mistri::SessionBusyError` before it appends; see
+[Sessions](sessions.md#concurrency-and-crashes).
 
 Even with one runner, this gap remains:
 
@@ -343,7 +345,15 @@ before their body is read. Error responses retain at most a 500-byte valid UTF-8
 preview. Requests use identity encoding so compressed expansion cannot evade
 the limit.
 
-Completed SSE JSON records receive a bounded structural scan before parsing.
+Completed SSE JSON records are scanned before parsing: 64 levels and 64 KiB
+per numeric token, for every provider and for an MCP server. A Gemini record
+is also held to 20,001 JSON tokens, because a tool call's arguments arrive as
+an object inside it. No other record is counted.
+OpenAI and Anthropic records are not counted: the arguments of a tool the host
+runs arrive there as an encoded string with its own limits, and the OpenAI
+stream repeats the request's tool definitions in its own events, which a large
+tool list takes past any fixed count.
+
 Fragmented Anthropic and OpenAI tool arguments also carry an aggregate 8 MiB
 limit across deltas; their partial preview refreshes on a bounded schedule while
 raw delta events continue.
@@ -358,8 +368,8 @@ agent = Mistri.agent(
 )
 ```
 
-The byte boundary is configurable. Fixed structural ceilings protect the JSON
-allocation shape and are not raised by that option.
+The byte boundary is configurable. The depth and number ceilings, and the token
+ceiling where it applies, are fixed and are not raised by that option.
 
 ## Provider input and options
 
@@ -528,6 +538,11 @@ $ MISTRI_INTEGRATION_MODELS=claude-opus-5-5 bundle exec rake integration
 
 Keys load from the gitignored `.env.development.local`. A missing key skips that
 provider; inspect the test output before claiming a full three-provider run.
+
+A run that called a vendor ends with a report of those calls: for each model
+the calls, the seconds waited, the tokens and their cost at catalog prices,
+then the slowest tests. The cost is an estimate from the usage each call
+reported, not a bill.
 
 ## Related guides
 

@@ -267,9 +267,26 @@ child.status                   # :queued, :running, :interrupted, :done, :budget
 child.report                   # terminal report when done or stopped by its budget
 child.error                    # terminal error when failed
 child.transcript(tail: 20)     # presentation-oriented recent entries
+child.transcript(from: 40, to: 60) # entries 40 to 59
+child.size                     # how many entries the log holds
 child.say("Check pricing too") # queues a steer
 child.stop                     # durable if inactive, cooperative if running
 ```
+
+On a store that answers `size`, a finished child is not loaded to be asked
+about. The first `status`, `report` or `error` reads the last entry of its
+log, and the first `transcript(tail:)` reads only the entries it returns. A
+child that has not finished is read whole, and so is one that was sent
+something after it ended. A `Child` that has read its log keeps it and reads
+on from there, so a wait loads the log once and then only what is new.
+
+`read_agent` shows the model a page of a worker's log, one line an entry, each
+under its number. It shows the twenty most recent entries by default. `offset`
+reads from another entry and `limit` sets how many, two hundred at most, and
+each page gives the offset and limit that read on in either direction, so the
+model can walk a long log back to its start. On a store that answers `size`
+the entries of a page are read on their own. The status in its first line
+costs what `status` costs, as above.
 
 `read_agent` with `wait: true` waits for a terminal, including across an
 interrupted worker's later queue retry or cancellation. Abort and timeout still
@@ -348,6 +365,10 @@ Mistri.locks = Mistri::Locks::RailsCache.new(cache: Rails.cache)
 The cache must implement atomic `unless_exist` writes and be shared by every
 worker process. A local memory cache is not a cross-process adapter.
 
+A configured adapter also guards every top-level `run`, `resume`, `task`, and
+`compact` with the same lease a child's runner holds; see
+[Concurrency and crashes](sessions.md#concurrency-and-crashes).
+
 A custom adapter implements:
 
 ```text
@@ -359,6 +380,8 @@ set_flag(key, ttl:)
 flag?(key) -> boolean
 clear_flag(key)
 ```
+
+`acquire` returns false only when the key is held; a backend failure raises.
 
 The current lease is a best-effort duplicate-suppression and liveness signal,
 not an ownership token or exactly-once fence. It stores no holder identity. A

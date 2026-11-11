@@ -68,13 +68,20 @@ class TestControlSurfacesIntegration < Minitest::Test
     session = Mistri::Session.new(store:)
     calls = [Mistri::ToolCall.new(id: "call_1", name: "book_venue",
                                   arguments: { "city" => "Lisbon" })]
-    session.append_message(Mistri::Message.user("Book us a venue, then confirm."))
+    session.append_message(Mistri::Message.user("Book us a venue in Lisbon, then confirm."))
     session.append_message(Mistri::Message.assistant(tool_calls: calls))
 
+    made = false
     booked = Mistri::Tool.define("book_venue", "Books the venue.",
-                                 schema: -> { string :city, "City" }) { "Booked #{venue}." }
+                                 schema: -> { string :city, "City" }) do
+      made = true
+      "Booked #{venue}."
+    end
+    # A model may look again after it books, and must be told what it did.
     lookup = Mistri::Tool.define("venue_booking", "Returns the venue booked for a city, if any.",
-                                 schema: -> { string :city, "City" }) { "No venue is booked." }
+                                 schema: -> { string :city, "City" }) do
+      made ? "Booked #{venue}." : "No venue is booked."
+    end
     agent = Mistri::Agent.new(provider: Mistri.provider(model), tools: [booked, lookup],
                               session:)
 
@@ -82,6 +89,7 @@ class TestControlSurfacesIntegration < Minitest::Test
                        "the venue name it returns back to me.")
 
     assert_predicate result, :completed?
+    assert made, "the healed session never ran book_venue again: #{result.text}"
     assert Integration.carried?(result.text, venue),
            "the healed session never recovered: #{result.text}"
   end

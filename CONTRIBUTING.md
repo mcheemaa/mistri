@@ -19,7 +19,8 @@ $ bundle exec rake integration             # critical end-to-end scenarios, per 
 ```
 
 Missing keys skip their provider. Read the output before treating a live run as
-three-provider coverage.
+three-provider coverage. Each live run ends with a report per model: calls,
+seconds, tokens and their cost at catalog prices, then the slowest tests.
 
 ## The rules that keep the gem what it is
 

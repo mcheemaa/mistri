@@ -162,8 +162,11 @@ class TestChildStop < Minitest::Test
     )
     session = Mistri::Session.new(store: store)
 
-    result = Mistri::Agent.new(provider: parent_provider, tools: [worker.tool],
-                               session: session).run("go")
+    result = nil
+    assert_output(nil, /lock backend failed/) do
+      result = Mistri::Agent.new(provider: parent_provider, tools: [worker.tool],
+                                 session: session).run("go")
+    end
 
     assert_predicate result, :completed?
     assert_empty child_provider.requests
@@ -196,8 +199,11 @@ class TestChildStop < Minitest::Test
     )
     session = Mistri::Session.new(store: store)
 
-    result = Mistri::Agent.new(provider: parent_provider, tools: [worker.tool],
-                               session: session).run("go")
+    result = nil
+    assert_output(nil, /releasing the lease/) do
+      result = Mistri::Agent.new(provider: parent_provider, tools: [worker.tool],
+                                 session: session).run("go")
+    end
 
     assert_predicate result, :completed?
     assert_equal 1, child_provider.requests.length

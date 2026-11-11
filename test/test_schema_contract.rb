@@ -15,14 +15,14 @@ class TestSchemaContract < Minitest::Test
     assert_match(/prefixItems/, error.message)
   end
 
-  def test_a_declared_schema_dialect_must_be_json_schema_twenty_twenty_twelve
-    schema = { "$schema" => "http://json-schema.org/draft-07/schema#", type: "object" }
+  def test_a_declared_schema_dialect_must_be_one_the_validator_reads
+    schema = { "$schema" => "http://json-schema.org/draft-04/schema#", type: "object" }
 
     error = assert_raises(Mistri::ConfigurationError) do
       Mistri::Schema.validate_definition!(schema)
     end
 
-    assert_equal "$.$schema must declare JSON Schema 2020-12", error.message
+    assert_equal "$.$schema must declare JSON Schema 2020-12 or draft-07", error.message
   end
 
   def test_schema_byte_limit_covers_json_escaping_and_large_integers

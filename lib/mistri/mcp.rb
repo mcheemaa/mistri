@@ -1,5 +1,6 @@
 # frozen_string_literal: true
 
+require "digest"
 require "json"
 
 module Mistri
@@ -20,6 +21,10 @@ module Mistri
     EMPTY_INPUT_SCHEMA = {
       "type" => "object", "properties" => {}.freeze, "additionalProperties" => false
     }.freeze
+    # What every catalogued provider takes for a tool name: letters, digits,
+    # underscores and hyphens, 64 at most, not starting with a digit or hyphen.
+    NAME_LIMIT = 64
+    SAFE_NAME = /\A[A-Za-z_][A-Za-z0-9_-]{0,63}\z/
 
     # A protocol-level failure: a JSON-RPC error, a missing response, an
     # unsupported negotiation.
@@ -47,21 +52,67 @@ module Mistri
     # The server's tools as Mistri tools. allow/deny filter by remote name,
     # prefix namespaces local names ("linear__create_issue") against
     # collisions, and gates marks tools needing human approval
-    # (gates: { "create_issue" => true }, or needs_approval: for all).
+    # (gates: { "create_issue" => true }, or needs_approval: for all). A tool
+    # that cannot be bridged is left out: the block is given its definition
+    # and the error, and without a block it is named in a warning. deferred
+    # keeps the server's tools out of the model's sight until a search loads
+    # them.
     def tools(client, allow: nil, deny: [], prefix: nil, needs_approval: false, gates: {},
-              complete_argument_validator: nil)
-      listed = client.tools
-      listed = listed.select { |tool| allow.include?(tool["name"]) } if allow
-      listed = listed.reject { |tool| deny.include?(tool["name"]) }
-      listed.map do |tool|
-        bridge(client, tool, prefix: prefix, gate: gates.fetch(tool["name"], needs_approval),
-                             complete_argument_validator: complete_argument_validator)
+              complete_argument_validator: nil, deferred: false)
+      taken = {}
+      client.tools.filter_map do |tool|
+        remote = tool["name"] if tool.is_a?(Hash)
+        next if deny.include?(remote) || (allow && !allow.include?(remote))
+
+        bridged = bridge(client, tool, prefix: prefix, gate: gates.fetch(remote, needs_approval),
+                                       complete_argument_validator: complete_argument_validator,
+                                       deferred: deferred)
+        claim(taken, bridged.name, remote)
+        bridged
+      rescue ConfigurationError => e
+        block_given? ? yield(tool, e) : warn("mistri: #{e.message}; the tool was left out")
+        nil
       end
     end
 
-    def bridge(client, spec, prefix: nil, gate: false, complete_argument_validator: nil)
-      remote = spec.fetch("name")
-      local = prefix ? "#{prefix}__#{remote}" : remote
+    def claim(taken, local, remote)
+      holder = taken[local]
+      if holder
+        raise ConfigurationError,
+              "MCP tool #{label(remote)}: the name #{local.inspect} is taken by #{label(holder)}"
+      end
+
+      taken[local] = remote
+    end
+    private_class_method :claim
+
+    # Text every later step can take: a name is matched and compared, and
+    # both travel to a provider as JSON.
+    def utf8?(text)
+      text.ascii_only? || (text.encoding == Encoding::UTF_8 && text.valid_encoding?)
+    end
+    private_class_method :utf8?
+
+    # A remote name is the server's to choose, so a message carries its start.
+    def label(remote) = remote.inspect[0, 120]
+    private_class_method :label
+
+    # The model calls the tool by name, or by a safe name made from prefix and
+    # the remote name. The server is always called with the remote name.
+    def bridge(client, spec, prefix: nil, name: nil, gate: false,
+               complete_argument_validator: nil, deferred: false)
+      raise ConfigurationError, "the definition is not an object" unless spec.is_a?(Hash)
+
+      remote = spec["name"]
+      unless remote.is_a?(String) && !remote.empty?
+        raise ConfigurationError, "the definition has no name"
+      end
+      raise ConfigurationError, "the name is not valid UTF-8" unless utf8?(remote)
+
+      description = spec["description"].to_s
+      raise ConfigurationError, "the description is not valid UTF-8" unless utf8?(description)
+
+      local = name || local_name(remote, prefix)
       if spec.key?("inputSchema") && spec["inputSchema"].nil?
         raise ConfigurationError, "inputSchema must be an object, not null"
       end
@@ -70,14 +121,26 @@ module Mistri
       input_schema = Schema.validate_mcp!(
         raw_schema, complete: !complete_argument_validator.nil?
       )
-      Tool.define(local, spec["description"].to_s,
+      Tool.define(local, description,
                   input_schema: input_schema,
-                  needs_approval: gate,
+                  needs_approval: gate, deferred: deferred,
                   complete_argument_validator: complete_argument_validator) do |args|
         answer(client.call_tool(remote, args || {}))
       end
     rescue ConfigurationError => e
-      raise ConfigurationError, "MCP tool #{remote.inspect}: #{e.message}"
+      raise ConfigurationError, "MCP tool #{label(remote)}: #{e.message}"
+    end
+
+    # The local name of a remote tool. One that every provider takes stays
+    # as it is. Any other has its unsafe characters replaced and ends in a
+    # hash of the whole name, so it depends on nothing but prefix and remote.
+    def local_name(remote, prefix = nil)
+      whole = prefix ? "#{prefix}__#{remote}" : remote.to_s
+      return whole if whole.match?(SAFE_NAME)
+
+      safe = whole.gsub(/[^A-Za-z0-9_-]/, "_")
+      safe = "_#{safe}" unless safe.match?(/\A[A-Za-z_]/)
+      "#{safe[0, NAME_LIMIT - 9]}_#{Digest::SHA256.hexdigest(whole)[0, 8]}"
     end
 
     # An MCP result becomes model-readable content: text joins, images ride
@@ -127,4 +190,4 @@ require_relative "mcp/wires"
 require_relative "mcp/client"
 require_relative "mcp/oauth"
 
-Mistri::MCP.private_constant :Egress, :WireError, :EMPTY_INPUT_SCHEMA
+Mistri::MCP.private_constant :Egress, :WireError, :EMPTY_INPUT_SCHEMA, :NAME_LIMIT, :SAFE_NAME

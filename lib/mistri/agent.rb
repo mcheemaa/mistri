@@ -37,6 +37,8 @@ module Mistri
     # skills: an array of Skill (or a directory path for Skills.load). Their
     # descriptions join the system prompt and a read_skill tool serves full
     # bodies on demand.
+    # A tool marked deferred is not shown to the model until a tool result
+    # loads it; with any present, a tool_search tool finds and loads them.
     # before_tool and after_tool are the programmatic gates around every
     # execution: before_tool(call, context) blocks a call by returning the
     # reason as a String, which answers the model in band (and it runs again
@@ -48,16 +50,12 @@ module Mistri
     def initialize(provider:, session: nil, system: nil, tools: [], budget: nil,
                    max_concurrency: 4, transform_context: nil, compaction: Compaction.new,
                    retries: RetryPolicy.new, skills: [], before_tool: nil, after_tool: nil,
-                   context: nil, log_label: nil)
+                   context: nil, log_label: nil, lease: true)
       @provider = provider
       @session = session || Session.new(store: Stores::Memory.new)
       skills = skills.is_a?(String) ? Skills.load(skills) : Array(skills)
       @system = Skills.amend(system, skills)
-      @tools = skills.empty? ? tools : tools + [Skills.reader(skills)]
-      @tools_by_name = @tools.to_h { |tool| [tool.name, tool] }
-      raise ConfigurationError, "duplicate tool names" if @tools_by_name.length != @tools.length
-
-      @tool_specs, @external_tool_validators = compile_tool_contracts
+      install_tools(skills.empty? ? tools : tools + [Skills.reader(skills)])
 
       @budget = budget || Budget.new
       @budget.validate_provider!(@provider)
@@ -70,7 +68,7 @@ module Mistri
       @after_tool = after_tool
       @context = context
       @log_label = log_label
-      @log_depth = 0
+      @lease = lease
     end
 
     attr_reader :session
@@ -84,20 +82,10 @@ module Mistri
     def run(input, images: [], signal: nil, output_schema: nil, &emit)
       # The frame covers the whole public method, so an audit rejection or
       # a store failure gets a crash line too, not just loop failures.
-      logged(emit, verb: "run", input: input) do |subscriber|
-        if refresh_tool_control.any?
-          raise ConfigurationError,
-                "session is awaiting approvals; call resume"
+      exclusive do
+        logged(emit, verb: "run", input: input) do |subscriber|
+          exchange(input, images:, signal:, output_schema:, &subscriber)
         end
-        input = nil if input.to_s.match?(/\A[[:space:]]*\z/)
-        if input.nil? && Array(images).empty?
-          raise ArgumentError,
-                "run needs input text or images"
-        end
-
-        fold_inbox # anything queued while this session sat idle arrived first; keep that order
-        @session.append_message(Message.user_with_images(input, images))
-        loop_turns(signal, output_schema, &subscriber)
       end
     end
 
@@ -107,26 +95,28 @@ module Mistri
     # carries on as if it never stopped, unless a settled call's tool ends
     # the turn, in which case its execution was the run's last word.
     def resume(signal: nil, &emit)
-      logged(emit, verb: "resume") do |subscriber|
-        open = refresh_tool_control
-        pending = open.select { |approval| approval[:decision].nil? }
-        if pending.any?
-          next Result.new(message: nil, status: :awaiting_approval,
-                          pending: pending.map { |approval| approval[:call] },
-                          usage: Usage.zero)
-        end
+      exclusive do
+        logged(emit, verb: "resume") do |subscriber|
+          open = refresh_tool_control
+          pending = open.select { |approval| approval[:decision].nil? }
+          if pending.any?
+            next Result.new(message: nil, status: :awaiting_approval,
+                            pending: pending.map { |approval| approval[:call] },
+                            usage: Usage.zero)
+          end
 
-        executed = settle(open, signal, &subscriber)
-        if signal&.aborted?
-          last = @session.messages.reverse_each.find(&:assistant?)
-          next finished(last, Usage.zero, signal)
-        end
-        if executed.any? { |call| ends_turn?(call) }
-          last = @session.messages.reverse_each.find(&:assistant?)
-          next finished(last, Usage.zero, signal, handed_off: true)
-        end
+          executed = settle(open, signal, &subscriber)
+          if signal&.aborted?
+            last = @session.messages.reverse_each.find(&:assistant?)
+            next finished(last, Usage.zero, signal)
+          end
+          if executed.any? { |call| ends_turn?(call) }
+            last = @session.messages.reverse_each.find(&:assistant?)
+            next finished(last, Usage.zero, signal, handed_off: true)
+          end
 
-        loop_turns(signal, nil, &subscriber)
+          loop_turns(signal, nil, &subscriber)
+        end
       end
     end
 
@@ -142,12 +132,12 @@ module Mistri
     # belongs to whoever answers, and re-prompting for JSON would steal it
     # back. Ask again once the answer arrives.
     def task(input, schema:, images: [], signal: nil, fixes: 1, &emit)
-      # One log frame for the whole task, fix passes included: the inner
-      # runs see the frame open and only tee, so the single done line
-      # reports the validated outcome, not a rejected intermediate answer.
-      logged(emit, verb: "task", input: input) do |subscriber|
-        plan = Schema.task_plan(schema)
-        validated_task(input, plan, images, signal, fixes, &subscriber)
+      # One log frame, so the done line reports the validated outcome.
+      exclusive do
+        logged(emit, verb: "task", input: input) do |subscriber|
+          plan = Schema.task_plan(schema)
+          validated_task(input, plan, images, signal, fixes, &subscriber)
+        end
       end
     end
 
@@ -164,16 +154,49 @@ module Mistri
     # Compact now (a UI button, a pre-flight trim before a big task). Returns
     # the Compactor result, or nil when there is nothing worth compacting.
     def compact(&)
-      Compactor.call(session: @session, provider: @provider,
-                     settings: @compaction || Compaction.new, budget: @budget, &)
+      exclusive do
+        Compactor.call(session: @session, provider: @provider,
+                       settings: @compaction || Compaction.new, budget: @budget, &)
+      end
     end
 
     private
 
+    def install_tools(tools)
+      deferred = tools.select { |tool| tool.respond_to?(:deferred?) && tool.deferred? }
+      @tools = deferred.empty? ? tools : tools + [ToolSearch.tool(deferred)]
+      @tools_by_name = @tools.to_h { |tool| [tool.name, tool] }
+      raise ConfigurationError, "duplicate tool names" if @tools_by_name.length != @tools.length
+
+      specs, @external_tool_validators = compile_tool_contracts
+      names = deferred.to_h { |tool| [tool.name, true] }
+      later, @eager_specs = specs.partition { |spec| names.key?(spec[:name]) }.map(&:freeze)
+      @deferred_list = later
+      @deferred_specs = later.to_h { |spec| [spec[:name], spec] }.freeze
+      @defers_tools = @provider.respond_to?(:defers_tools?) && @provider.defers_tools?
+    end
+
+    # run's body outside the lease; task's fix passes share task's lease.
+    def exchange(input, signal:, output_schema:, images: [], &emit)
+      if refresh_tool_control.any?
+        raise ConfigurationError,
+              "session is awaiting approvals; call resume"
+      end
+      input = nil if input.to_s.match?(/\A[[:space:]]*\z/)
+      if input.nil? && Array(images).empty?
+        raise ArgumentError,
+              "run needs input text or images"
+      end
+
+      fold_inbox # anything queued while this session sat idle arrived first; keep that order
+      @session.append_message(Message.user_with_images(input, images))
+      loop_turns(signal, output_schema, &emit)
+    end
+
     # The body of task, extracted so its early returns close the log frame
     # instead of skipping it.
     def validated_task(input, plan, images, signal, fixes, &emit)
-      result = run(
+      result = exchange(
         TaskOutput.prompt(input, plan), images:, signal:, output_schema: plan, &emit
       )
       spent = result.usage
@@ -187,51 +210,64 @@ module Mistri
         return result.with(output: value) if errors.empty?
         raise SchemaError, "task output failed validation: #{errors.join("; ")}" if remaining.zero?
 
-        result = run(TaskOutput.fix_prompt(errors), signal:, output_schema: plan, &emit)
+        result = exchange(TaskOutput.fix_prompt(errors), signal:, output_schema: plan, &emit)
         spent += result.usage
       end
     end
 
-    # When a host sets Mistri.logger, every public run tees its events into
-    # a fresh logging sink for this session alongside the caller's block,
-    # and the framing lines carry what the stream cannot: the input, the
-    # model, and the final Result. Nothing wraps when no logger is set, a
-    # nested public call (task's inner runs) reuses the open frame, and a
-    # caller's subscriber failures propagate exactly as before because the
-    # sink never raises.
-    def logged(emit, verb:, input: nil)
-      sink = log_sink
-      return yield(emit) unless sink
-
-      @log_depth += 1
-      begin
-        sink.run_started(verb: verb, input: input, model: @provider.model,
-                         tool_count: @tools.length)
-        subscriber = if emit
-                       lambda { |event|
-                         sink.call(event)
-                         emit.call(event)
-                       }
-                     else
-                       sink.to_proc
-                     end
-        begin
-          result = yield(subscriber)
-        rescue StandardError => e
-          sink.run_crashed(EventDelivery.original(e))
-          raise
-        end
-        sink.run_finished(result)
-        result
-      ensure
-        @log_depth -= 1
-      end
+    # Concurrent runners interleave appends; without an adapter the host serializes them.
+    def exclusive
+      lease = session_lease
+      yield
+    ensure
+      release(lease) if lease
     end
 
-    def log_sink
-      return nil if @log_depth.positive?
+    # One lease per session: a child's runner holds this key for the agent it builds.
+    def session_lease
+      return unless @lease && Mistri.locks
 
-      Sinks::Logger.attach(@session.id, label: @log_label)
+      lease = Locks.hold(Child.lease_key(@session.id))
+    rescue StandardError => e
+      warn "mistri: the lock backend failed (#{e.class}: #{e.message}); " \
+           "session #{@session.id} runs without its lease"
+    else
+      lease || raise(SessionBusyError.new("session #{@session.id} has an active runner",
+                                          session_id: @session.id))
+    end
+
+    # Never mask the run's outcome; an unreleased lease expires on its own.
+    def release(lease)
+      lease.release
+    rescue StandardError => e
+      warn "mistri: releasing the lease for session #{@session.id} failed " \
+           "(#{e.class}: #{e.message}); it expires on its own"
+    end
+
+    # With Mistri.logger set, tees events into a session log framed by the input,
+    # model, and Result. The sink never raises, so subscriber failures propagate unchanged.
+    def logged(emit, verb:, input: nil)
+      sink = Sinks::Logger.attach(@session.id, label: @log_label)
+      return yield(emit) unless sink
+
+      sink.run_started(verb: verb, input: input, model: @provider.model,
+                       tool_count: @tools.length)
+      subscriber = if emit
+                     lambda { |event|
+                       sink.call(event)
+                       emit.call(event)
+                     }
+                   else
+                     sink.to_proc
+                   end
+      begin
+        result = yield(subscriber)
+      rescue StandardError => e
+        sink.run_crashed(EventDelivery.original(e))
+        raise
+      end
+      sink.run_finished(result)
+      result
     end
 
     def loop_turns(signal, output_schema = nil, &emit)
@@ -349,8 +385,9 @@ module Mistri
         transform.call(messages)
       end
       history += [Message.user(WRAP_UP)] if wrap_up
+      options = tool_options(history)
       # APIs reject tool_choice without tools.
-      options = wrap_up && @tool_specs.any? ? { tool_choice: :none } : {}
+      options[:tool_choice] = :none if wrap_up && options[:tools].any?
       attempt = 0
       usage = Usage.zero
       schema = provider_output_schema(output_schema)
@@ -358,8 +395,8 @@ module Mistri
         held = nil
         gate = emit && ->(event) { event.terminal? ? held = event : emit.call(event) }
         message = @provider.stream(messages: history, system: @system,
-                                   tools: @tool_specs, signal: signal,
-                                   output_schema: schema, **options, &gate)
+                                   **options, signal: signal,
+                                   output_schema: schema, &gate)
         message, held = enforce_tool_call_envelope(message, held)
         attempt_usage = message.usage || Usage.new
         validate_usage!(attempt_usage, message:, kind: "turn", &emit)
@@ -374,6 +411,23 @@ module Mistri
         end
         return [message, held, usage]
       end
+    end
+
+    # A provider that can hold a definition back is handed every deferred
+    # tool, and says in its own way when a result loads one. Any other is
+    # sent the loaded tools as tools.
+    def tool_options(history)
+      return { tools: @eager_specs } if @deferred_specs.empty?
+      return { tools: @eager_specs, deferred_tools: @deferred_list } if @defers_tools
+
+      { tools: offered_tools(history) }
+    end
+
+    # A deferred tool is offered once a tool result the model can see has
+    # loaded it. Loaded tools follow the others, in the order they came.
+    def offered_tools(history)
+      loaded = history.flat_map { |message| message.loads.to_a }.uniq
+      @eager_specs + @deferred_specs.values_at(*loaded).compact
     end
 
     def provider_output_schema(output_schema)
@@ -904,13 +958,13 @@ module Mistri
 
     def rewrite(call, result, context)
       rewritten = @after_tool.call(call, result, context) || result
-      return rewritten unless result.is_a?(ToolResult) && result.error?
+      return rewritten unless result.is_a?(ToolResult)
 
-      if rewritten.is_a?(ToolResult)
-        rewritten.with(error: true)
-      else
-        ToolResult.new(content: rewritten, error: true)
+      # A hook's text is what the model reads. The tool's loads stand.
+      unless rewritten.is_a?(ToolResult)
+        rewritten = ToolResult.new(content: rewritten, loads: result.loads)
       end
+      result.error? ? rewritten.with(error: true) : rewritten
     rescue EventDelivery::Failure => e
       raise EventDelivery.unwrap(e, context.emit)
     rescue StandardError => e
@@ -929,14 +983,15 @@ module Mistri
     # The tool message carries both channels; the :tool_result event exposes
     # it whole so hosts read event.message.ui for their side of the result.
     def answer(call, result, duration: nil, &emit)
-      content, ui, tool_error = if result.is_a?(ToolResult)
-                                  [result.content, result.ui, result.error?]
-                                else
-                                  [result, nil, false]
-                                end
+      content, ui, tool_error, loads = if result.is_a?(ToolResult)
+                                         [result.content, result.ui, result.error?, result.loads]
+                                       else
+                                         [result, nil, false, nil]
+                                       end
+      loads = nil if tool_error
       message = @session.append_message(Message.tool(content: content, tool_call_id: call.id,
                                                      tool_name: call.name, ui: ui,
-                                                     tool_error: tool_error))
+                                                     tool_error: tool_error, loads: loads))
       text = content.is_a?(String) ? content : "[content]"
       emit&.call(Event.new(type: :tool_result, tool_call: call, content: text,
                            message: message, duration: duration, tool_error: tool_error))
