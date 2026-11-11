@@ -7,10 +7,12 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 - A bridged MCP tool gets a name every provider takes. MCP allows dots,
   slashes and any length in a tool name, and one name the model's API refused
-  failed the whole request. Unsafe characters become underscores, and a name
-  that is too long or would share a local name ends in a short hash of the
-  remote name. A name that already worked is unchanged. `MCP.local_name`
-  gives the local name and `MCP.bridge` takes `name:` for a host's own.
+  failed the whole request. A name of letters, digits, underscores and
+  hyphens, 64 at most and not starting with a digit or a hyphen, is unchanged.
+  Any other has its unsafe characters replaced and ends in a short hash of the
+  whole name, so it depends only on the prefix and the remote name. That
+  includes a name only one provider took. `MCP.local_name` gives the local
+  name and `MCP.bridge` takes `name:` for a host's own.
 - An MCP server's answer is no longer held to 20,001 JSON tokens when it
   arrives as an SSE stream. The same answer as a plain JSON body or over
   stdio was never counted, so a server with a long tool list could be listed

@@ -24,7 +24,7 @@ module Mistri
     # What every catalogued provider takes for a tool name: letters, digits,
     # underscores and hyphens, 64 at most, not starting with a digit or hyphen.
     NAME_LIMIT = 64
-    UNSAFE_NAME = /[^A-Za-z0-9_-]/
+    SAFE_NAME = /\A[A-Za-z_][A-Za-z0-9_-]{0,63}\z/
 
     # A protocol-level failure: a JSON-RPC error, a missing response, an
     # unsupported negotiation.
@@ -58,10 +58,8 @@ module Mistri
       listed = client.tools
       listed = listed.select { |tool| allow.include?(tool["name"]) } if allow
       listed = listed.reject { |tool| deny.include?(tool["name"]) }
-      names = local_names(listed.map { |tool| tool["name"] }, prefix)
       listed.map do |tool|
-        bridge(client, tool, name: names[tool["name"]],
-                             gate: gates.fetch(tool["name"], needs_approval),
+        bridge(client, tool, prefix: prefix, gate: gates.fetch(tool["name"], needs_approval),
                              complete_argument_validator: complete_argument_validator)
       end
     end
@@ -90,25 +88,16 @@ module Mistri
       raise ConfigurationError, "MCP tool #{remote.inspect}: #{e.message}"
     end
 
-    # A remote name that is already safe stays as it is. Any other is made
-    # safe from the remote name alone, so it is the same in every run.
+    # The local name of a remote tool. One that every provider takes stays
+    # as it is. Any other has its unsafe characters replaced and ends in a
+    # hash of the whole name, so it depends on nothing but prefix and remote.
     def local_name(remote, prefix = nil)
-      name = (prefix ? "#{prefix}__#{remote}" : remote.to_s).gsub(UNSAFE_NAME, "_")
-      name = "_#{name}" unless name.match?(/\A[A-Za-z_]/)
-      name.length > NAME_LIMIT ? distinct_name(name, remote) : name
-    end
+      whole = prefix ? "#{prefix}__#{remote}" : remote.to_s
+      return whole if whole.match?(SAFE_NAME)
 
-    def local_names(remotes, prefix)
-      names = remotes.to_h { |remote| [remote, local_name(remote, prefix)] }
-      shared = names.values.tally.select { |_name, count| count > 1 }.keys
-      names.to_h do |remote, name|
-        kept = name == (prefix ? "#{prefix}__#{remote}" : remote)
-        [remote, shared.include?(name) && !kept ? distinct_name(name, remote) : name]
-      end
-    end
-
-    def distinct_name(name, remote)
-      "#{name[0, NAME_LIMIT - 9]}_#{Digest::SHA256.hexdigest(remote.to_s)[0, 8]}"
+      safe = whole.gsub(/[^A-Za-z0-9_-]/, "_")
+      safe = "_#{safe}" unless safe.match?(/\A[A-Za-z_]/)
+      "#{safe[0, NAME_LIMIT - 9]}_#{Digest::SHA256.hexdigest(whole)[0, 8]}"
     end
 
     # An MCP result becomes model-readable content: text joins, images ride
@@ -150,8 +139,6 @@ module Mistri
     def resource_text(resource)
       resource["text"] || "[resource: #{resource["uri"]}]"
     end
-
-    private_class_method :local_names, :distinct_name
   end
 end
 
@@ -160,4 +147,4 @@ require_relative "mcp/wires"
 require_relative "mcp/client"
 require_relative "mcp/oauth"
 
-Mistri::MCP.private_constant :Egress, :WireError, :EMPTY_INPUT_SCHEMA, :NAME_LIMIT, :UNSAFE_NAME
+Mistri::MCP.private_constant :Egress, :WireError, :EMPTY_INPUT_SCHEMA, :NAME_LIMIT, :SAFE_NAME
