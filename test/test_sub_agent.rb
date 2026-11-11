@@ -234,6 +234,21 @@ class TestSubAgent < Minitest::Test
     assert_predicate answer, :tool_error?
   end
 
+  def test_a_child_stopped_by_its_budget_hands_the_parent_its_answer
+    scout = Mistri::SubAgent.new(name: "scout", description: "S.",
+                                 provider: fake({ text: "Found A; B is unchecked." }),
+                                 budget: Mistri::Budget.new(turns: 0, wrap_up: true))
+    parent_fake = fake({ tool_calls: [{ name: "scout", arguments: { "task" => "t" } }] },
+                       { text: "noted" })
+    agent = Mistri::Agent.new(provider: parent_fake, tools: [scout.tool])
+
+    agent.run("go")
+    answer = agent.session.messages.select(&:tool?).last
+
+    assert_equal "The scout sub-agent reached its budget. Found A; B is unchecked.", answer.text
+    assert_predicate answer, :tool_error?
+  end
+
   def test_child_models_come_only_from_the_host_allowlist
     spawn = Mistri::SubAgent.spawner(provider: fake({ text: "hi" }),
                                      models: ["claude-haiku-5-5"])

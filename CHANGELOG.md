@@ -10,6 +10,9 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   answer in place of the fixed "Run stopped" message. The result still has
   status `:budget`. Off by default. A custom provider receives
   `tool_choice: :none` on that turn.
+- A sub-agent stopped by its budget ends as `Child#status` `:budget` in place
+  of `:failed`, and its last answer reaches the parent: in the tool result, in
+  `Child#report`, and in the background report.
 - `Message#prefix_bound_thinking?` tells whether a message's thinking verifies
   only after the exact history it was produced under.
 - A session's string id is fixed when the Session is built. `Session.new`

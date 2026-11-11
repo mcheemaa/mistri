@@ -263,8 +263,8 @@ Host code and the management tools use the same `Mistri::Child` facade:
 ```ruby
 child = parent_session.children.first
 
-child.status                   # :queued, :running, :interrupted, :done, :stopped, :failed
-child.report                   # terminal report when done
+child.status                   # :queued, :running, :interrupted, :done, :budget, :stopped, :failed
+child.report                   # terminal report when done or stopped by its budget
 child.error                    # terminal error when failed
 child.transcript(tail: 20)     # presentation-oriented recent entries
 child.say("Check pricing too") # queues a steer

@@ -50,7 +50,7 @@ module Mistri
       :running
     end
 
-    # A terminal entry exists: the child ended as done, stopped, or failed,
+    # A terminal entry exists: the child ended as done, budget, stopped, or failed,
     # so a later matching delivery must not run it again. The inverse
     # (started but no terminal) is what makes a crashed child re-runnable.
     def finished?

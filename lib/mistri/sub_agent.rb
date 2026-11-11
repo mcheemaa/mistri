@@ -270,6 +270,7 @@ module Mistri
       def terminal(result)
         case result.status
         when :completed then { "status" => "done", "report" => result.text.to_s }
+        when :budget then { "status" => "budget", "report" => result.text.to_s }
         when :aborted then { "status" => "stopped" }
         when :awaiting_approval
           { "status" => "failed",
@@ -335,6 +336,9 @@ module Mistri
           ToolResult.new(content: "The #{label} sub-agent stopped: it needed human " \
                                   "approval, which sub-agents cannot wait for.", ui: link,
                          error: true)
+        when :budget
+          ToolResult.new(content: "The #{label} sub-agent reached its budget. #{result.text}",
+                         ui: link, error: true)
         when :aborted
           ToolResult.new(content: "[the #{label} sub-agent was stopped]", ui: link, error: true)
         else

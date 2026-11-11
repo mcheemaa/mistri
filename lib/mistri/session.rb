@@ -737,6 +737,7 @@ module Mistri
     def report_label(name, status, text)
       case status
       when "done" then "[#{name} finished] #{text}"
+      when "budget" then "[#{name} reached its budget] #{text}"
       when "failed" then "[#{name} failed] #{text}"
       when "stopped" then "[#{name} was stopped]"
       else "[#{name} ended: #{status}]"
