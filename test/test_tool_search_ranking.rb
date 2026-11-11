@@ -59,6 +59,24 @@ class TestToolSearchRanking < Minitest::Test
     assert_equal 8, rank("get_open_pull_request_status", tools).length
   end
 
+  def test_names_load_the_tools_they_name_and_no_others
+    loaded = []
+    named = %w[lookup crm__lookup crm__list docs__list].map { |name| tool(name) }
+    search = Mistri::ToolSearch.tool(named, loaded: -> { loaded })
+    first = search.call({ "query" => "select:lookup, list, nope" })
+    loaded.concat(first.loads)
+    second = search.call({ "query" => "crm__lookup docs__list" })
+    loaded.concat(second.loads)
+    third = search.call({ "query" => "lookup list" })
+
+    assert_equal %w[lookup crm__list docs__list], first.loads
+    assert_match(/^No tool is named nope\.$/, first.content)
+    assert_equal %w[crm__lookup], second.loads
+    assert_match(/^Already loaded, call them as they are: docs__list\.$/, second.content)
+    assert_empty third.loads
+    assert_match(/^Already loaded, call them as they are: .*crm__lookup/, third.content)
+  end
+
   def test_text_written_without_spaces_is_matched_by_pairs_of_characters
     search = tool("docs__search", "搜索团队文档并返回结果")
     other = tool("docs__delete", "删除一个页面")

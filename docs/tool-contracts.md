@@ -313,9 +313,16 @@ other tool. The description of `tool_search` tells the model how many tools it
 searches under each name prefix, so give a server a prefix that says what it
 is.
 
-A query that is a tool's name finds that tool first. The search matches words,
-so it finds what a name, a description or a parameter says and not what they
-mean. A run of Han, kana or Hangul characters, which often has no spaces
+A query that is a tool's name loads that tool and no other. That holds for
+the name without its prefix and for words that spell it, so `create issue`
+loads `tracker__create_issue`. The model can name several tools at once:
+`select:` and their names, separated by commas, or their whole names side by
+side. The answer says which of the names no tool has. A tool that is already
+loaded is not loaded again. The answer names it, and the search goes on to
+the next matches, so a repeated search reaches further down the list.
+
+Any other query is words. The search matches words, so it finds what a name,
+a description or a parameter says and not what they mean. A run of Han, kana or Hangul characters, which often has no spaces
 between its words, is matched by pairs of characters, and by one character
 when the query is one. In words, half-width and full-width forms match each
 other; a name is matched as it is written. Other scripts written without
