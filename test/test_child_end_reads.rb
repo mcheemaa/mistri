@@ -77,6 +77,35 @@ class TestChildEndReads < Minitest::Test
     assert_equal [[11, 1], [0, 12], [12, 0]], reads("c1")
   end
 
+  def test_a_tail_is_counted_the_way_a_whole_read_counts_it
+    worker("c1", steps: 3)
+    held = window("c1")
+    held.transcript(tail: nil)
+
+    [0, 1, 1.5, 9].each do |tail|
+      assert_equal held.transcript(tail:), window("c1").transcript(tail:), "tail #{tail}"
+    end
+    assert_raises(ArgumentError) { window("c1").transcript(tail: -1) }
+    assert_raises(TypeError) { window("c1").transcript(tail: "2") }
+  end
+
+  def test_an_end_that_is_rolled_back_is_not_seen_by_a_first_read
+    store = SessionStores::Transactional.new
+    session = Mistri::Session.new(store:, id: "c1")
+    session.append(Mistri::Child::DISPATCHED, {})
+
+    store.transaction do
+      session.append(Mistri::Child::TERMINAL, "status" => "done", "report" => "Never committed.")
+
+      assert_predicate Mistri::Child.new(name: "c1", session_id: "c1", store:), :finished?
+      raise SessionStores::Transactional::Rollback
+    end
+    child = Mistri::Child.new(name: "c1", session_id: "c1", store:)
+
+    refute_predicate child, :finished?
+    assert_equal :queued, child.status
+  end
+
   def test_a_worker_with_no_entries_is_not_finished
     child = window("nobody")
 

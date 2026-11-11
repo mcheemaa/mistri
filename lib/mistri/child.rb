@@ -204,7 +204,9 @@ module Mistri
       return read_log.last(count) unless from_the_end?
 
       size = @store.size(@session_id)
-      @store.load(@session_id, from: [size - count, 0].max, to: size)
+      # The count is taken the way Array#last takes it.
+      first = (0...size).last(count).first || size
+      @store.load(@session_id, from: first, to: size)
     end
 
     # A log that is already held is read on from where it stopped, which
