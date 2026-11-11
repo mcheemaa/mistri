@@ -79,18 +79,21 @@ class TestToolSearchRanking < Minitest::Test
     search = Mistri::ToolSearch.tool(Array.new(30) { |index| tool("s#{index}__list") },
                                      loaded: [].method(:itself))
     one = search.call({ "query" => "list", "limit" => 1 })
-    more = search.call({ "query" => "list" })
-    twelve = Array.new(12) { |index| "s#{index + 9}__list" }
-    asked = search.call({ "query" => "select:#{twelve.join(",")}" })
+    listed = Array.new(25) { |index| "s#{index + 5}__list" }.join(",")
+    many = search.call({ "query" => "select:#{listed}" })
+    another = search.call({ "query" => "list", "limit" => 1 })
     rest = search.call({ "query" => "list", "limit" => 20 })
     none = search.call({ "query" => "list" })
 
     assert_equal %w[s0__list], one.loads
     assert_match(/^29 more tools with these names\. Search again for them\.$/, one.content)
-    assert_equal([8, 12, 9], [more, asked, rest].map { |result| result.loads.length })
+    assert_equal 20, many.loads.length
+    assert_equal %w[s1__list], another.loads
+    assert_match(/^8 more tools with these names\./, another.content)
+    assert_equal 8, rest.loads.length
     assert_empty none.loads
-    assert_match(/^Already loaded, call them as they are: s0__list, .* and 10 more\.$/,
-                 none.content)
+    assert_includes none.content, "s19__list and 10 more."
+    refute_includes none.content, "s20__list"
   end
 
   def test_text_written_without_spaces_is_matched_by_pairs_of_characters

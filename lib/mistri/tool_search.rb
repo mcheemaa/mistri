@@ -57,12 +57,12 @@ module Mistri
         limit = args.fetch("limit") { [LIMIT, asked.to_i].max }.to_i.clamp(1, MAX_LIMIT)
         matches = chosen || search(query, documents)
         names = loaded.call
-        fresh, held = turn.synchronize do
+        fresh, held, left = turn.synchronize do
           unloaded(matches, names, limit).tap do |picked, _|
             names.concat(picked.map { |document| document.tool.name })
           end
         end
-        answer(fresh, held, missing.to_a, chosen ? chosen.length - fresh.length - held.length : 0)
+        answer(fresh, held, missing.to_a, chosen ? left : 0)
       end
     end
 
@@ -132,18 +132,23 @@ module Mistri
     end
     private_class_method :pick
 
-    # The matches to load, limit at most, and the loaded ones passed on the
-    # way to them.
+    # The matches to load, limit at most, the loaded ones passed on the way
+    # to them, and how many more are not loaded.
     def unloaded(matches, loaded, limit)
       have = loaded.to_set
       fresh = []
       held = []
+      left = 0
       matches.each do |document|
-        break if fresh.length == limit
-
-        (have.include?(document.tool.name) ? held : fresh) << document
+        if have.include?(document.tool.name)
+          held << document if fresh.length < limit
+        elsif fresh.length < limit
+          fresh << document
+        else
+          left += 1
+        end
       end
-      [fresh, held]
+      [fresh, held, left]
     end
     private_class_method :unloaded
 
