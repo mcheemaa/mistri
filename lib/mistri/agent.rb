@@ -962,6 +962,7 @@ module Mistri
                                        else
                                          [result, nil, false, nil]
                                        end
+      loads = nil if tool_error
       message = @session.append_message(Message.tool(content: content, tool_call_id: call.id,
                                                      tool_name: call.name, ui: ui,
                                                      tool_error: tool_error, loads: loads))

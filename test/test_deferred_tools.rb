@@ -181,6 +181,22 @@ class TestDeferredTools < Minitest::Test
     assert_equal %w[open_tracker lookup_order tool_search tracker__create_issue], offered(provider)
   end
 
+  def test_a_failed_result_loads_nothing
+    opener = Mistri::Tool.define("open_tracker", "Opens the tracker.") do
+      Mistri::ToolResult.new(content: "The tracker is down.", error: true,
+                             loads: %w[tracker__create_issue])
+    end
+    agent, provider = agent([{ tool_calls: [{ name: "open_tracker" }] }, { text: "Down." }],
+                            tools: [opener, *tools])
+
+    agent.run("Open the tracker.")
+    answer = agent.session.messages.find(&:tool?)
+
+    assert_predicate answer, :tool_error?
+    assert_nil answer.loads
+    assert_equal %w[open_tracker lookup_order tool_search], offered(provider)
+  end
+
   def test_a_load_the_model_no_longer_sees_is_no_longer_offered
     forget = ->(messages) { messages.reject(&:tool?).reject(&:tool_calls?) }
     first, = agent([{ tool_calls: [search("refund")] }, { text: "Found." }])
@@ -224,7 +240,9 @@ class TestDeferredTools < Minitest::Test
   def test_loads_is_a_list_of_names_on_a_tool_result_and_nowhere_else
     assert_raises(ArgumentError) { Mistri::ToolResult.new(content: "x", loads: "refund_charge") }
     assert_raises(ArgumentError) { Mistri::ToolResult.new(content: "x", loads: [:refund_charge]) }
-    assert_raises(ArgumentError) { Mistri::Message.user("x").with(loads: ["refund_charge"]) }
+    assert_raises(ArgumentError) do
+      Mistri::Message.new(role: :user, content: "x", loads: ["refund_charge"])
+    end
     assert_raises(ArgumentError) do
       Mistri::Message.from_h("role" => "tool", "tool_call_id" => "1", "loads" => 5)
     end

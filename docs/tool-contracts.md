@@ -324,7 +324,8 @@ Mistri::ToolResult.new(
 )
 ```
 
-A name that is not a deferred tool of this agent is ignored.
+A name that is not a deferred tool of this agent is ignored, and a result
+marked `error: true` loads nothing.
 
 A deferred tool is still one of the agent's tools. Its approval gate, the
 argument check, `before_tool` and `after_tool` apply when it runs, and a call
