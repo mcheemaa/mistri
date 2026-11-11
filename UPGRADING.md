@@ -47,15 +47,21 @@ each variable.
 
 `MCP.tools` and `MCP.bridge` now give a tool a name every provider takes:
 letters, digits, underscores and hyphens, 64 characters at most, not starting
-with a digit or a hyphen. A name inside that set is unchanged.
+with a digit or a hyphen. The whole name decides: the prefix, two underscores
+and the remote name, or the remote name alone. One inside that set is
+unchanged.
 
-- A remote name outside it changes, even where your one provider took it: a
-  dot or a colon on Gemini, a leading digit or more than 64 characters on
-  Anthropic. The new name ends in a short hash of the whole name.
+- Any other changes, even where your one provider took it: a dot or a colon
+  on Gemini, a leading digit or more than 64 characters on Anthropic. The new
+  name ends in a short hash of the whole name.
+- The remote name alone does not tell you. `9lives` under the prefix
+  `tracker` stays `tracker__9lives`, and `read` under a prefix with a dot, or
+  a long one, changes.
 - `Mistri::MCP.local_name(remote, prefix)` gives the new name, for a host that
   stored the old one.
 - To keep a name of your own, bridge that tool with
-  `MCP.bridge(client, definition, name: "yours")`.
+  `MCP.bridge(client, definition, name: "yours")`. That name is used as
+  given, so it has to be one your provider takes.
 - `allow:`, `deny:` and `gates:` still go by the remote name.
 
 ### Blank input raises
