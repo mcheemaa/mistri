@@ -870,9 +870,9 @@ module Mistri
       return Message.user(text) if loaded.empty?
 
       Message.user("#{text}\n\nThese tools were loaded before this summary: " \
-                   "#{loaded.join(", ")}. Their parameters are no longer in front of you. " \
-                   "Before you call one, load it again with #{ToolSearch::NAME}: write select: " \
-                   "and the names you need as the query. Load only the ones you need.")
+                   "#{loaded.join(", ")}. Their definitions are no longer in your context. " \
+                   "Before you call one, load it again with #{ToolSearch::NAME}: use select: " \
+                   "followed by the names as the query. Load only the ones you need.")
     end
 
     # Each link entry opens its child's log in place, depth first, the way

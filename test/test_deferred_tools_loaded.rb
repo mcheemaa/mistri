@@ -71,7 +71,7 @@ class TestDeferredToolsLoaded < Minitest::Test
                     "before this summary: tracker__list_issues, docs__search_pages."
   end
 
-  def test_a_failed_result_neither_carries_a_name_nor_takes_one_away
+  def test_a_failed_result_neither_adds_a_carried_name_nor_removes_one
     session = Mistri::Session.new(store: Mistri::Stores::Memory.new)
     searched(session, "a", %w[refund_charge])
     searched(session, "b", %w[void_charge], failed: true)

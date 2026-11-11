@@ -339,13 +339,13 @@ written. Other scripts written without spaces match poorly. A query is read
 up to 500 characters.
 
 A load is stored with the tool result that made it. A later run on the same
-session offers the same tools with no new search. A load the model no longer
-sees is no longer in effect. After a compaction that summarizes the search,
-the summary is followed by the names of the tools that were loaded before it.
-The model is told that their parameters are no longer in front of it and to
-load the ones it needs again by name. A call to one of them that it makes
-without loading still runs, through the argument check as always: the model
-was shown that tool when it loaded it.
+session offers the same tools with no new search. A load whose result is no
+longer in the history has no effect. After a compaction that summarizes the
+search, the summary is followed by the names of the tools loaded before it.
+The message states that their definitions are no longer in the model's
+context and instructs it to load the ones it needs again by name. A call to
+one of them without a new load still runs, after the usual argument check:
+the model received that definition when it loaded the tool.
 
 Any tool can load deferred tools with its result:
 
