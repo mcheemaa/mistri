@@ -269,30 +269,28 @@ Limits are checked between model-visible turns. A turn already in progress,
 including its retry attempts, completes before the next check. Every budget is
 therefore a soft ceiling and may exceed its configured value by one turn.
 
-A stopped run ends on a fixed "Run stopped" message and status `:budget`. Pass
-`wrap_up: true` to let the model answer instead:
+A stopped run ends on a fixed "Run stopped" message with status `:budget`.
+`wrap_up: true` lets the model answer instead:
 
 ```ruby
 budget = Mistri::Budget.new(turns: 20, wrap_up: true)
 ```
 
-The run then spends one more turn past the ceiling, after folding in any steer
-or sub-agent report that is waiting. It does not compact first, so a context
-that no longer fits fails that turn. The model keeps its tools but cannot call
-them, and is told to give its best answer and say what is unfinished. That
-instruction is sent to the model and not stored in the session. Under `task`
-the turn is sent without the output schema, so the answer is free text and
-`output` stays nil. The result keeps status `:budget`, and the turn counts
-toward usage.
+The run spends one more turn past the ceiling. It folds in waiting steers and
+sub-agent reports first, but does not compact, so a context that no longer
+fits fails the turn. The model keeps its tools but cannot call them, and is
+told to give its best answer and say what is unfinished; that instruction is
+never stored. Under `task` the turn omits the output schema, so `output` stays
+nil. The turn counts toward usage, and the status stays `:budget`.
 
 If the turn fails, is aborted, or returns no text, the run ends on the fixed
-message. The subscriber first receives that attempt's own `:done` or `:error`,
-and the session keeps it as a `wrap_up_attempt` entry, never as a conversation
-message, so its usage and error remain available for accounting.
+message. The subscriber first gets that attempt's own `:done` or `:error`, and
+the session keeps it as a `wrap_up_attempt` entry for accounting, not as a
+message.
 
-A budget stop's final event always has `reason: :budget`. It is `:done` when
-the model answered and `:error` when the run ended on the fixed message, so
-detect a budget stop by its reason, not its event type.
+A budget stop's final event always has `reason: :budget`: `:done` when the
+model answered, `:error` on the fixed message. Check the reason, not the event
+type.
 
 ### Cost budgets
 
@@ -447,9 +445,9 @@ To avoid that cost, keep the prefix stable for the life of a session:
   `Reminder.every` does so each time it fires.
 
 Mistri drops pre-compaction thinking itself, because its own
-[compaction boundary](sessions.md#compaction) changes the prefix. For the same
-reason it saves a budget wrap-up answer without its thinking, which was signed
-against an instruction the session does not keep. Mistri sends
+[compaction boundary](sessions.md#compaction) changes the prefix. It also strips
+thinking from a budget wrap-up answer, which was signed against an unstored
+instruction. Mistri sends
 the control only to `api.anthropic.com`. For another `origin:`, pass
 `block_binding` in `thinking:`; see [Upgrading](../UPGRADING.md#unreleased).
 Do not rewrite the stored transcript or tool-call/result pairs.
@@ -493,9 +491,9 @@ Custom providers may return `native_output_schema(schema)` when they can enforce
 the requested task contract. Returning nil leaves the prompt and local
 validation path intact.
 
-A budget with `wrap_up: true` passes `tool_choice: :none` to `stream` on its
-final turn when the agent declares tools. Forbid tool calls for that request;
-any the provider returns are dropped.
+A `wrap_up: true` budget passes `tool_choice: :none` to `stream` on its final
+turn when the agent has tools. Forbid tool calls for that request; any returned
+are dropped.
 
 To support cost budgets, return true from `prices_usage?` and attach a known
 cost to every response, commonly with `Mistri::Usage#with_cost`. Missing or

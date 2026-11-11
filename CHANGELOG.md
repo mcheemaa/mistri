@@ -5,17 +5,16 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
-- `Budget.new(wrap_up: true)` gives the model one more turn when a ceiling
-  stops the run, with tool calls forbidden, so the run ends on the model's
-  answer in place of the fixed "Run stopped" message. The result still has
-  status `:budget`. Off by default. A custom provider receives
-  `tool_choice: :none` on that turn when the agent declares tools. A wrap-up
-  turn that fails is kept as a `wrap_up_attempt` session entry.
-- A sub-agent stopped by its budget ends as `Child#status` `:budget` in place
-  of `:failed`, and its last answer reaches the parent: in the tool result, in
-  `Child#report`, and in the background report.
+- `Budget.new(wrap_up: true)` gives the model one tool-free turn to answer when
+  a ceiling stops the run, in place of the fixed "Run stopped" message. Status
+  stays `:budget`. Off by default. Custom providers get `tool_choice: :none` on
+  that turn when the agent has tools. A failed wrap-up turn is kept as a
+  `wrap_up_attempt` entry.
+- A sub-agent stopped by its budget ends as `:budget`, not `:failed`, and its
+  answer reaches the parent's tool result, `Child#report`, and the background
+  report.
 - `Message#prefix_bound_thinking?` tells whether a message's thinking verifies
-  only after the exact history it was produced under.
+  only after its exact original history.
 - A session's string id is fixed when the Session is built. `Session.new`
   keeps its own copy of it and `Session#id` returns a copy. Changing the string
   a session was given used to redirect it, and could mix two sessions' entries
