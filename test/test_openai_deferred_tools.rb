@@ -110,7 +110,7 @@ class TestOpenAIDeferredTools < Minitest::Test
     growing = %w[gpt-5-nano gpt-5 gpt-5-mini gpt-5.3 gpt-4.1 gpt-4.1-2025-04-14 gpt-4o o4-mini
                  a-model-from-next-year]
 
-    assert_equal loading, loading.select { |model| Mistri::Models.tool_loading?(model) }
+    assert_equal(loading, loading.select { |model| Mistri::Models.tool_loading?(model) })
     assert_empty(growing.select { |model| Mistri::Models.tool_loading?(model) })
   end
 
