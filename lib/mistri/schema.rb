@@ -362,8 +362,14 @@ module Mistri
         not if then else contains propertyNames unevaluatedProperties
         unevaluatedItems contentSchema
       ].freeze
+      DRAFT7 = %w[
+        http://json-schema.org/draft-07/schema# http://json-schema.org/draft-07/schema
+      ].freeze
+      # The keywords local validation applies to a value.
+      APPLIED = %w[type enum required properties additionalProperties items prefixItems].freeze
 
       def call(schema)
+        @draft7 = schema.is_a?(Hash) && DRAFT7.include?(schema["$schema"])
         walk_schema(schema, "$")
         schema
       end
@@ -375,6 +381,7 @@ module Mistri
 
         configuration!(path, "must be a schema object or boolean") unless schema.is_a?(Hash)
         validate_dialect(schema, path)
+        validate_draft7_differences(schema, path) if @draft7
         validate_core_keywords(schema, path)
         validate_annotation_keywords(schema, path)
         validate_assertion_shapes(schema, path)
@@ -395,9 +402,26 @@ module Mistri
 
       def validate_dialect(spec, path)
         return unless spec.key?("$schema")
-        return if spec["$schema"] == DIALECT
+        return if spec["$schema"] == DIALECT || (@draft7 && DRAFT7.include?(spec["$schema"]))
 
-        configuration!("#{path}.$schema", "must declare JSON Schema 2020-12")
+        configuration!("#{path}.$schema", "must declare JSON Schema 2020-12 or draft-07")
+      end
+
+      # Draft-07 reads the same as 2020-12 for what local validation applies,
+      # apart from these: it ignores every keyword beside a $ref and has no
+      # prefixItems, and 2020-12 applies both. An array for items is refused
+      # in either.
+      def validate_draft7_differences(spec, path)
+        if spec.key?("prefixItems")
+          configuration!("#{path}.prefixItems", "is not a draft-07 keyword")
+        end
+        return unless spec.key?("$ref")
+
+        beside = APPLIED.find { |keyword| spec.key?(keyword) }
+        return unless beside
+
+        configuration!("#{path}.#{beside}",
+                       "is ignored beside $ref in draft-07 and applied in 2020-12")
       end
 
       def validate_core_keywords(spec, path)
