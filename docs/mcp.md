@@ -151,8 +151,14 @@ external references are rejected even with a complete validator so validation
 never performs hidden file or network resolution.
 
 An omitted `inputSchema` means a closed no-argument object. Explicit null,
-non-object roots, malformed keyword shapes, and an explicit older dialect are
-configuration errors. Mistri compiles MCP input as JSON Schema 2020-12.
+non-object roots and malformed keyword shapes are configuration errors.
+
+A schema may declare JSON Schema 2020-12 or draft-07, which is what common
+schema generators emit. The two read the same for everything Mistri validates
+locally, apart from three shapes that are refused for that one tool: `items`
+as an array, a constraint beside a `$ref` (draft-07 ignores it and 2020-12
+applies it), and `prefixItems` in a draft-07 schema. Any other declared
+dialect is a configuration error.
 
 ## Results and large data
 
