@@ -21,10 +21,10 @@ module Mistri
       module Serializer
         module_function
 
-        # The deferred tools are only indexed by name here. One is converted
-        # to a definition when a result loads it, not on every request.
+        # The deferred tools are indexed by the name they are sent with. One
+        # is converted when a result loads it, not on every request.
         def input_items(history, deferred: [])
-          specs = deferred.to_h { |tool| [tool[:name] || tool["name"], tool] }
+          specs = deferred.to_h { |tool| [tool.transform_keys(&:to_sym)[:name], tool] }
           declared = {}
           history.reject(&:system?).flat_map do |msg|
             items = items_for(msg, declared)

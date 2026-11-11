@@ -139,6 +139,24 @@ class TestOpenAIDeferredTools < Minitest::Test
                  added.map { |item| item[:tools].map { |tool| tool[:name] } })
   end
 
+  def test_a_tool_is_known_by_the_name_its_definition_is_sent_with
+    renamed = spec("lookup").merge("name" => "crm__lookup")
+    history = lambda do |name|
+      [Mistri::Message.user("go"), calling(call("c1", "tool_search")), result("c1", loads: [name]),
+       calling(call("c2", name))]
+    end
+
+    sent = SERIALIZER.input_items(history.call("crm__lookup"), deferred: [renamed])
+    other = SERIALIZER.input_items(history.call("lookup"), deferred: [renamed])
+
+    assert_equal %w[user function_call function_call_output additional_tools function_call],
+                 types(sent)
+    assert_equal(%w[crm__lookup], sent[3][:tools].map { |tool| tool[:name] })
+    assert_equal "crm__lookup", sent.last[:namespace]
+    assert_equal %w[user function_call function_call_output function_call], types(other)
+    refute other.last.key?(:namespace)
+  end
+
   def test_the_request_keeps_its_tools_and_carries_the_loaded_ones_in_the_input
     @server = Mistri::Test::StubServer.new do |socket, _request|
       @server.start_sse(socket)

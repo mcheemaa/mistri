@@ -360,18 +360,18 @@ not choose:
 - Gemini, and any other provider, is sent the tools that are not deferred,
   then the loaded ones in the order they were loaded.
 
-What it costs in the process is small and measured. Building an agent with
-deferred tools costs what a flat list costs. The search index is built on an
-agent's first search, about a tenth of a millisecond for each tool. Building
-a request adds one pass over the history to find what was loaded, about 25
-microseconds for 600 messages, and on OpenAI an index of the deferred names,
-about 60 microseconds for 600 tools.
+What it costs in the process is small. Building an agent with deferred tools
+costs what a flat list costs. The search index is built once, on an agent's
+first search, from each deferred tool's description and schema. Building a
+request adds one pass over the history to find what was loaded, and on
+OpenAI one pass over the deferred definitions to index them by name.
 
-On the wire the forms differ. On OpenAI and Gemini a request carries only
-the loaded definitions. On Anthropic every deferred definition still travels
-in the body of every request, as the API requires, though it is not counted
-as input: about a kilobyte for each, so 600 deferred tools add about 640 KB
-to each request and half a millisecond to building it.
+On the wire the forms differ. On OpenAI and Gemini a request carries no
+deferred definition until a result loads it. On Anthropic every deferred
+definition travels in the body of every request, as the API requires, though
+one is not counted as input until it is loaded. The body grows by the size
+of the definitions: 600 deferred tools of a kilobyte each add 600 KB to
+every request.
 
 A provider of your own is sent the growing tool list. To hold definitions
 back itself it answers `defers_tools?` with true, and `stream` is then given
