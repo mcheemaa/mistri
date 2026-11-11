@@ -103,6 +103,31 @@ class TestMcpUnusableTools < Minitest::Test
     JSON.generate(tools.map(&:spec))
   end
 
+  def test_a_name_or_a_description_in_another_encoding_is_left_out
+    binary = good("binary").merge("description" => "bad\xFF".b)
+    wide = good("wide").merge("name" => "wide".encode("UTF-16LE"))
+    latin = good("latin").merge("description" => "caf\xE9".dup.force_encoding("ISO-8859-1"))
+    left_out = []
+
+    tools = Mistri::MCP.tools(client_for(binary, wide, latin, good("search"))) do |_, error|
+      left_out << error.message
+    end
+
+    assert_equal %w[search], tools.map(&:name)
+    assert_equal 3, left_out.length
+    assert(left_out.all? { |message| message.end_with?("is not valid UTF-8") })
+    JSON.generate(tools.map(&:spec))
+  end
+
+  def test_plain_ascii_in_any_compatible_encoding_is_bridged
+    ascii = { "name" => "plain".b, "description" => "Plain text.".encode("US-ASCII") }
+
+    tools = Mistri::MCP.tools(client_for(ascii, { "name" => "bare" }))
+
+    assert_equal %w[plain bare], tools.map(&:name)
+    JSON.generate(tools.map(&:spec))
+  end
+
   def test_what_the_block_returns_never_joins_the_tools
     stray = Mistri::Tool.define("stray", "Should not appear.") { "no" }
 
@@ -112,11 +137,13 @@ class TestMcpUnusableTools < Minitest::Test
   end
 
   def test_an_error_the_block_raises_is_the_one_the_host_sees
-    failure = Class.new(StandardError)
+    failure = StandardError.new("the host's own")
 
-    assert_raises(failure) do
+    raised = assert_raises(StandardError) do
       Mistri::MCP.tools(client_for(broken, good("search"))) { |_tool, _error| raise failure }
     end
+
+    assert_same failure, raised
   end
 
   def test_a_message_carries_only_the_start_of_a_long_remote_name

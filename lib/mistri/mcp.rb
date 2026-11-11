@@ -83,6 +83,13 @@ module Mistri
     end
     private_class_method :claim
 
+    # Text every later step can take: a name is matched and compared, and
+    # both travel to a provider as JSON.
+    def utf8?(text)
+      text.ascii_only? || (text.encoding == Encoding::UTF_8 && text.valid_encoding?)
+    end
+    private_class_method :utf8?
+
     # A remote name is the server's to choose, so a message carries its start.
     def label(remote) = remote.inspect[0, 120]
     private_class_method :label
@@ -97,12 +104,10 @@ module Mistri
       unless remote.is_a?(String) && !remote.empty?
         raise ConfigurationError, "the definition has no name"
       end
-      raise ConfigurationError, "the name is not valid UTF-8" unless remote.valid_encoding?
+      raise ConfigurationError, "the name is not valid UTF-8" unless utf8?(remote)
 
       description = spec["description"].to_s
-      unless description.valid_encoding?
-        raise ConfigurationError, "the description is not valid UTF-8"
-      end
+      raise ConfigurationError, "the description is not valid UTF-8" unless utf8?(description)
 
       local = name || local_name(remote, prefix)
       if spec.key?("inputSchema") && spec["inputSchema"].nil?
