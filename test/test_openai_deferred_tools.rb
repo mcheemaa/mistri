@@ -127,7 +127,7 @@ class TestOpenAIDeferredTools < Minitest::Test
     other&.close
   end
 
-  def test_a_host_says_what_its_origin_takes
+  def test_defers_tools_overrides_the_default_of_the_origin
     gateway = Mistri::Providers::OpenAI.new(api_key: "k", origin: "https://gateway.example",
                                             defers_tools: true)
     plain = Mistri::Providers::OpenAI.new(api_key: "k", model: "gpt-6.1-terra", defers_tools: false)

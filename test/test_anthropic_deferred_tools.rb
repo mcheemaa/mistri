@@ -115,7 +115,7 @@ class TestAnthropicDeferredTools < Minitest::Test
     refute wire.last[:content].first.key?(:cache_control)
   end
 
-  def test_the_official_origin_holds_definitions_back_and_another_origin_does_not_by_itself
+  def test_the_official_origin_defers_natively_and_another_origin_does_not_by_default
     official = Mistri::Providers::Anthropic.new(api_key: "k")
     other = Mistri::Providers::Anthropic.new(api_key: "k", origin: "https://gateway.example")
 
@@ -126,7 +126,7 @@ class TestAnthropicDeferredTools < Minitest::Test
     other&.close
   end
 
-  def test_a_host_says_what_its_origin_takes
+  def test_defers_tools_overrides_the_default_of_the_origin
     gateway = Mistri::Providers::Anthropic.new(api_key: "k", origin: "https://gateway.example",
                                                defers_tools: true)
     plain = Mistri::Providers::Anthropic.new(api_key: "k", defers_tools: false)
