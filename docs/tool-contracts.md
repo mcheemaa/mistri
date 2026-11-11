@@ -354,9 +354,9 @@ not choose:
 - OpenAI keeps the request's own tools as they are, and a result that loads
   tools is followed by an item in the input that makes them callable from
   that point on. The prompt cache holds across a load here too. This is used
-  on the official origin, for the models OpenAI documents it for, gpt-5.4 and
-  later. An older model and another origin are treated like the provider
-  below.
+  on the official origin, for the models OpenAI documents it for: gpt-5.4 and
+  later, the nano models aside. An older model, a nano model and another
+  origin are treated like the provider below.
 - Gemini, and any other provider, is sent the tools that are not deferred,
   then the loaded ones in the order they were loaded.
 

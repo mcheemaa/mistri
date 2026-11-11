@@ -104,11 +104,11 @@ class TestOpenAIDeferredTools < Minitest::Test
     refute items.last.key?(:namespace)
   end
 
-  def test_only_models_from_five_point_four_on_hold_definitions_back
-    loading = %w[gpt-5.4 gpt-5.4-2026-03-05 gpt-5.5 gpt-5.6 gpt-5.6-luna gpt-6-astra
+  def test_models_from_five_point_four_on_hold_definitions_back_and_nano_models_do_not
+    loading = %w[gpt-5.4 gpt-5.4-2026-03-05 gpt-5.4-mini gpt-5.5 gpt-5.6 gpt-5.6-luna gpt-6-astra
                  gpt-6.1-terra gpt-7 gpt-10.2-sol]
-    growing = %w[gpt-5-nano gpt-5 gpt-5-mini gpt-5.3 gpt-4.1 gpt-4.1-2025-04-14 gpt-4o o4-mini
-                 a-model-from-next-year]
+    growing = %w[gpt-5-nano gpt-5.4-nano gpt-5.4-nano-2026-03-17 gpt-6-nano gpt-5 gpt-5-mini
+                 gpt-5.3 gpt-4.1 gpt-4.1-2025-04-14 gpt-4o o4-mini a-model-from-next-year]
 
     assert_equal(loading, loading.select { |model| Mistri::Models.tool_loading?(model) })
     assert_empty(growing.select { |model| Mistri::Models.tool_loading?(model) })

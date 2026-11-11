@@ -215,14 +215,15 @@ module Mistri
     end
 
     # OpenAI documents loading tools into a running conversation for gpt-5.4
-    # and later. An older model takes the request and then, about four times
-    # in ten, searches again where it should call the loaded tool. The
-    # version is read from the id, so a later model qualifies before the
-    # catalog knows it, and any id that does not say is taken for an older
-    # model.
+    # and later, and not for its nano models, which take the request and
+    # then search again where they should call the loaded tool. The version
+    # is read from the id, so a later model qualifies before the catalog
+    # knows it, and any id that does not say is taken for an older model.
     def self.tool_loading?(id)
       version = id.to_s[/\Agpt-(\d+(?:\.\d+)?)/, 1]
-      !version.nil? && (version.split(".").map(&:to_i) <=> TOOL_LOADING_FROM) >= 0
+      return false if version.nil? || id.to_s.include?("-nano")
+
+      (version.split(".").map(&:to_i) <=> TOOL_LOADING_FROM) >= 0
     end
 
     def self.rates(id, usage: nil, at: Time.now) = find(id)&.rates(usage:, at:)
