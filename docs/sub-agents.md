@@ -66,8 +66,9 @@ the Runtime factory reconstructs its provider inside the worker.
 A pool may hold [deferred tools](tool-contracts.md#tools-on-demand). The
 spawner's definition then names only the tools that are not deferred, so the
 deferred ones add nothing to the parent's requests. A child that is granted
-the whole pool gets its own `tool_search` and loads them itself. The parent
-can grant a deferred tool by the name its own `tool_search` returned.
+the whole pool gets its own `tool_search` and loads them itself. A parent
+that holds the same deferred tools can grant one by its name. Otherwise it
+omits `tools`, and the child loads what it needs.
 
 Do not place `spawn_agent` inside its own tool pool. Mistri rejects that host
 configuration.

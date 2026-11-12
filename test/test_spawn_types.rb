@@ -96,11 +96,13 @@ class TestSpawnTypes < Minitest::Test
     Mistri::Agent.new(provider: parent_fake, tools: [spawn], session:).run("go")
     definition = JSON.generate(parent_fake.requests.first[:options][:tools].first)
     refusal = session.messages.select(&:tool?).last.text
+    all_deferred = Mistri::SubAgent.spawner(provider: child_fake, tools: [later]).spec
 
     refute_includes definition, "tracker__create_issue"
-    assert_includes definition, "Available without loading: archive."
+    assert_includes definition, "Available without loading: archive. The others load on demand"
+    assert_includes JSON.generate(all_deferred), "Every tool of the pool loads on demand"
     assert_equal(%w[tool_search], child_fake.requests.first[:options][:tools].map { |t| t[:name] })
-    assert_match(/unknown tool "nope"; available: archive and 1 that loads on demand/, refusal)
+    assert_match(/unknown tool "nope"; available: archive, 1 that loads on demand/, refusal)
   end
 
   def test_spawner_owns_its_tool_pool_and_model_allowlist

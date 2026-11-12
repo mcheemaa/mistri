@@ -263,10 +263,9 @@ module Mistri
     # named.
     def available
       later, ready = @pool.partition(&:deferred?)
-      names = ready.map(&:name).join(", ")
-      return "available: #{names}" if later.empty?
-
-      "available: #{names} and #{later.length} that load#{"s" if later.length == 1} on demand"
+      listed = ready.map(&:name)
+      listed << "#{later.length} that load#{"s" if later.length == 1} on demand" if later.any?
+      "available: #{listed.join(", ")}"
     end
 
     def schema
@@ -309,8 +308,13 @@ module Mistri
              "grants none)"
       return [text, { type: "string", enum: names }] if ready.length == names.length
 
-      ["#{text}. Available without loading: #{ready.join(", ")}. To grant a tool that loads " \
-       "on demand, use the name tool_search returned.", { type: "string" }]
+      pool = if ready.empty?
+               "Every tool of the pool loads on demand"
+             else
+               "Available without loading: #{ready.join(", ")}. The others load on demand"
+             end
+      ["#{text}. #{pool}: grant one by its exact name, or omit tools and the child loads " \
+       "what it needs.", { type: "string" }]
     end
 
     def description
