@@ -209,6 +209,7 @@ class TestLocks < Minitest::Test
     locks.clear_flag("stop:1")
 
     refute locks.held?("run:1")
+    refute locks.held?("probe"), "the outage probe is not a lease"
     refute locks.flag?("stop:1")
   end
 
@@ -231,7 +232,8 @@ class TestLocks < Minitest::Test
     end.new
     locks = Mistri::Locks::RailsCache.new(cache: down)
 
-    assert_raises(Mistri::Error) { locks.held?("run:1") }
+    error = assert_raises(Mistri::Error) { locks.held?("run:1") }
+    assert_equal "lock cache unreachable reading mistri:locks:run:1", error.message
   end
 
   def test_rails_cache_reads_false_from_a_plain_write_as_a_failure

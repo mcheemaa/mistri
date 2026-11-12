@@ -35,7 +35,8 @@ module Mistri
         return true if @cache.exist?(scoped(key))
 
         # A miss and an outage read alike, so confirm the cache answers and read again.
-        write("probe", 60)
+        @cache.write("#{@namespace}-probe", true, expires_in: 60) ||
+          raise(Error, "lock cache unreachable reading #{scoped(key)}")
         @cache.exist?(scoped(key))
       end
 
