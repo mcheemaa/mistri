@@ -176,21 +176,19 @@ class TestMcpClient < Minitest::Test
     end
   end
 
-  def test_a_token_lambda_refreshes_once_on_unauthorized
-    with_server(require_token: "fresh") do |server|
-      handed = %w[stale fresh]
-      resolved = []
-      token = lambda do
-        value = handed.length > 1 ? handed.shift : handed.first
-        resolved << value
-        value
-      end
-      client = remote_client(server, token: token)
-      result = client.call_tool("echo", { "text" => "hi" })
+  def test_a_token_lambda_refreshes_once_on_unauthorized_whichever_call_connects
+    with_server(require_token: "fresh", instructions: "Echo with care.") do |server|
+      [%w[call_tool echo], %w[instructions], %w[connect]].each do |first|
+        handed = %w[stale fresh]
+        resolved = []
+        token = -> { resolved.push(handed.length > 1 ? handed.shift : handed.first).last }
+        client = remote_client(server, token: token)
+        client.public_send(*first)
 
-      assert_equal "echo: hi", result.dig("content", 0, "text")
-      assert_equal "stale", resolved.first, "the first attempt used the stale token"
-      assert_includes resolved, "fresh"
+        assert_equal "Echo with care.", client.instructions
+        assert_equal "stale", resolved.first, "the first attempt used the stale token"
+        assert_includes resolved, "fresh"
+      end
     end
   end
 
@@ -199,6 +197,10 @@ class TestMcpClient < Minitest::Test
       client = remote_client(server, token: "wrong")
 
       error = assert_raises(Mistri::AuthenticationError) { client.call_tool("echo", {}) }
+      assert_raises(Mistri::AuthenticationError) { client.connect }
+      assert_raises(Mistri::AuthenticationError) do
+        remote_client(server, token: -> { "stale" }).instructions
+      end
       revoked = Mistri::AuthenticationError.new("refresh credential revoked", status: 400)
       own = assert_raises(Mistri::AuthenticationError) do
         remote_client(server, token: -> { raise revoked }).call_tool("echo", {})

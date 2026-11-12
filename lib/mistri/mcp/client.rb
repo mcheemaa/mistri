@@ -76,7 +76,7 @@ module Mistri
       # The instructions field of the server's initialize result, or nil.
       def instructions
         @mutex.synchronize do
-          ensure_connected unless @described
+          handshake unless @described
           @instructions
         end
       end
@@ -102,7 +102,7 @@ module Mistri
       end
 
       def connect
-        @mutex.synchronize { ensure_connected }
+        @mutex.synchronize { handshake }
         self
       end
 
@@ -112,6 +112,15 @@ module Mistri
       end
 
       private
+
+      # The handshake with the one token refresh a request gets.
+      def handshake(refreshed: false)
+        ensure_connected
+      rescue AuthenticationError
+        raise if refreshed || !@wire.refreshable?
+
+        handshake(refreshed: true)
+      end
 
       def ensure_connected
         return if @connected
