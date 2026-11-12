@@ -51,8 +51,8 @@ module Mistri
               "choose argument_validator or complete_argument_validator, not both"
       end
 
-      @name = name.to_s
-      @description = description
+      @name = -name.to_s
+      @description = description.is_a?(String) ? -description : description
       @schema_validator = Schema.tool_validator(
         input_schema, complete: !complete_argument_validator.nil?
       )
@@ -132,6 +132,16 @@ module Mistri
     # any adds the tool_search tool, which finds and loads them.
     def deferred?
       @deferred
+    end
+
+    # The document tool_search indexes for this tool. The block builds it on
+    # the first call, so agents that share the tool share the document. It
+    # holds no reference to the tool, so a copy of the tool shares it too. A
+    # frozen tool that has none builds one for each call.
+    def search_document
+      return @search_document || yield if frozen?
+
+      @search_document ||= yield
     end
 
     # The provider-facing definition; every serializer accepts this shape.

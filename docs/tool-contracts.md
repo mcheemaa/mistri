@@ -440,11 +440,15 @@ Mistri.agent("claude-opus-5-5", tools: tools,
 `defers_tools: false` selects the growing list on the official origin.
 
 What it costs in the process is small. Building an agent with deferred tools
-costs what a flat list costs. The search index is built once, on an agent's
-first search, from each deferred tool's description and schema. Building a
-request adds two passes over the history, one that collects the loaded names
-and one that finds the newest reminder with the list of deferred tools, and
-on OpenAI one pass over the loaded definitions to index them by name.
+costs what a flat list costs. The search document of a deferred tool is built
+from its description and schema on the first search that covers it, and is
+kept on the tool. Agents that are given the same tool objects therefore share
+the index, so bridge a server once for the process. A tool's name,
+description and schema are fixed once it is built; a different definition is
+a new tool. Building a request adds
+two passes over the history, one that collects the loaded names and one that
+finds the newest reminder with the list of deferred tools, and on OpenAI one
+pass over the loaded definitions to index them by name.
 
 On the wire no request carries the definition of a deferred tool until a
 result loads it, on any provider.

@@ -56,7 +56,7 @@ module Mistri
         names = loaded.call
         fresh, held, left = turn.synchronize do
           unloaded(matches, names, limit).tap do |picked, _|
-            names.concat(picked.map { |document| document.tool.name })
+            names.concat(picked.map(&:name))
           end
         end
         answer(fresh, held, missing.to_a, left, named: !chosen.nil?, full: fresh.length == limit)
@@ -72,7 +72,7 @@ module Mistri
     def rank(query, tools, limit)
       return [] if limit <= 0
 
-      Index.search(query, Index.documents(tools)).first(limit).map(&:tool)
+      tools.values_at(*Index.positions(query, Index.documents(tools)).first(limit))
     end
 
     # The tools a query names, the names in it that match no tool, and the
@@ -125,7 +125,7 @@ module Mistri
       room = LOAD_BYTES
       matches.each do |document|
         open = left.zero? && fresh.length < limit
-        if have.include?(document.tool.name)
+        if have.include?(document.name)
           held << document if open
         elsif open && (fresh.empty? || document.size <= room)
           fresh << document
@@ -187,13 +187,12 @@ module Mistri
       lines << "No tool is named #{missing.join(", ")}." if missing.any?
       return "No tool matches. Try other words." if lines.empty?
 
-      ToolResult.new(content: lines.join("\n"),
-                     loads: (fresh + held).map { |document| document.tool.name })
+      ToolResult.new(content: lines.join("\n"), loads: (fresh + held).map(&:name))
     end
     private_class_method :answer
 
     def names(documents)
-      listed = documents.first(MAX_LIMIT).map { |document| document.tool.name }.join(", ")
+      listed = documents.first(MAX_LIMIT).map(&:name).join(", ")
       documents.length > MAX_LIMIT ? "#{listed} and #{documents.length - MAX_LIMIT} more" : listed
     end
     private_class_method :names

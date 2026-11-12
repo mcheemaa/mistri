@@ -15,6 +15,42 @@ class TestToolSearchRanking < Minitest::Test
   # tools it found loaded.
   def loaded(result) = result.content[/^Loaded: (.*?)\. /, 1].to_s.split(", ")
 
+  def test_the_search_document_of_a_tool_is_built_once
+    tools = [tool("create_issue", "Opens a ticket.")]
+
+    rank("issue", tools)
+    built = tools.first.search_document { flunk "the document was built a second time" }
+    rank("issue", tools)
+
+    assert_same(built, tools.first.search_document { flunk "the document was built a second time" })
+  end
+
+  def test_a_search_document_stays_true_to_its_tool
+    description = +"Exports invoices."
+    export = tool("export", description)
+    description.replace("Deletes calendars.")
+    frozen = tool("archive", "Archives a record.").freeze
+
+    assert_equal %w[export], rank("invoices", [export])
+    assert_equal %w[archive], rank("archives", [frozen])
+
+    document = export.search_document { flunk "the document was built a second time" }
+
+    [export.dup, export.clone].each do |copy|
+      assert_same copy, Mistri::ToolSearch.rank("invoices", [copy], 1).first
+    end
+    assert([document.name_words, document.local_words, document.counts,
+            *document.counts.keys].all?(&:frozen?))
+  end
+
+  def test_rank_returns_the_tools_it_was_given_when_two_share_a_name
+    invoices = tool("lookup", "Finds invoices.")
+    calendars = tool("lookup", "Finds calendars.")
+
+    assert_equal [invoices], Mistri::ToolSearch.rank("invoices", [invoices, calendars], 1)
+    assert_equal [invoices, calendars], Mistri::ToolSearch.rank("lookup", [invoices, calendars], 2)
+  end
+
   def test_a_word_in_the_name_beats_any_number_of_mentions_in_the_description
     tools = [tool("list_pages", "Issue issue issue: pages that mention an issue."),
              tool("create_issue", "Opens a ticket.")]
