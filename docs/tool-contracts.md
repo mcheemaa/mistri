@@ -317,7 +317,9 @@ search loads them.
 
 The deferred tools are listed in the conversation. With its first request an
 agent appends a reminder to the session, after the user's message, that names
-every deferred tool. It appends one again when the list has changed, and
+every deferred tool, the loaded ones too. It states that a tool whose
+definition the model has is called directly and that any other is loaded
+first. The agent appends one again when the list has changed, and
 after a compaction that summarized the previous one. An agent that holds no
 deferred tool, on a session that has a list, appends one that states so. Past
 20 KB of names the reminder gives the number of tools under each name prefix
