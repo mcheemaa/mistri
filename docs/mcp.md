@@ -111,6 +111,58 @@ client = Mistri::MCP::Client.new(
 Repeated cursors, malformed collections, and exceeded limits raise instead of
 looping or allocating without bound.
 
+### Storing a server's listing
+
+Listing a server's tools takes a connection, and a stdio server must be
+started first. With many servers that is too slow to repeat each time an
+agent is built. `client.listing` returns the server's tools, and its
+`instructions` when it sent any, as plain JSON. Store it, and pass it to the
+clients built later:
+
+```ruby
+# Once, in a job.
+kept = Mistri::MCP::Client.new(url: server_url, token: token).listing
+store.write("tracker", kept)
+
+# Each time an agent is built.
+client = Mistri::MCP::Client.new(url: server_url, token: token,
+                                 listing: store.read("tracker"))
+tools = Mistri::MCP.tools(client, prefix: "tracker", deferred: true)
+```
+
+A client built with `listing:` returns `tools` and `instructions` from it and
+sends no request. It connects when a tool is first called, and a stdio server
+is not started before that. Building an agent over many servers then opens no
+connection.
+
+`client.listing(refresh: true)` lists the server again. When to do that is
+the host's decision. Until then a tool the server has removed fails when it
+is called, and a tool it has added is not offered.
+
+### Server instructions
+
+A server may send `instructions` in its initialize result: text on how to use
+its tools. `client.instructions` returns it, and `Mistri::MCP.tools` sets it
+on every tool it bridges, as `Tool#instructions`.
+
+An agent appends the instructions of every server to the conversation with
+its first request, before the model chooses a tool, so they can guide the
+choice. They are appended as one reminder, a user message whose `reminder` is
+`"tool_instructions"`. It holds one text block for each server, which names
+that server's tools. A server's instructions are cut at 2,000 bytes.
+
+When the text blocks of all servers are more than 20,000 bytes together, the
+instructions of a server whose tools are all deferred are appended with the
+request after one of its tools is loaded. A server with a tool that is not
+deferred is not delayed.
+
+After a compaction that summarized them, the instructions are appended again
+by the same rule.
+
+The instructions are text from the server. On every provider they are sent as
+text of a user turn, in a system-reminder block that names the tools, and not
+inside a tool result. Give them the trust you give that server.
+
 `Mistri::MCP.tools` filters remote names with `allow:` and `deny:`. `prefix:`
 creates local names such as `linear__create_issue` while the remote call still
 uses `create_issue`. Duplicate local tool names from two servers make Agent
@@ -160,6 +212,71 @@ and overrides the shared default.
 loads them, so the definitions of a server with a long tool list are left out
 of every request until one of its tools is needed. See
 [Tools on demand](tool-contracts.md#tools-on-demand).
+
+## Many servers
+
+An agent can be given the tools of tens or hundreds of servers. Four things
+keep that cheap, and each is a host decision that Mistri supports:
+
+1. List each server once, in a job, and store the listing. Listing takes a
+   connection for each server, so run the servers in parallel and let one
+   failure leave the others:
+
+   ```ruby
+   listings = servers.to_h do |name, url|
+     [name, Thread.new { Mistri::MCP::Client.new(url: url).listing }]
+   end
+   listings.each do |name, thread|
+     store.write(name, thread.value)
+   rescue StandardError => e
+     report(name, e)
+   end
+   ```
+
+2. Build the clients from the stored listings and bridge them once for the
+   process. Bridging validates each schema, so it is the part worth doing
+   once. Give every agent the same tool objects:
+
+   ```ruby
+   TOOLS = servers.flat_map do |name, url|
+     listing = store.read(name)
+     next [] unless listing
+
+     client = Mistri::MCP::Client.new(url: url, listing: listing)
+     Mistri::MCP.tools(client, prefix: name, deferred: true)
+   end
+
+   Mistri.agent("claude-haiku-5-5", tools: [*own_tools, *TOOLS])
+   ```
+
+   No connection is opened here. A server without a stored listing is left
+   out, because a client built with `listing: nil` lists the server itself
+   and connects to do so. A client connects when one of its tools is first
+   called, and one client runs one call at a time. A host whose servers take
+   a token for each user builds the clients of that user instead and keeps
+   them for the user's session. After a listing is stored again, bridge that
+   server again and replace its tools: a bridged tool keeps the definition
+   it was built from.
+
+3. Defer the tools, as above. The conversation then holds the names of the
+   tools and the instructions of the servers, and a request carries the
+   definition of a tool once a search has loaded it. When the instructions
+   are more than 20,000 bytes together, a server's instructions are appended
+   once one of its tools is loaded. See
+   [Tools on demand](tool-contracts.md#tools-on-demand) and
+   [Server instructions](#server-instructions).
+
+4. Expect a server to be unreachable when it is first used. Whether a server
+   can be reached is not known until one of its tools is called. If no
+   connection can be established then, the tool's result states that it did
+   not run, and the run continues.
+
+Measured in an application with 22 servers and 303 tools: listing every
+server took 21.6 seconds, once. After that, building the 22 clients took
+34 ms, bridging 88 ms once for the process, and building an agent 0.5 ms. The
+first search of the process took 33.5 ms and each later agent's first search
+0.5 ms. Every request carried two tool definitions until a search loaded
+more.
 
 ## Schema authority
 
@@ -272,6 +389,13 @@ remains authoritative. The wire is still reset for the next operation.
 Session-expired and authentication retries occur only through explicit server
 responses that establish the request was not accepted under the old session or
 credential. An ambiguous outcome never takes those replay paths.
+
+The opposite case is a call that was never sent. A client connects on its
+first request, so a server that cannot be reached fails in the handshake,
+before `tools/call` leaves. `Client#call_tool` raises a copy of that error
+tagged with `Mistri::MCP::NotSent`, of the same class. A bridged tool turns it
+into an error result that states no connection could be established and the
+tool did not run, so the model does not report a partial effect.
 
 ## Remote network policy
 

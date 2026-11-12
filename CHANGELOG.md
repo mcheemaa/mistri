@@ -11,6 +11,33 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   the model was told to replace a running worker and `max_children`
   undercounted. On Rails 7.0 and 7.1, where a failed cache write answers
   false, `renew` and `set_flag` now raise too.
+- The instructions of an MCP server reach the model. `MCP.tools` sets them on
+  each bridged tool as `Tool#instructions`. An agent appends the instructions
+  of every server to the conversation with its first request, as one reminder
+  that holds a text block for each server, cut at 2,000 bytes. When they are
+  more than 20,000 bytes together, the instructions of a server whose tools
+  are all deferred are appended after one of its tools is loaded. They are
+  appended again after a compaction that summarized them.
+- An authorization failure on an MCP server has its own error message. A 401
+  or 403 from an MCP server raised `AuthenticationError` with the message
+  "invalid or missing API key", which describes a model provider. The message
+  now states that the MCP server did not authorize the request. The class,
+  the status and the response body are unchanged, and an error raised by a
+  host's token callable is passed on as it is.
+- A bridged MCP tool whose server cannot be reached reports that it did not
+  run. The failure happens in the handshake, before the call is sent, and the
+  tool result read "The tool may have completed partially; verify its effects
+  before retrying", so a model reported a possible partial effect to the
+  user. `Client#call_tool` now raises a copy of an error from before the call
+  was sent, tagged with `MCP::NotSent`, and the bridged tool's result states
+  that no connection could be established and the tool did not run.
+- An MCP client can be built from a stored listing. `Client#listing` returns
+  the server's tools and its instructions as JSON for a host to store, and a
+  client built with `listing:` returns them without a request and connects
+  only when a tool is called. Building an agent over many servers then opens
+  no connection, and a stdio server is not started until one of its tools is
+  called. `Client#instructions` returns the instructions the server sent in
+  its initialize result.
 - An OpenAI stream failure keeps its reason. The Responses API can send a
   failure's code and message nested under `error`, and Mistri read them only
   at the top of the record. The turn ended as `provider error`, and a refusal
@@ -39,14 +66,26 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   the model until it is needed, so a long tool list no longer costs its
   definitions on every round. An agent that holds a deferred tool adds a
   `tool_search` tool: the model asks in words, the best matches are loaded,
-  and it calls them from its next step. A load is stored with the session, so
-  a later run offers the same tools. A tool result can load tools itself with
-  `ToolResult.new(content:, loads:)`. On Anthropic the deferred definitions
-  travel marked to stay out of the prompt and a load is a reference to one,
-  so the tool list never changes and the prompt cache holds across a load.
-  On OpenAI, for gpt-5.4 and later except the nano models, a load is an item
-  in the input that makes the tools callable from there on, which keeps the
-  cache as well.
+  and it calls them from its next step. A query that is a tool's name, or
+  `select:` and a list of names, loads those tools and no others, and a tool
+  is not loaded twice: a search that finds a tool loaded names it in its
+  result, so the tool stays loaded while that result is in the history. A call to a deferred tool that was not loaded does not
+  run, and its error names the search to run. A load is stored with the
+  session, so a later run offers the same tools. A compaction keeps the names
+  of the loaded tools, and the summary message lists them with an instruction
+  to load the needed ones again. A call to one of them with invalid
+  arguments is reported as a call to a tool that is not loaded. The names of the deferred tools are listed in
+  the conversation: the agent appends a user message with `reminder` set,
+  which a host hides from a person. The definition of `tool_search` does not
+  change with the list, so connecting a server keeps the prompt cache. A tool
+  result can load tools itself with
+  `ToolResult.new(content:, loads:)`. On Anthropic a loaded definition travels
+  marked to stay out of the prompt and a load is a reference to it, so the
+  prompt cache holds across a load. On OpenAI, for gpt-5.4 and later except
+  the nano models, a load is an item in the input that makes the tools
+  callable from there on, which keeps the cache as well. A provider built for
+  another origin takes `defers_tools: true` when that origin supports these
+  forms. Agents that are given the same tool objects share the search index.
 - A bridged MCP tool gets a name every provider takes. MCP allows dots,
   slashes and any length in a tool name, and one name the model's API refused
   failed the whole request. A name of letters, digits, underscores and

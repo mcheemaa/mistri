@@ -15,7 +15,9 @@ module Mistri
       additionalProperties: false
     }.freeze
 
-    attr_reader :name, :description, :input_schema, :timeout
+    # instructions is text from the tool's server on how to use its tools. An
+    # agent appends it to the conversation as a reminder.
+    attr_reader :name, :description, :input_schema, :timeout, :instructions
 
     # Define a tool. Give the argument shape as a JSON Schema value via
     # input_schema:, or build it in Ruby with a schema: block. The result is
@@ -34,7 +36,7 @@ module Mistri
 
     def initialize(name:, description:, input_schema: EMPTY_SCHEMA, eager_input_streaming: false,
                    needs_approval: false, ends_turn: false, timeout: nil, deferred: false,
-                   argument_normalizer: nil, argument_validator: nil,
+                   instructions: nil, argument_normalizer: nil, argument_validator: nil,
                    complete_argument_validator: nil, &handler)
       raise ArgumentError, "tool #{name.inspect} needs a handler block" unless handler
       unless argument_normalizer.nil? || argument_normalizer.respond_to?(:call)
@@ -51,8 +53,8 @@ module Mistri
               "choose argument_validator or complete_argument_validator, not both"
       end
 
-      @name = name.to_s
-      @description = description
+      @name = -name.to_s
+      @description = description.is_a?(String) ? -description : description
       @schema_validator = Schema.tool_validator(
         input_schema, complete: !complete_argument_validator.nil?
       )
@@ -62,6 +64,7 @@ module Mistri
       @ends_turn = ends_turn
       @timeout = timeout
       @deferred = deferred
+      @instructions = instructions
       @argument_normalizer = argument_normalizer
       @argument_validator = argument_validator
       @complete_argument_validator = complete_argument_validator
@@ -132,6 +135,16 @@ module Mistri
     # any adds the tool_search tool, which finds and loads them.
     def deferred?
       @deferred
+    end
+
+    # The document tool_search indexes for this tool. The block builds it on
+    # the first call, so agents that share the tool share the document. It
+    # holds no reference to the tool, so a copy of the tool shares it too. A
+    # frozen tool that has none builds one for each call.
+    def search_document
+      return @search_document || yield if frozen?
+
+      @search_document ||= yield
     end
 
     # The provider-facing definition; every serializer accepts this shape.

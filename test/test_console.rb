@@ -96,12 +96,12 @@ class TestConsole < Minitest::Test
   end
 
   def test_read_agent_renders_a_compact_transcript
-    _store, parent, = setup_family
+    _store, parent, done, = setup_family
+    done.append_message(Mistri::Message.reminder("deferred_tools", "The list."))
     output = Mistri::Console.read_agent.call({ "agent" => "Corgi" }, context_for(parent))
 
-    assert_match(/Corgi \(done\)/, output)
-    assert_match(/user: find the answer/, output)
-    assert_match(/done: The answer is 42\./, output)
+    assert_match(/Corgi \(done\).*user: find the answer/m, output)
+    assert_match(/done: The answer is 42\.\n\d+: reminder: deferred_tools$/, output)
   end
 
   def test_read_agent_reads_no_more_than_the_limit

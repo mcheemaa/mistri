@@ -19,13 +19,14 @@ module Mistri
 
       def initialize(api_key:, model: "gpt-6.1-sol", origin: DEFAULT_ORIGIN,
                      reasoning: DEFAULT_REASONING, service_tier: nil,
-                     catalog_pricing: nil, **transport_options)
+                     catalog_pricing: nil, defers_tools: nil, **transport_options)
         @api_key = api_key
         @model = model
         @reasoning = reasoning
         @service_tier = service_tier
         @official = official_origin?(origin)
         @catalog_pricing = catalog_pricing.nil? ? @official : catalog_pricing
+        @defers_tools = defers_tools
         @transport = Transport.new(origin: origin, **transport_options)
       end
 
@@ -42,11 +43,13 @@ module Mistri
       end
 
       # The API makes a tool callable from an item in the input, so an agent
-      # hands every deferred tool over as deferred_tools and the request's
-      # own tools never change. Another origin may not take the item, and a
-      # model that does not use such tools steadily is sent the loaded tools
-      # as tools.
-      def defers_tools? = @official && Models.tool_loading?(@model)
+      # passes the loaded deferred tools as deferred_tools and the request's
+      # own tools never change. Another origin may not support the item, and a
+      # model that does not use such tools reliably receives the loaded tools
+      # as tools. A host overrides either default with defers_tools:.
+      def defers_tools?
+        @defers_tools.nil? ? @official && Models.tool_loading?(@model) : @defers_tools
+      end
 
       def stream(messages:, system: nil, tools: [], signal: nil, **overrides, &emit)
         delivery = EventDelivery.wrap(emit)

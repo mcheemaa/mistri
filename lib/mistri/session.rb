@@ -237,10 +237,19 @@ module Mistri
 
     def carried_before(held, kept_from)
       before = held.entries.take(kept_from - held.offset)
+      kept = held.entries.drop(kept_from - held.offset)
       state = carried(held)
       state.merge("children" => state.fetch("children", []) + links_in(before),
                   "reported" => state.fetch("reported", []) | reports_in(before),
-                  "approvals" => state.fetch("approvals", []) | legacy_approvals_in(before))
+                  "approvals" => state.fetch("approvals", []) | legacy_approvals_in(before),
+                  "loaded" => (state.fetch("loaded", []) | loads_in(before)) - loads_in(kept))
+    end
+
+    # The deferred tools that results in these entries loaded. A failed
+    # result loads nothing, whatever it names.
+    def loads_in(entries)
+      entries.select { |entry| entry["type"] == "message" && !entry.dig("message", "tool_error") }
+             .flat_map { |entry| entry.dig("message", "loads").to_a }
     end
 
     # A decision written before decisions named their request is told apart
@@ -746,7 +755,7 @@ module Mistri
       end
       pairs = heal(pairs, replay_call_states(log, from:, held:))
       pairs = pairs.map { |message, index| [message, index && held.position(index)] }
-      compaction ? [[summary_message(compaction["summary"]), nil], *pairs] : pairs
+      compaction ? [[summary_message(compaction), nil], *pairs] : pairs
     end
 
     # A new summary invalidates prefix-bound thinking in the kept tail. Only
@@ -853,8 +862,17 @@ module Mistri
                     tool_name: call.name, tool_error: true), nil]
     end
 
-    def summary_message(summary)
-      Message.user("#{Compaction::SUMMARY_PREFACE}\n\n#{summary}")
+    # The summary, and after it the tools the summarized part had loaded. It
+    # is built from the compaction entry alone, so it never changes.
+    def summary_message(compaction)
+      text = "#{Compaction::SUMMARY_PREFACE}\n\n#{compaction["summary"]}"
+      loaded = compaction.dig("carried", "loaded").to_a
+      return Message.user(text) if loaded.empty?
+
+      Message.user("#{text}\n\nThese tools were loaded before this summary: " \
+                   "#{loaded.join(", ")}. Their definitions are no longer in your context. " \
+                   "Before you call one, load it again with #{ToolSearch::NAME}: use select: " \
+                   "followed by the names as the query. Load only the ones you need.")
     end
 
     # Each link entry opens its child's log in place, depth first, the way

@@ -23,6 +23,10 @@ module Mistri
     MAX_ARGUMENT_VIOLATIONS = 8
     MAX_ARGUMENT_ERROR_BYTES = 2048
     MAX_VIOLATION_SOURCE_BYTES = 4096
+    # One server's instructions in the conversation, in bytes, and all of
+    # them together when they are sent before any tool is loaded.
+    INSTRUCTIONS_BYTES = 2_000
+    INSTRUCTIONS_TOGETHER_BYTES = 20_000
     TOOL_ARGUMENT_VALIDATOR = Tool.instance_method(:validate_arguments)
     private_constant :MAX_ARGUMENT_VIOLATIONS, :MAX_ARGUMENT_ERROR_BYTES,
                      :MAX_VIOLATION_SOURCE_BYTES, :TOOL_ARGUMENT_VALIDATOR
@@ -160,14 +164,15 @@ module Mistri
 
     def install_tools(tools)
       deferred = tools.select { |tool| tool.respond_to?(:deferred?) && tool.deferred? }
-      @tools = deferred.empty? ? tools : tools + [ToolSearch.tool(deferred)]
+      @loaded = []
+      search = ToolSearch.tool(deferred, loaded: -> { @loaded }) unless deferred.empty?
+      @tools = search ? tools + [search] : tools
       @tools_by_name = @tools.to_h { |tool| [tool.name, tool] }
       raise ConfigurationError, "duplicate tool names" if @tools_by_name.length != @tools.length
 
       specs, @external_tool_validators = compile_tool_contracts
       names = deferred.to_h { |tool| [tool.name, true] }
       later, @eager_specs = specs.partition { |spec| names.key?(spec[:name]) }.map(&:freeze)
-      @deferred_list = later
       @deferred_specs = later.to_h { |spec| [spec[:name], spec] }.freeze
       @defers_tools = @provider.respond_to?(:defers_tools?) && @provider.defers_tools?
     end
@@ -366,7 +371,8 @@ module Mistri
     # model and a recovered retry never shows the subscriber an error it
     # walks back. Only the accepted attempt persists and terminates.
     def run_turn(signal, output_schema = nil, &emit)
-      history = @transform_context.reduce(@session.messages) do |messages, transform|
+      history = sending_instructions(listing_deferred_tools(@session.messages))
+      history = @transform_context.reduce(history) do |messages, transform|
         transform.call(messages)
       end
       attempt = 0
@@ -397,21 +403,89 @@ module Mistri
       end
     end
 
-    # A provider that can hold a definition back is handed every deferred
-    # tool, and says in its own way when a result loads one. Any other is
-    # sent the loaded tools as tools.
-    def tool_options(history)
-      return { tools: @eager_specs } if @deferred_specs.empty?
-      return { tools: @eager_specs, deferred_tools: @deferred_list } if @defers_tools
+    # The list goes into the conversation, not into a definition, so the tools
+    # and the system prompt of a request are unchanged by what a host connects.
+    # An agent without deferred tools appends nothing, unless the conversation
+    # holds a list from an agent that had some.
+    def listing_deferred_tools(messages)
+      @listing ||= Message.reminder("deferred_tools", ToolSearch.listing(@deferred_specs.keys))
+      latest = messages.reverse_each.find { |message| message.reminder == @listing.reminder }
+      return messages if latest == @listing || (latest.nil? && @deferred_specs.empty?)
 
-      { tools: offered_tools(history) }
+      messages + [@session.append_message(@listing)]
     end
 
-    # A deferred tool is offered once a tool result the model can see has
-    # loaded it. Loaded tools follow the others, in the order they came.
-    def offered_tools(history)
-      loaded = history.flat_map { |message| message.loads.to_a }.uniq
-      @eager_specs + @deferred_specs.values_at(*loaded).compact
+    # The instructions of each tool's server go into the conversation before
+    # the model chooses among its tools, so they can guide the choice. They
+    # are owed while no reminder in the conversation holds them, so a
+    # compaction and a load whose result failed afterwards lose nothing.
+    def sending_instructions(messages)
+      owed = owed_instructions(messages)
+      return messages if owed.empty?
+
+      note = Message.new(role: :user, content: owed, reminder: "tool_instructions")
+      messages + [@session.append_message(note)]
+    end
+
+    # Each server's instructions that no reminder in the conversation holds
+    # as one of its text blocks. Every server is due at once. When that is
+    # more than INSTRUCTIONS_TOGETHER_BYTES, a server with only deferred
+    # tools is due once one of its tools is loaded.
+    def owed_instructions(messages)
+      due = tool_instructions
+      return [] if due.empty?
+
+      if due.keys.sum(&:bytesize) > INSTRUCTIONS_TOGETHER_BYTES
+        held = (@tools_by_name.keys - @deferred_specs.keys) | loaded_names(messages)
+        due = due.select { |_text, names| names.intersect?(held) }
+      end
+      sent = messages.select { |message| message.reminder == "tool_instructions" }
+                     .flat_map { |message| message.content.grep(Content::Text).map(&:text) }
+      due.keys - sent
+    end
+
+    # Each distinct instructions text as the text block the model reads,
+    # with the names of the tools that carry it.
+    def tool_instructions
+      @tool_instructions ||=
+        @tools.select { |tool| tool.respond_to?(:instructions) }
+              .group_by { |tool| tool.instructions.to_s.strip }.except("")
+              .to_h do |text, tools|
+                names = tools.map(&:name)
+                [Reminder.wrap("The server of #{instructed(names)} gives these instructions " \
+                               "for using its tools:\n#{bounded_instructions(text)}"), names]
+              end
+    end
+
+    # Each server's tools by their prefix, and a tool without one by its name.
+    def instructed(names)
+      names.map { |name| name.include?("__") ? "#{name.split("__", 2).first}__*" : name }
+           .uniq.join(", ")
+    end
+
+    def bounded_instructions(text)
+      return text if text.bytesize <= INSTRUCTIONS_BYTES
+
+      "#{text.byteslice(0, INSTRUCTIONS_BYTES).scrub("")}\n" \
+        "[cut at #{INSTRUCTIONS_BYTES} of #{text.bytesize} bytes]"
+    end
+
+    def loaded_names(history)
+      history.reject(&:tool_error?).flat_map { |message| message.loads.to_a }.uniq
+    end
+
+    # A deferred tool is loaded once a tool result in the history has loaded
+    # it. A provider that defers natively receives the loaded definitions
+    # separately, in load order, and marks the loading result in its own wire
+    # form. Any other provider receives them after the eager tools.
+    def tool_options(history)
+      return { tools: @eager_specs } if @deferred_specs.empty?
+
+      @loaded = loaded_names(history)
+      loaded = @deferred_specs.values_at(*@loaded).compact
+      return { tools: @eager_specs, deferred_tools: loaded } if @defers_tools
+
+      { tools: @eager_specs + loaded }
     end
 
     def provider_output_schema(output_schema)
@@ -615,8 +689,17 @@ module Mistri
     def prepare_call(call, normalize:, signal: nil)
       call = call.with unless call.arguments_owned?
       tool = @tools_by_name[call.name]
-      return [call, unavailable_tool(call.name)] unless tool
+      refusal = uncallable(call.name, tool, fresh: normalize)
+      return [call, refusal] if refusal
 
+      prepared, failure = prepare_arguments(tool, call, normalize:, signal:)
+      # The model called a tool loaded before a compaction without its
+      # definition, so it cannot correct the arguments. It has to load the tool.
+      failure = unloaded_tool(call.name) if failure && normalize && unloaded?(call.name)
+      [prepared, failure]
+    end
+
+    def prepare_arguments(tool, call, normalize:, signal:)
       if call.arguments_error
         violation = if call.arguments_error == "invalid_json"
                       "arguments were not valid JSON"
@@ -830,6 +913,28 @@ module Mistri
 
     def unavailable_tool(name)
       content = "Unknown tool #{tool_label(name)}. The tool did not run; choose an available tool."
+      ToolResult.new(content: utf8_prefix(content, MAX_ARGUMENT_ERROR_BYTES), error: true)
+    end
+
+    # The error for a call that cannot run: no tool has the name, or the tool
+    # is deferred and no result has loaded it. A call that waited for approval
+    # was loaded when the model made it, and the definition of a tool loaded
+    # before a compaction was sent to the model then.
+    def uncallable(name, tool, fresh:)
+      return unavailable_tool(name) unless tool
+      return unless fresh && unloaded?(name)
+
+      carried = @session.last_compaction&.dig("carried", "loaded").to_a
+      unloaded_tool(name) unless carried.include?(name)
+    end
+
+    def unloaded?(name) = @deferred_specs.key?(name) && !@loaded.include?(name)
+
+    # The model has a name and no schema, so its arguments would be a guess.
+    def unloaded_tool(name)
+      content = "Tool #{tool_label(name)} is not loaded, so it did not run. Load it with " \
+                "#{ToolSearch::NAME} first: write select:#{name} as the query, with the other " \
+                "tools you expect to need after it, separated by commas. Then call it again."
       ToolResult.new(content: utf8_prefix(content, MAX_ARGUMENT_ERROR_BYTES), error: true)
     end
 

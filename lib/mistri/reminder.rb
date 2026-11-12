@@ -20,10 +20,13 @@ module Mistri
       new(interval: interval, text: text, after: after)
     end
 
+    # The wire form of a harness note inside a user turn.
+    def self.wrap(text) = "<system-reminder>\n#{text}\n</system-reminder>"
+
     def initialize(interval:, text:, after: nil)
       @interval = [interval.to_i, 1].max
       @after = (after || @interval).to_i
-      @body = "<system-reminder>\n#{text}\n</system-reminder>"
+      @body = Reminder.wrap(text)
     end
 
     def call(messages)

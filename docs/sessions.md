@@ -39,6 +39,10 @@ is not an authorization or redaction boundary: prompts, tool arguments and
 results, UI payloads, errors, and provider metadata can remain. Authorize and
 redact before exposing a transcript.
 
+A user message with `reminder` set was written by Mistri for the model, such
+as the list of deferred tools or a server's instructions. The user did not
+write it. Hide it in a conversation shown to a person.
+
 Mistri does not encrypt JSONL or Active Record session payloads. The host owns
 storage encryption, access control, retention, deletion, and redaction specific
 to the application. Treat the complete session record as sensitive data.
@@ -91,8 +95,8 @@ built-in stores answer both.
 A compaction written by Mistri is a checkpoint. Besides the summary and
 `kept_from`, the position replay starts at, its entry carries what a later
 turn needs from before that position: the links to sub-agents, which of them
-have reported, and the old-style `call_N` ids that already took part in an
-approval. When the newest compaction is a checkpoint, a session's window is
+have reported, the old-style `call_N` ids that already took part in an
+approval, and the names of the deferred tools that were loaded. When the newest compaction is a checkpoint, a session's window is
 the entries from its `kept_from` to the end. Replay, the context size, the
 inbox, open approvals and the audit of tool calls all work on the window,
 however old the session is. `Session#children` adds the carried links, so it

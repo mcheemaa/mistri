@@ -127,6 +127,18 @@ class TestOpenAIDeferredTools < Minitest::Test
     other&.close
   end
 
+  def test_defers_tools_overrides_the_default_of_the_origin
+    gateway = Mistri::Providers::OpenAI.new(api_key: "k", origin: "https://gateway.example",
+                                            defers_tools: true)
+    plain = Mistri::Providers::OpenAI.new(api_key: "k", model: "gpt-6.1-terra", defers_tools: false)
+
+    assert_predicate gateway, :defers_tools?
+    refute_predicate plain, :defers_tools?
+  ensure
+    gateway&.close
+    plain&.close
+  end
+
   def test_a_name_repeated_in_one_result_is_declared_once
     history = [Mistri::Message.user("go"), calling(call("c1", "tool_search")),
                result("c1", loads: %w[create_issue create_issue list_teams create_issue]),

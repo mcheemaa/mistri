@@ -39,15 +39,12 @@ module Mistri
         attr_writer :protocol_version
 
         def call(payload, replayable:, &)
-          meta = @transport.post_either(@path, body: payload, headers: request_headers,
-                                               replayable: replayable, &)
-          capture_session(meta)
+          capture_session(post(payload, replayable: replayable, &))
           nil
         end
 
         def notify(payload)
-          discard = ->(_record) {}
-          @transport.post_either(@path, body: payload, headers: request_headers, &discard)
+          post(payload) { |_record| nil }
           nil
         end
 
@@ -63,6 +60,19 @@ module Mistri
         def close = @transport.close
 
         private
+
+        # The transport's message for a 401 or 403 describes a provider's API
+        # key. The headers are resolved first, so an error from the host's
+        # token callable is not taken for the server's answer.
+        def post(payload, **, &)
+          headers = request_headers
+          begin
+            @transport.post_either(@path, body: payload, headers: headers, **, &)
+          rescue AuthenticationError => e
+            raise AuthenticationError.new("the MCP server did not authorize the request",
+                                          status: e.status, body: e.body)
+          end
+        end
 
         def normalized_headers(headers)
           headers.each_with_object({}) do |(key, value), copy|

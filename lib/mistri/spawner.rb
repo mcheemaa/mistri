@@ -255,15 +255,21 @@ module Mistri
 
       by_name = @pool.to_h { |tool| [tool.name, tool] }
       names.map do |name|
-        by_name.fetch(name) do
-          raise ArgumentError,
-                "unknown tool #{name.inspect}; available: #{by_name.keys.join(", ")}"
-        end
+        by_name.fetch(name) { raise ArgumentError, "unknown tool #{name.inspect}; #{available}" }
       end
     end
 
+    # The pool as an error result lists it. Deferred tools are counted, not
+    # named.
+    def available
+      later, ready = @pool.partition(&:deferred?)
+      listed = ready.map(&:name)
+      listed << "tools that load on demand: #{later.length}" if later.any?
+      "available: #{listed.join(", ")}"
+    end
+
     def schema
-      pool_names = @pool.map(&:name)
+      granting = tools_argument
       type_names = ["general-purpose", *@types.keys]
       types = @types
       models = @models
@@ -280,11 +286,7 @@ module Mistri
         else
           string :instructions, "The child's system prompt", required: true
         end
-        if pool_names.any?
-          array :tools, "Exact tools to grant (omit for all, or the type's own list; " \
-                        "an empty list grants none)",
-                items: { type: "string", enum: pool_names }, uniqueItems: true
-        end
+        array :tools, granting.first, items: granting.last, uniqueItems: true if granting
         string :model, "Model for the child#{fallback}", enum: models if models.any?
         if dispatcher
           string :mode, "inline blocks until the report; background returns a receipt " \
@@ -292,6 +294,27 @@ module Mistri
                  enum: %w[inline background]
         end
       end
+    end
+
+    # The description and item schema of the tools argument. For a pool that
+    # holds deferred tools, the description names only the tools that are not
+    # deferred.
+    def tools_argument
+      names = @pool.map(&:name)
+      return if names.empty?
+
+      ready = @pool.reject(&:deferred?).map(&:name)
+      text = "Exact tools to grant (omit for all, or the type's own list; an empty list " \
+             "grants none)"
+      return [text, { type: "string", enum: names }] if ready.length == names.length
+
+      pool = if ready.empty?
+               "Every tool of the pool loads on demand"
+             else
+               "Available without loading: #{ready.join(", ")}. The others load on demand"
+             end
+      ["#{text}. #{pool}: grant one by its exact name, or omit tools and the child loads " \
+       "what it needs.", { type: "string" }]
     end
 
     def description

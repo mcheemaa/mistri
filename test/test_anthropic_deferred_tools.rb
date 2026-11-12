@@ -4,9 +4,10 @@ require "json"
 require_relative "test_helper"
 require_relative "support/stub_server"
 
-# On Anthropic every deferred definition travels with defer_loading, which
+# On Anthropic a loaded deferred definition travels with defer_loading, which
 # keeps it out of the prompt, and a result that loads tools carries
-# references to them. The tool list never changes, so the cache holds.
+# references to them. One reserved definition is sent from the first
+# request, so the cache holds across every load.
 class TestAnthropicDeferredTools < Minitest::Test
   SERIALIZER = Mistri::Providers::Anthropic::Serializer
   CALL = Mistri::ToolCall.new(id: "call_1", name: "tool_search", arguments: { "query" => "issue" })
@@ -30,9 +31,29 @@ class TestAnthropicDeferredTools < Minitest::Test
   def test_a_deferred_definition_is_marked_and_follows_the_others
     wire = SERIALIZER.tools([spec("lookup")], [spec("create_issue"), spec("list_teams")])
 
-    assert_equal(%w[lookup create_issue list_teams], wire.map { |tool| tool[:name] })
-    assert_equal([nil, true, true], wire.map { |tool| tool[:defer_loading] })
+    assert_equal(%w[lookup mistri_deferred_tools create_issue list_teams],
+                 wire.map { |tool| tool[:name] })
+    assert_equal([nil, true, true, true], wire.map { |tool| tool[:defer_loading] })
     assert_equal({ "type" => "object" }, wire.last[:input_schema])
+  end
+
+  def test_the_reserved_definition_is_sent_before_any_load_and_only_when_tools_are_deferred
+    waiting = SERIALIZER.tools([spec("lookup")], [])
+    plain = SERIALIZER.tools([spec("lookup")])
+
+    assert_equal([["lookup", nil], ["mistri_deferred_tools", true]],
+                 waiting.map { |tool| [tool[:name], tool[:defer_loading]] })
+    assert_equal(%w[lookup], plain.map { |tool| tool[:name] })
+  end
+
+  def test_a_host_tool_cannot_take_the_reserved_name_while_tools_are_deferred
+    taken = [spec("mistri_deferred_tools")]
+
+    [[taken, []], [[], taken]].each do |eager, deferred|
+      error = assert_raises(Mistri::ConfigurationError) { SERIALIZER.tools(eager, deferred) }
+      assert_match(/mistri_deferred_tools is reserved/, error.message)
+    end
+    assert_equal(%w[mistri_deferred_tools], SERIALIZER.tools(taken).map { |tool| tool[:name] })
   end
 
   def test_a_result_that_loads_tools_carries_references_and_its_text_follows
@@ -74,6 +95,25 @@ class TestAnthropicDeferredTools < Minitest::Test
                     content: [{ type: "text", text: "Loaded." }] }], wire.last[:content]
   end
 
+  def test_only_the_first_result_that_loads_a_tool_references_it
+    held = { type: "text", text: "Already loaded." }
+    turn = history(loading(%w[create_issue], tool_error: true),
+                   loading(%w[create_issue list_teams], id: "call_2"),
+                   loading(%w[create_issue], content: held[:text], id: "call_3"))
+    later = [Mistri::Message.assistant(tool_calls: [CALL], stop_reason: :tool_use),
+             loading(%w[list_teams create_issue], content: held[:text], id: "call_4")]
+    deferred = %w[create_issue list_teams]
+    wire = SERIALIZER.messages(turn + later, deferred:)
+    failed, first, second = wire[2][:content].first(3).map { |result| result[:content] }
+
+    assert_equal [{ type: "text", text: "Loaded." }], failed
+    assert_equal [{ type: "tool_reference", tool_name: "create_issue" },
+                  { type: "tool_reference", tool_name: "list_teams" }], first
+    assert_equal [held], second
+    assert_equal [held], wire.last[:content].first[:content]
+    assert_equal %w[create_issue list_teams], deferred
+  end
+
   def test_text_comes_after_every_result_of_the_turn
     plain = Mistri::Message.tool(content: "Order 7.", tool_call_id: "call_2", tool_name: "lookup")
     wire = SERIALIZER.messages(history(loading(%w[create_issue]), plain,
@@ -94,7 +134,7 @@ class TestAnthropicDeferredTools < Minitest::Test
     refute wire.last[:content].first.key?(:cache_control)
   end
 
-  def test_the_official_origin_holds_definitions_back_and_another_origin_does_not
+  def test_the_official_origin_defers_natively_and_another_origin_does_not_by_default
     official = Mistri::Providers::Anthropic.new(api_key: "k")
     other = Mistri::Providers::Anthropic.new(api_key: "k", origin: "https://gateway.example")
 
@@ -105,7 +145,19 @@ class TestAnthropicDeferredTools < Minitest::Test
     other&.close
   end
 
-  def test_the_request_carries_every_deferred_definition_and_the_references
+  def test_defers_tools_overrides_the_default_of_the_origin
+    gateway = Mistri::Providers::Anthropic.new(api_key: "k", origin: "https://gateway.example",
+                                               defers_tools: true)
+    plain = Mistri::Providers::Anthropic.new(api_key: "k", defers_tools: false)
+
+    assert_predicate gateway, :defers_tools?
+    refute_predicate plain, :defers_tools?
+  ensure
+    gateway&.close
+    plain&.close
+  end
+
+  def test_the_request_carries_the_loaded_definitions_and_the_references
     @server = Mistri::Test::StubServer.new do |socket, _request|
       @server.start_sse(socket)
       @server.sse_data(socket, { "type" => "message_stop" })
@@ -113,11 +165,12 @@ class TestAnthropicDeferredTools < Minitest::Test
     end
     @provider = Mistri::Providers::Anthropic.new(api_key: "k", origin: @server.origin)
 
-    @provider.stream(messages: history(loading(%w[create_issue])), tools: [spec("tool_search")],
+    @provider.stream(messages: history(loading(%w[create_issue mistri_deferred_tools])),
+                     tools: [spec("tool_search")],
                      deferred_tools: [spec("create_issue"), spec("list_teams")])
     body = JSON.parse(@server.requests.first[:body])
 
-    assert_equal([nil, true, true], body["tools"].map { |tool| tool["defer_loading"] })
+    assert_equal([nil, true, true, true], body["tools"].map { |tool| tool["defer_loading"] })
     assert_equal [{ "type" => "tool_reference", "tool_name" => "create_issue" }],
                  body["messages"].last["content"].first["content"]
   end
@@ -136,7 +189,7 @@ class TestAnthropicDeferredTools < Minitest::Test
     first, replay = @server.requests.map { |request| JSON.parse(request[:body]) }
 
     [first, replay].each do |body|
-      assert_equal([["create_issue", true]],
+      assert_equal([["mistri_deferred_tools", true], ["create_issue", true]],
                    body["tools"].map { |tool| [tool["name"], tool["defer_loading"]] })
     end
     assert_equal [{ "type" => "tool_reference", "tool_name" => "create_issue" }],
@@ -156,13 +209,13 @@ class TestAnthropicDeferredTools < Minitest::Test
     @provider.stream(messages: history(loading(%w[lookup])), deferred_tools: renamed)
     sent, other = @server.requests.map { |request| JSON.parse(request[:body]) }
 
-    assert_equal(%w[crm__lookup], sent["tools"].map { |tool| tool["name"] })
+    assert_equal(%w[mistri_deferred_tools crm__lookup], sent["tools"].map { |tool| tool["name"] })
     assert_equal [{ "type" => "tool_reference", "tool_name" => "crm__lookup" }],
                  sent["messages"].last["content"].first["content"]
     refute_includes JSON.generate(other["messages"]), "tool_reference"
   end
 
-  def test_an_agent_gives_such_a_provider_the_same_tools_every_turn
+  def test_an_agent_passes_such_a_provider_the_loaded_definitions_separately
     provider = Class.new(Mistri::Providers::Fake) { def defers_tools? = true }.new(
       turns: [{ tool_calls: [{ name: "tool_search", arguments: { "query" => "issue" } }] },
               { tool_calls: [{ name: "create_issue" }] }, { text: "Created." }]
@@ -174,11 +227,10 @@ class TestAnthropicDeferredTools < Minitest::Test
     Mistri::Agent.new(provider:, tools: [lookup, create, teams]).run("Open an issue.")
     requests = provider.requests.map { |request| request[:options] }
 
-    assert_equal 3, requests.length
-    requests.each do |options|
-      assert_equal(%w[lookup tool_search], options[:tools].map { |tool| tool[:name] })
-      assert_equal(%w[create_issue list_teams], options[:deferred_tools].map { |tool| tool[:name] })
-    end
+    assert_equal([%w[lookup tool_search]] * 3,
+                 requests.map { |options| options[:tools].map { |tool| tool[:name] } })
+    assert_equal([[], %w[create_issue], %w[create_issue]],
+                 requests.map { |options| options[:deferred_tools].map { |tool| tool[:name] } })
   end
 
   def test_an_agent_without_deferred_tools_passes_no_such_option

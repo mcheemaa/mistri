@@ -11,6 +11,46 @@ class TestToolSearchRanking < Minitest::Test
 
   def rank(query, tools, limit = 8) = Mistri::ToolSearch.rank(query, tools, limit).map(&:name)
 
+  # The names a search result states it loaded. Its loads also name the
+  # tools it found loaded.
+  def loaded(result) = result.content[/^Loaded: (.*?)\. /, 1].to_s.split(", ")
+
+  def test_the_search_document_of_a_tool_is_built_once
+    tools = [tool("create_issue", "Opens a ticket.")]
+
+    rank("issue", tools)
+    built = tools.first.search_document { flunk "the document was built a second time" }
+    rank("issue", tools)
+
+    assert_same(built, tools.first.search_document { flunk "the document was built a second time" })
+  end
+
+  def test_a_search_document_stays_true_to_its_tool
+    description = +"Exports invoices."
+    export = tool("export", description)
+    description.replace("Deletes calendars.")
+    frozen = tool("archive", "Archives a record.").freeze
+
+    assert_equal %w[export], rank("invoices", [export])
+    assert_equal %w[archive], rank("archives", [frozen])
+
+    document = export.search_document { flunk "the document was built a second time" }
+
+    [export.dup, export.clone].each do |copy|
+      assert_same copy, Mistri::ToolSearch.rank("invoices", [copy], 1).first
+    end
+    assert([document.name_words, document.local_words, document.counts,
+            *document.counts.keys].all?(&:frozen?))
+  end
+
+  def test_rank_returns_the_tools_it_was_given_when_two_share_a_name
+    invoices = tool("lookup", "Finds invoices.")
+    calendars = tool("lookup", "Finds calendars.")
+
+    assert_equal [invoices], Mistri::ToolSearch.rank("invoices", [invoices, calendars], 1)
+    assert_equal [invoices, calendars], Mistri::ToolSearch.rank("lookup", [invoices, calendars], 2)
+  end
+
   def test_a_word_in_the_name_beats_any_number_of_mentions_in_the_description
     tools = [tool("list_pages", "Issue issue issue: pages that mention an issue."),
              tool("create_issue", "Opens a ticket.")]
@@ -57,6 +97,59 @@ class TestToolSearchRanking < Minitest::Test
     assert_equal "b__get_status",
                  rank("get_status", [tool("a__get-status"), tool("b__get_status")]).first
     assert_equal 8, rank("get_open_pull_request_status", tools).length
+  end
+
+  def test_names_load_the_tools_they_name_and_no_others
+    named = %w[lookup crm__lookup crm__list docs__list].map { |name| tool(name) }
+    search = Mistri::ToolSearch.tool(named, loaded: [].method(:itself))
+    first = search.call({ "query" => "select:lookup, list, nope" })
+    second = search.call({ "query" => "crm__lookup docs__list crm__missing" })
+    third = search.call({ "query" => "lookup list" })
+
+    assert_equal %w[lookup crm__list docs__list], first.loads
+    assert_match(/^No tool is named nope\.$/, first.content)
+    assert_equal %w[crm__lookup], loaded(second)
+    assert_match(/^Already loaded, call them directly: docs__list\.$/, second.content)
+    assert_equal %w[crm__lookup docs__list], second.loads
+    assert_match(/^No tool is named crm__missing\.$/, second.content)
+    assert_empty loaded(third)
+    assert_match(/^Already loaded, call them directly: .*crm__lookup/, third.content)
+  end
+
+  def test_a_name_many_tools_share_loads_no_more_than_the_limit
+    search = Mistri::ToolSearch.tool(Array.new(30) { |index| tool("s#{index}__list") },
+                                     loaded: [].method(:itself))
+    one = search.call({ "query" => "list", "limit" => 1 })
+    listed = Array.new(25) { |index| "s#{index + 5}__list" }.join(",")
+    many = search.call({ "query" => "select:#{listed}" })
+    another = search.call({ "query" => "list", "limit" => 1 })
+    rest = search.call({ "query" => "list", "limit" => 20 })
+    none = search.call({ "query" => "list" })
+
+    assert_equal %w[s0__list], one.loads
+    assert_match(/^29 more tools with these names\. Search again to load them\.$/, one.content)
+    assert_equal 20, many.loads.length
+    assert_equal %w[s1__list], loaded(another)
+    assert_match(/^8 more tools with these names\./, another.content)
+    assert_equal 8, loaded(rest).length
+    assert_empty loaded(none)
+    assert_includes none.content, "s19__list and 10 more."
+    refute_includes none.content, "s20__list"
+  end
+
+  def test_a_search_loads_no_more_than_fits_one_load
+    heavy = Array.new(5) { |index| tool("export_#{index}", "Exports data. #{"x" * 9_000}") }
+    search = Mistri::ToolSearch.tool([*heavy, tool("small", "Exports.")],
+                                     loaded: [].method(:itself))
+    first = search.call({ "query" => "exports data" })
+    second = search.call({ "query" => "exports data" })
+    huge = Mistri::ToolSearch.tool([tool("huge", "Exports. #{"x" * 30_000}")])
+
+    assert_equal %w[export_0 export_1], first.loads
+    assert_match(/^More tools match than one load holds\. Search again to load them\.$/,
+                 first.content)
+    assert_equal %w[export_2 export_3], loaded(second)
+    assert_equal %w[huge], huge.call({ "query" => "exports" }).loads
   end
 
   def test_text_written_without_spaces_is_matched_by_pairs_of_characters

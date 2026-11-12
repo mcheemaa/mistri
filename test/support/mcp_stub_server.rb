@@ -16,8 +16,10 @@ module Mistri
       def initialize(tools: {}, sse: true, session: nil, page_size: nil,
                      require_token: nil, expire_after: nil, protocol: "2025-11-25",
                      drop_after: nil, malformed_after: nil, empty_after: nil,
-                     next_cursor: nil, trailing_after: nil, trailing_record: nil)
+                     next_cursor: nil, trailing_after: nil, trailing_record: nil,
+                     instructions: nil)
         @tools = tools
+        @instructions = instructions
         @sse = sse
         @session = session
         @page_size = page_size
@@ -84,7 +86,8 @@ module Mistri
         when "initialize"
           @initializes += 1
           { "protocolVersion" => @protocol, "capabilities" => { "tools" => {} },
-            "serverInfo" => { "name" => "stub", "version" => "1.0" } }
+            "serverInfo" => { "name" => "stub", "version" => "1.0" },
+            "instructions" => @instructions }.compact
         when "tools/list" then page(message.dig("params", "cursor"))
         when "tools/call" then call(message["params"])
         else {}

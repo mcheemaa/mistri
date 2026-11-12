@@ -39,24 +39,22 @@ class TestDeferredTools < Minitest::Test
 
     assert_predicate result, :completed?
     assert_equal %w[lookup_order tool_search], offered(provider, 0)
-    assert_equal %w[lookup_order tool_search tracker__create_issue tracker__delete_issue],
-                 offered(provider, 1)
+    assert_equal %w[lookup_order tool_search tracker__create_issue], offered(provider, 1)
     assert_equal ["ran tracker__create_issue"],
                  agent.session.messages.select { |m| m.tool_name == "tracker__create_issue" }
                       .map(&:text)
   end
 
   def test_the_search_answers_with_what_it_loaded_and_stores_the_names
-    agent, = agent([{ tool_calls: [search("create issue")] }, { text: "Found." }])
+    agent, = agent([{ tool_calls: [search("issue tracker")] }, { text: "Found." }])
 
     agent.run("Open an issue.")
     answer = agent.session.messages.find(&:tool?)
 
     assert_equal "tool_search", answer.tool_name
     assert_equal %w[tracker__create_issue tracker__delete_issue], answer.loads
-    assert_equal "Loaded 2 tools. You can call them from your next step:\n" \
-                 "- tracker__create_issue: Opens an issue in the tracker.\n" \
-                 "- tracker__delete_issue: Removes an issue from the tracker.", answer.text
+    assert_equal "Loaded: tracker__create_issue, tracker__delete_issue. You can call them " \
+                 "from your next step.", answer.text
     refute_predicate answer, :tool_error?
   end
 
@@ -114,10 +112,12 @@ class TestDeferredTools < Minitest::Test
                              { text: "Ready." }], tools: many)
 
     agent.run("Get ready.")
-    loads = agent.session.messages.select(&:tool?).map { |message| message.loads.length }
+    results = agent.session.messages.select(&:tool?)
+    loaded = results.map { |result| result.text[/^Loaded: (.*?)\. /, 1].split(", ") }
 
-    assert_equal [8, 20, 1], loads
-    assert_equal 21, offered(provider).length
+    assert_equal [5, 20, 1], loaded.map(&:length)
+    assert_equal 26, results.flat_map(&:loads).uniq.length
+    assert_equal 27, offered(provider).length
   end
 
   def test_a_blank_query_is_an_error_the_model_can_read
@@ -127,18 +127,24 @@ class TestDeferredTools < Minitest::Test
     answer = agent.session.messages.find(&:tool?)
 
     assert_predicate answer, :tool_error?
-    assert_match(/nothing to search by/i, answer.text)
+    assert_match(/no words to search for/, answer.text)
     assert_nil answer.loads
   end
 
-  def test_the_search_tool_says_how_many_tools_wait_under_each_prefix
-    agent, provider = agent([{ text: "Hello." }])
+  def test_the_deferred_tools_are_listed_once_and_in_the_conversation
+    agent, provider = agent([{ text: "Hello." }, { text: "Again." }])
 
     agent.run("Hello.")
-    description = provider.requests.first.dig(:options, :tools)
-                          .find { |spec| spec[:name] == "tool_search" }.fetch(:description)
+    agent.run("Again.")
+    listing = provider.requests.first[:messages].last.text
+    search = provider.requests.first.dig(:options, :tools)
+                     .find { |spec| spec[:name] == "tool_search" }
 
-    assert_match(/It searches: tracker \(2 tools\), docs \(1 tool\), 1 other\./, description)
+    assert_match(/\A<system-reminder>\n.*^tracker__create_issue$.*^refund_charge$/m, listing)
+    refute_includes listing, "lookup_order"
+    refute_includes search.fetch(:description), "tracker"
+    assert_equal %w[deferred_tools], agent.session.messages.filter_map(&:reminder)
+    assert_equal "Hello.", provider.requests.first[:messages].first.text
   end
 
   def test_an_agent_without_deferred_tools_is_as_before
@@ -148,6 +154,7 @@ class TestDeferredTools < Minitest::Test
     agent.run("Hello.")
 
     assert_equal %w[lookup_order refund_charge], offered(provider)
+    assert_empty agent.session.messages.filter_map(&:reminder)
   end
 
   def test_a_host_tool_named_tool_search_collides_loudly
@@ -158,14 +165,20 @@ class TestDeferredTools < Minitest::Test
     assert_match(/duplicate tool names/, error.message)
   end
 
-  def test_a_deferred_tool_called_before_it_was_loaded_still_runs
-    agent, provider = agent([{ tool_calls: [{ name: "refund_charge" }] }, { text: "Refunded." }])
+  def test_a_deferred_tool_called_before_it_was_loaded_does_not_run
+    ran = 0
+    agent, = agent([{ tool_calls: [{ name: "refund_charge" }] },
+                    { tool_calls: [search("select:refund_charge")] },
+                    { tool_calls: [{ name: "refund_charge" }] }, { text: "Refunded." }],
+                   tools: [tool("refund_charge") { ran += 1 }])
 
     result = agent.run("Refund it.")
+    refused = agent.session.messages.find(&:tool?)
 
     assert_predicate result, :completed?
-    assert_equal "ran refund_charge", agent.session.messages.find(&:tool?).text
-    assert_equal %w[lookup_order tool_search], offered(provider)
+    assert_predicate refused, :tool_error?
+    assert_match(/not loaded.*did not run.*tool_search.*select:refund_charge/m, refused.text)
+    assert_equal 1, ran
   end
 
   def test_any_tool_can_load_deferred_tools_with_its_result
@@ -205,30 +218,6 @@ class TestDeferredTools < Minitest::Test
     end
   end
 
-  def test_a_long_description_is_cut_in_the_search_answer
-    long = tool("tracker__export", "Exports everything. #{"It is very thorough. " * 5_000}")
-    agent, = agent([{ tool_calls: [search("export")] }, { text: "Found." }], tools: [long])
-
-    agent.run("Export it.")
-    answer = agent.session.messages.find(&:tool?)
-
-    assert_operator answer.text.bytesize, :<, 400
-    assert_match(/- tracker__export: Exports everything\. It is very thorough\./, answer.text)
-    assert answer.text.end_with?("...")
-  end
-
-  def test_a_description_is_cut_at_two_hundred_characters_whatever_they_are
-    fits = tool("tracker__fits", "文" * 200)
-    over = tool("tracker__over", "文" * 201)
-    agent, = agent([{ tool_calls: [search("tracker")] }, { text: "Found." }], tools: [fits, over])
-
-    agent.run("Find them.")
-    lines = agent.session.messages.find(&:tool?).text.lines.map(&:chomp)
-
-    assert_includes lines, "- tracker__fits: #{"文" * 200}"
-    assert_includes lines, "- tracker__over: #{"文" * 197}..."
-  end
-
   def test_a_query_is_read_up_to_five_hundred_characters
     target = tool("tracker__zebra", "Stripes.")
     padding = "q" * 494
@@ -249,7 +238,7 @@ class TestDeferredTools < Minitest::Test
     answer = agent.session.messages.find(&:tool?)
 
     assert_predicate answer, :tool_error?
-    assert_match(/nothing to search by/i, answer.text)
+    assert_match(/no words to search for/, answer.text)
   end
 
   def test_a_failed_result_loads_nothing
@@ -269,14 +258,14 @@ class TestDeferredTools < Minitest::Test
   end
 
   def test_text_from_an_after_tool_hook_keeps_the_load
-    shorten = ->(_call, result, _context) { result.content.lines.first.chomp }
+    shorten = ->(_call, result, _context) { result.content[0, 6] }
     agent, provider = agent([{ tool_calls: [search("refund")] }, { text: "Found." }],
                             after_tool: shorten)
 
     agent.run("Refund it.")
     answer = agent.session.messages.find(&:tool?)
 
-    assert_equal "Loaded 1 tool. You can call them from your next step:", answer.text
+    assert_equal "Loaded", answer.text
     assert_equal %w[refund_charge], answer.loads
     assert_equal %w[lookup_order tool_search refund_charge], offered(provider)
   end
@@ -303,6 +292,12 @@ class TestDeferredTools < Minitest::Test
 
     assert_equal :awaiting_approval, result.status
     assert_equal %w[refund_charge], result.pending.map(&:name)
+
+    agent.session.approve(result.pending.first.id)
+    later, = agent([{ text: "Refunded." }], session: agent.session, tools: [gated])
+
+    assert_predicate later.resume, :completed?
+    assert_equal "refunded", agent.session.messages.reverse_each.find(&:tool?).text
   end
 
   def test_a_specialist_with_deferred_tools_searches_for_them_itself

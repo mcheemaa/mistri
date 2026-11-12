@@ -307,24 +307,71 @@ agent = Mistri.agent("claude-haiku-5-5", tools: [lookup_order, refund, *tracker]
 An agent that holds a deferred tool adds one of its own, `tool_search`. The
 model asks it in words for what it needs to do. The search ranks the deferred
 tools by their name, their description and the names and descriptions of their
-parameters, loads the best matches (eight by default, twenty at most) and
+parameters, loads the best matches (five by default, twenty at most) and
 answers with their names. From its next step the model calls them like any
-other tool. The description of `tool_search` tells the model how many tools it
-searches under each name prefix, so give a server a prefix that says what it
-is.
+other tool. One load also holds no more than 20 KB of definitions; of 303
+definitions measured on 22 public servers, nine in ten were under 2.2 KB. A
+first match larger than that still loads, alone. When the size bound stops a
+load before its count, the result states that more tools match, and the next
+search loads them.
 
-A query that is a tool's name finds that tool first. The search matches words,
-so it finds what a name, a description or a parameter says and not what they
-mean. A run of Han, kana or Hangul characters, which often has no spaces
-between its words, is matched by pairs of characters, and by one character
-when the query is one. In words, half-width and full-width forms match each
-other; a name is matched as it is written. Other scripts written without
-spaces match poorly. A query is read up to 500 characters.
+The deferred tools are listed in the conversation. With its first request an
+agent appends a reminder to the session, after the user's message, that names
+every deferred tool, the loaded ones too. It states that a tool is loaded
+with `tool_search` before it is called, and that a tool is called directly
+once a search result has stated that it is loaded. The agent appends one
+again when the list has changed, and
+after a compaction that summarized the previous one. An agent that holds no
+deferred tool, on a session that has a list, appends one that states so. Past
+20 KB of names the reminder gives the number of tools under each name prefix
+instead, up to 20 KB of prefixes, and one count for the rest. So give a server
+a prefix that describes it. The definition of `tool_search` is the same
+whatever the list holds. Connecting a server therefore changes neither the
+tools nor the system prompt of a request, and the prompt cache holds.
 
-A load is stored with the tool result that made it. A later run on the same
-session offers the same tools with no new search. A load the model no longer
-sees is no longer in effect: after a compaction that summarizes the search,
-the model searches again.
+The reminder is a user message whose `reminder` is `"deferred_tools"`. The
+user did not write it, so a host that shows a conversation to a person hides
+a message with `reminder` set. A compaction does not summarize it.
+
+A query that is a tool's name loads that tool and no other. The same applies
+to the name without its prefix and to the words of the name, so `create issue`
+loads `tracker__create_issue`. The model can name several tools in one query:
+`select:` followed by their names, separated by commas, or their full names
+separated by spaces. The result lists the names that match no tool. A name
+that many tools share, such as `list` under thirty prefixes, loads no more
+than the limit, and the result gives the number that remain. When the query
+gives no limit, a search loads five tools, or as many as the query names
+when that is more, up to twenty.
+
+A tool that is already loaded is not loaded again. The result states that it
+is loaded and names it in its own `loads`, so the tool stays loaded while
+either result is in the history. Its definition is still sent once. The
+search continues with the next matches, so a repeated search loads tools
+further down the ranking. A search also treats a tool as loaded once another
+search of the same turn has selected it, so two searches in one turn do not
+load the same tool. If an `after_tool` hook cancels a load and no other
+result names the tool, a search loads it again from the next request.
+
+Any other query is a word search. It matches the words of a name, a
+description or a parameter, not their meaning. A run of Han, kana or Hangul
+characters, which often has no spaces between its words, is matched by pairs
+of characters, and by one character when the query is one. In words,
+half-width and full-width forms match each other; a name is matched as it is
+written. Other scripts written without spaces match poorly. A query is read
+up to 500 characters.
+
+A load is stored with the tool result that names it. A later run on the same
+session offers the same tools with no new search. A tool is loaded while a
+successful result that names it is in the history. After a compaction that
+summarizes every such result of a tool, the summary is followed by the names
+of the tools loaded before it.
+The message states that their definitions are no longer in the model's
+context and instructs it to load the ones it needs again by name. A call to
+one of them without a new load still runs, after the usual argument check:
+the model received that definition when it loaded the tool. When that check
+fails, the result states that the tool is not loaded and instructs the model
+to load it, because the model cannot correct arguments for a definition it
+no longer has.
 
 Any tool can load deferred tools with its result:
 
@@ -339,45 +386,76 @@ A name that is not a deferred tool of this agent is ignored, and a result
 marked `error: true` loads nothing.
 
 A deferred tool is still one of the agent's tools. Its approval gate, the
-argument check, `before_tool` and `after_tool` apply when it runs, and a call
-to one that was never loaded runs the same way. Keep the few tools every
-conversation needs out of deferral, so the model does not search for them. A
+argument check, `before_tool` and `after_tool` apply when it runs. A call to
+one that no result has loaded does not run: the model has the name and not
+the schema, so its arguments would be a guess. The error result instructs the
+model to load the tool with `tool_search` and call it again. A call that
+waited for approval was loaded when the model made it, and it is not checked
+again when the run resumes. Keep the few tools every conversation needs out
+of deferral, so the model does not search for them, and do not name a
+deferred tool in a system prompt as if it were already loaded. A
 host tool named `tool_search` beside a deferred tool is a duplicate name and
 fails Agent construction.
 
 How a loaded tool reaches the model depends on the provider, and a host does
 not choose:
 
-- Anthropic is sent every deferred definition marked to stay out of the
-  prompt, and a result that loads tools carries references to them. The tool
-  list never changes, so the prompt cache holds across a load. The result's
-  own text follows the tool results of that turn. This is used on the official
-  origin; another origin is treated like the last provider below.
+- Anthropic receives a deferred definition from the request whose result
+  loads it, marked `defer_loading` so that it stays out of the prompt, and
+  that result carries a reference to it. A later result that names the same
+  tool carries none, because every reference adds the definition to the
+  prompt again. The prompt cache holds across a load. One reserved definition, `mistri_deferred_tools`, is sent the same
+  way from the first request, because the first deferred definition in a
+  conversation would otherwise rebuild the cache once. No result references
+  it, so it never enters the prompt. No result can load it, and a tool of
+  that name beside deferred tools fails the request before it is sent. The
+  result's own text follows the tool results of that turn. This form is used
+  on the official origin. Another origin is treated like the last provider
+  below unless the host sets `defers_tools: true`.
 - OpenAI keeps the request's own tools as they are, and a result that loads
   tools is followed by an item in the input that makes them callable from
   that point on. The prompt cache holds across a load here too. This is used
   on the official origin, for the models OpenAI documents it for: gpt-5.4 and
   later, the nano models aside. An older model, a nano model and another
-  origin are treated like the provider below.
+  origin are treated like the provider below unless the host sets
+  `defers_tools:`.
 - Gemini, and any other provider, is sent the tools that are not deferred,
   then the loaded ones in the order they were loaded.
 
-What it costs in the process is small. Building an agent with deferred tools
-costs what a flat list costs. The search index is built once, on an agent's
-first search, from each deferred tool's description and schema. Building a
-request adds one pass over the history to find what was loaded, and on
-OpenAI one pass over the deferred definitions to index them by name.
+The growing list costs more for each load than the two forms above. A load
+changes the request's tools, so the prompt cache is built again from the
+start. On Anthropic's API a changed tool list also makes the thinking of
+earlier turns invalid: the request after a load is refused on the models that
+check it, unless the host set
+`block_binding: { prefix_mismatch_behavior: "drop_block" }`, and then that
+thinking is dropped. So a host that reaches Anthropic or OpenAI through a
+gateway that forwards requests unchanged sets `defers_tools: true`, which
+selects the form that keeps the cached prefix across a load:
 
-On the wire the forms differ. On OpenAI and Gemini a request carries no
-deferred definition until a result loads it. On Anthropic every deferred
-definition travels in the body of every request, as the API requires, though
-one is not counted as input until it is loaded. The body grows by the size
-of the definitions: 600 deferred tools of a kilobyte each add 600 KB to
-every request.
+```ruby
+Mistri.agent("claude-opus-5-5", tools: tools,
+             provider_options: { origin: "https://gateway.example", defers_tools: true })
+```
+
+`defers_tools: false` selects the growing list on the official origin.
+
+What it costs in the process is small. Building an agent with deferred tools
+costs what a flat list costs. The search document of a deferred tool is built
+from its description and schema on the first search that covers it, and is
+kept on the tool. Agents that are given the same tool objects therefore share
+the index, so bridge a server once for the process. A tool's name,
+description and schema are fixed once it is built; a different definition is
+a new tool. Building a request adds
+two passes over the history, one that collects the loaded names and one that
+finds the newest reminder with the list of deferred tools, and on OpenAI one
+pass over the loaded definitions to index them by name.
+
+On the wire no request carries the definition of a deferred tool until a
+result loads it, on any provider.
 
 A provider of your own is sent the growing tool list. To hold definitions
 back itself it answers `defers_tools?` with true, and `stream` is then given
-the deferred definitions as `deferred_tools:` beside `tools:`.
+the loaded deferred definitions as `deferred_tools:` beside `tools:`.
 
 ## Hand off the turn
 
