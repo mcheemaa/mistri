@@ -234,6 +234,7 @@ class TestLocks < Minitest::Test
 
     error = assert_raises(Mistri::Error) { locks.held?("run:1") }
     assert_equal "lock cache unreachable reading mistri:locks:run:1", error.message
+    refute locks.flag?("stop:1"), "a stop check reads a down cache as unset"
   end
 
   def test_rails_cache_reads_false_from_a_plain_write_as_a_failure
