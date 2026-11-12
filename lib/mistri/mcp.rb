@@ -47,6 +47,10 @@ module Mistri
     # A remote URL cannot be used without weakening the MCP network boundary.
     class UnsafeURLError < ConfigurationError; end
 
+    # Tags the copy of an error that Client#call_tool raises before it sends
+    # the call: no connection could be established, so the tool did not run.
+    module NotSent; end
+
     module_function
 
     # The server's tools as Mistri tools. allow/deny filter by remote name,
@@ -126,6 +130,9 @@ module Mistri
                   needs_approval: gate, deferred: deferred,
                   complete_argument_validator: complete_argument_validator) do |args|
         answer(client.call_tool(remote, args || {}))
+      rescue NotSent => e
+        ToolResult.new(content: "No connection to the MCP server could be established, so " \
+                                "#{local} did not run: #{e.message}", error: true)
       end
     rescue ConfigurationError => e
       raise ConfigurationError, "MCP tool #{label(remote)}: #{e.message}"

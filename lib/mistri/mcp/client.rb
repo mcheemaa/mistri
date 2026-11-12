@@ -90,8 +90,15 @@ module Mistri
         end
       end
 
+      # An error raised before the call is sent is raised as a copy tagged
+      # NotSent.
       def call_tool(name, arguments = {})
-        @mutex.synchronize { request("tools/call", { name: name, arguments: arguments }) }
+        @mutex.synchronize do
+          @sent = false
+          request("tools/call", { name: name, arguments: arguments })
+        rescue StandardError => e
+          raise @sent ? e : unsent(e)
+        end
       end
 
       def connect
@@ -133,6 +140,7 @@ module Mistri
 
       def request(method, params, reconnected: false, refreshed: false)
         ensure_connected
+        @sent = true
         rpc(method, params)
       rescue AuthenticationError
         raise if refreshed || !@wire.refreshable?
@@ -224,6 +232,16 @@ module Mistri
         @tools = tools
         @instructions = (text unless text.to_s.empty?)
         @described = true
+      end
+
+      # The error is never tagged itself: it may be frozen, or raised again
+      # by a later call that was sent. One that gives no copy of its own
+      # class stays untagged.
+      def unsent(error)
+        copy = error.dup
+        copy.instance_of?(error.class) && !copy.equal?(error) ? copy.extend(NotSent) : error
+      rescue StandardError
+        error
       end
 
       def validate_limit(name, value)
