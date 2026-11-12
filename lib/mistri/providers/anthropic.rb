@@ -62,6 +62,12 @@ module Mistri
       # unless the host sets defers_tools: true.
       def defers_tools? = @defers_tools
 
+      # The API takes a system message in the middle of a conversation on its
+      # newer models, and a reminder is sent to them as one. An older model,
+      # and another origin, which may refuse the role, receive a reminder as
+      # text of a user turn.
+      def system_messages?(model = @model) = @official && Models.system_messages?(model)
+
       def stream(messages:, system: nil, tools: [], signal: nil, **overrides, &emit)
         delivery = EventDelivery.wrap(emit)
         model = overrides.fetch(:model, @model)
@@ -94,7 +100,8 @@ module Mistri
           model: model,
           max_tokens: max_tokens_for(model, overrides),
           stream: true,
-          messages: Serializer.messages(messages, cache: @cache, deferred:)
+          messages: Serializer.messages(messages, cache: @cache, deferred:,
+                                                  system_messages: system_messages?(model))
         }
         system_blocks = Serializer.system_blocks(system, cache: @cache)
         body[:system] = system_blocks if system_blocks

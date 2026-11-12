@@ -160,9 +160,12 @@ deferred is not delayed.
 After a compaction that summarized them, the instructions are appended again
 by the same rule.
 
-The instructions are text from the server. On every provider they are sent as
-text of a user turn, in a system-reminder block that names the tools, and not
-inside a tool result. Give them the trust you give that server.
+The instructions are text from the server, and they are sent the way every
+[reminder](tool-contracts.md#tools-on-demand) is: as a system message to an
+Anthropic model that takes one in a conversation, and otherwise as text of a
+user turn in a system-reminder block. Each block names the tools it is about.
+A model gives a system message the weight of your own instructions, so give
+a server's instructions the trust you give that server.
 
 `Mistri::MCP.tools` filters remote names with `allow:` and `deny:`. `prefix:`
 creates local names such as `linear__create_issue` while the remote call still
