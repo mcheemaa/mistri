@@ -234,6 +234,20 @@ class TestLocks < Minitest::Test
     assert_raises(Mistri::Error) { locks.held?("run:1") }
   end
 
+  def test_rails_cache_reads_false_from_a_plain_write_as_a_failure
+    require "mistri/locks/rails_cache"
+    # Rails 7.0 and 7.1 stores answer false, not nil, when the backend is down.
+    down = Class.new do
+      def exist?(*) = false
+      def write(*, **) = false # rubocop:disable Naming/PredicateMethod -- the cache store's name
+    end.new
+    locks = Mistri::Locks::RailsCache.new(cache: down)
+
+    assert_raises(Mistri::Error) { locks.held?("run:1") }
+    assert_raises(Mistri::Error) { locks.renew("run:1", ttl: 60) }
+    refute locks.acquire("run:1", ttl: 60), "false from acquire still means held"
+  end
+
   def test_rails_cache_reads_a_lease_again_after_one_failed_read
     require "mistri/locks/rails_cache"
     # A failed read answers false; the cache has recovered by the write.

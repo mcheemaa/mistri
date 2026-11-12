@@ -14,12 +14,15 @@ module Mistri
         @namespace = namespace
       end
 
+      # False means held. A down backend answers nil, except on Rails 7.0 and
+      # 7.1, where it answers false and reads as held.
       def acquire(key, ttl:)
-        write(key, unless_exist: true, expires_in: ttl)
+        written = @cache.write(scoped(key), true, unless_exist: true, expires_in: ttl)
+        written.nil? ? failed(key) : written
       end
 
       def renew(key, ttl:)
-        write(key, expires_in: ttl)
+        write(key, ttl)
         nil
       end
 
@@ -32,7 +35,7 @@ module Mistri
         return true if @cache.exist?(scoped(key))
 
         # A miss and an outage read alike, so confirm the cache answers and read again.
-        write("probe", expires_in: 60)
+        write("probe", 60)
         @cache.exist?(scoped(key))
       end
 
@@ -47,13 +50,12 @@ module Mistri
 
       private
 
-      # Redis and Memcache stores answer nil, not false, when the backend is down.
-      def write(key, **)
-        written = @cache.write(scoped(key), true, **)
-        raise Error, "lock cache write failed for #{scoped(key)}" if written.nil?
-
-        written
+      # Nothing contends for a plain write, so a falsy answer is a failed one.
+      def write(key, ttl)
+        @cache.write(scoped(key), true, expires_in: ttl) || failed(key)
       end
+
+      def failed(key) = raise(Error, "lock cache write failed for #{scoped(key)}")
 
       def scoped(key) = "#{@namespace}:#{key}"
     end

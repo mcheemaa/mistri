@@ -9,7 +9,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   raises `Mistri::Error` when the cache cannot be reached, and `Child#status`
   reads `:running` when its lease cannot be read. A running worker used to
   read `:interrupted`, so the model was told to replace it and `max_children`
-  undercounted.
+  undercounted. On Rails 7.0 and 7.1 a failed cache write answers false, and
+  renewing a lease or setting a flag now raises on it too.
 - An OpenAI stream failure keeps its reason. The Responses API can send a
   failure's code and message nested under `error`, and Mistri read them only
   at the top of the record. The turn ended as `provider error`, and a refusal

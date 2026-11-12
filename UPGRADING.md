@@ -197,7 +197,9 @@ Only when `Mistri.locks` is set:
 - When the lock backend is down, a top-level run warns and goes ahead without
   its lease. A sub-agent still fails with a report, as before.
 - `Locks::RailsCache#held?` raises `Mistri::Error` when the cache is down. It
-  used to answer false. Rescue it if your own code calls `held?`.
+  used to answer false. Rescue it if your own code calls `held?`. On Rails 7.0
+  and 7.1, `Child#stop` raises it too during an outage. It used to return true
+  without setting the stop.
 - A session has one lease. Pass `lease: false` to `Agent.new` when your own
   code already holds a lock for the session.
 
