@@ -10,6 +10,7 @@ module Mistri
     MAX_LIMIT = 20
     QUERY_LIMIT = 500
     SUMMARY_LIMIT = 200
+    SELECT = /\Aselect:/i
     # Okapi BM25 over the description and the parameters.
     K1 = 1.2
     B = 0.75
@@ -25,28 +26,44 @@ module Mistri
     WORD = /[#{UNSPACED}]+|[[:alnum:]&&[^#{UNSPACED}]]+/
     UNSPACED_RUN = /\A[#{UNSPACED}]/
     UNSPACED_PAIR = /[#{UNSPACED}]{2,}/
-    private_constant :K1, :B, :NAME_WEIGHT, :STOP_WORDS, :UNSPACED, :WORD, :UNSPACED_RUN,
-                     :UNSPACED_PAIR
+    private_constant :SELECT, :K1, :B, :NAME_WEIGHT, :STOP_WORDS, :UNSPACED, :WORD,
+                     :UNSPACED_RUN, :UNSPACED_PAIR
 
-    Document = Data.define(:tool, :summary, :name_words, :local_words, :counts, :length)
+    Document = Data.define(:tool, :summary, :alike, :name_words, :local_words, :counts, :length)
     private_constant :Document
 
     module_function
 
-    # The tool an agent adds when it holds deferred tools.
-    def tool(deferred)
+    # The tool an agent adds when it holds deferred tools. loaded returns
+    # the names of the tools already loaded, which a search skips. A search
+    # appends the names it loads to that list, so two searches in one turn
+    # do not load the same tool.
+    def tool(deferred, loaded: -> { [] })
       documents = nil
+      turn = Mutex.new
       Tool.define(NAME, description(deferred), schema: lambda {
-        string :query, "Words for what you need to do", required: true
+        string :query, "Words that describe what you need to do, or select: followed by " \
+                       "the exact names of the tools to load, separated by commas",
+               required: true
         integer :limit, "How many tools to load at most (default #{LIMIT}, at most #{MAX_LIMIT})"
       }) do |args|
         query = args["query"].to_s[0, QUERY_LIMIT]
         documents ||= deferred.map { |tool| document(tool) }
-        found = search(query, documents, args.fetch("limit", LIMIT).to_i.clamp(1, MAX_LIMIT))
-        next answer(found) if found.any? || words(query).any?
+        chosen, missing, requested = named_tools(query, documents)
+        unless chosen || words(query).any?
+          next ToolResult.new(content: "The query has no words to search for. Describe what " \
+                                       "you need to do in a few words.", error: true)
+        end
 
-        ToolResult.new(content: "There is nothing to search by in that query. Say what you " \
-                                "need to do in a few words.", error: true)
+        limit = args.fetch("limit") { [LIMIT, requested.to_i].max }.to_i.clamp(1, MAX_LIMIT)
+        matches = chosen || search(query, documents)
+        names = loaded.call
+        fresh, held, left = turn.synchronize do
+          unloaded(matches, names, limit).tap do |picked, _|
+            names.concat(picked.map { |document| document.tool.name })
+          end
+        end
+        answer(fresh, held, missing.to_a, chosen ? left : 0)
       end
     end
 
@@ -57,33 +74,94 @@ module Mistri
     # fewer, whatever their scores. Equal matches keep the order the tools
     # were given in.
     def rank(query, tools, limit)
-      search(query, tools.map { |tool| document(tool) }, limit).map(&:tool)
-    end
-
-    def search(query, documents, limit)
       return [] if limit <= 0
 
+      search(query, tools.map { |tool| document(tool) }).first(limit).map(&:tool)
+    end
+
+    def search(query, documents)
       terms = words(query).uniq
       weights = weights(terms, documents)
       average = documents.sum(&:length).fdiv(documents.length).nonzero? || 1.0
+      text = query.strip
+      wanted = identifier(text)
       matches = documents.each_with_index.filter_map do |document, index|
-        name = name_rank(document.tool.name, query.strip)
+        name = name_rank(document, text, wanted)
         covered, score = score(document, terms, weights, average)
         [name, -covered, -score, index, document] if covered.positive? || name < 3
       end
-      matches.sort.first(limit).map(&:last)
+      matches.sort.map(&:last)
     end
     private_class_method :search
 
+    # The tools a query names, the names in it that match no tool, and the
+    # number of names. Nil when the query is a word search. A query that
+    # starts with select: is a list of names. A query that matches one tool's
+    # name selects that tool. So does a list whose every part is a full name
+    # or contains an underscore, when at least one part matches a tool: read
+    # file is two words, never the tools x__read and y__file.
+    def named_tools(query, documents)
+      text = query.strip
+      if text.match?(SELECT)
+        parts = text.sub(SELECT, "").split(",")
+        return [*pick(parts, documents) { 2 }, parts.length]
+      end
+
+      whole = pick([text], documents) { 2 }
+      return [*whole, 1] if whole.first.any?
+
+      parts = text.split(/[\s,]+/)
+      found, missing = pick(parts, documents) { |part| part.include?("_") ? 2 : 0 }
+      return unless parts.length > 1 && found.any? && missing.all? { |part| part.include?("_") }
+
+      [found, missing, parts.length]
+    end
+    private_class_method :named_tools
+
+    # For each part, the tools at its closest matching rank, up to the rank
+    # the block allows for that part.
+    def pick(parts, documents)
+      found = []
+      missing = []
+      parts.map(&:strip).reject(&:empty?).each do |part|
+        wanted = identifier(part)
+        ranks = documents.group_by { |document| name_rank(document, part, wanted) }
+        closest = ranks.keys.min
+        closest && closest <= yield(part) ? found.concat(ranks.fetch(closest)) : missing << part
+      end
+      [found.uniq, missing]
+    end
+    private_class_method :pick
+
+    # The matches to load, up to limit, the loaded matches ranked before
+    # them, and the number of matches left unloaded.
+    def unloaded(matches, loaded, limit)
+      have = loaded.to_set
+      fresh = []
+      held = []
+      left = 0
+      matches.each do |document|
+        if have.include?(document.tool.name)
+          held << document if fresh.length < limit
+        elsif fresh.length < limit
+          fresh << document
+        else
+          left += 1
+        end
+      end
+      [fresh, held, left]
+    end
+    private_class_method :unloaded
+
     # How a query names a tool: 0 its name, 1 its name without the prefix,
     # 2 a name that reads the same, 3 not at all.
-    def name_rank(name, query)
+    def name_rank(document, query, wanted)
+      name = document.tool.name
       return 3 if query.empty?
       return 0 if name == query
       return 1 if name.end_with?("__#{query}")
 
-      wanted = identifier(query)
-      alike = wanted && identifier(name)
+      alike = wanted && document.alike
       alike && (alike == wanted || alike.end_with?("__#{wanted}")) ? 2 : 3
     end
     private_class_method :name_rank
@@ -108,17 +186,28 @@ module Mistri
     def count(number, noun) = "#{number} #{noun}#{"s" unless number == 1}"
     private_class_method :count
 
-    def answer(found)
-      return "No tool matches. Try other words." if found.empty?
+    def answer(fresh, held, missing, left)
+      lines = []
+      if fresh.any?
+        lines << "Loaded #{count(fresh.length, "tool")}. You can call them from your next step:"
+        lines.concat(fresh.map { |document| "- #{document.tool.name}: #{document.summary}" })
+      end
+      lines << "Already loaded, call them directly: #{held_names(held)}." if held.any?
+      if left.positive?
+        lines << "#{count(left, "more tool")} with these names. Search again to load them."
+      end
+      lines << "No tool is named #{missing.join(", ")}." if missing.any?
+      return "No tool matches. Try other words." if lines.empty?
 
-      lines = found.map { |document| "- #{document.tool.name}: #{document.summary}" }
-      ToolResult.new(
-        content: "Loaded #{count(found.length, "tool")}. You can call them from your next " \
-                 "step:\n#{lines.join("\n")}",
-        loads: found.map { |document| document.tool.name }
-      )
+      ToolResult.new(content: lines.join("\n"), loads: fresh.map { |document| document.tool.name })
     end
     private_class_method :answer
+
+    def held_names(held)
+      names = held.first(MAX_LIMIT).map { |document| document.tool.name }.join(", ")
+      held.length > MAX_LIMIT ? "#{names} and #{held.length - MAX_LIMIT} more" : names
+    end
+    private_class_method :held_names
 
     def document(tool)
       spec = tool.spec.transform_keys(&:to_sym)
@@ -127,7 +216,7 @@ module Mistri
       schema_text(spec[:input_schema], parts)
       text = plain(parts.join(" "))
       terms = words(text)
-      Document.new(tool:, summary: summary(description),
+      Document.new(tool:, summary: summary(description), alike: identifier(tool.name),
                    name_words: (words(tool.name) + characters(plain(tool.name))).uniq,
                    local_words: words(tool.name.split("__").last).uniq,
                    counts: (terms + characters(text)).tally, length: terms.length)

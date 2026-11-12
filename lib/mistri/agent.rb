@@ -160,7 +160,9 @@ module Mistri
 
     def install_tools(tools)
       deferred = tools.select { |tool| tool.respond_to?(:deferred?) && tool.deferred? }
-      @tools = deferred.empty? ? tools : tools + [ToolSearch.tool(deferred)]
+      @loaded = []
+      search = ToolSearch.tool(deferred, loaded: -> { @loaded }) unless deferred.empty?
+      @tools = search ? tools + [search] : tools
       @tools_by_name = @tools.to_h { |tool| [tool.name, tool] }
       raise ConfigurationError, "duplicate tool names" if @tools_by_name.length != @tools.length
 
@@ -397,21 +399,17 @@ module Mistri
       end
     end
 
-    # A provider that can hold a definition back is handed every deferred
-    # tool, and says in its own way when a result loads one. Any other is
-    # sent the loaded tools as tools.
+    # A deferred tool is loaded once a tool result in the history has loaded
+    # it. A provider that defers natively receives every deferred definition
+    # and marks the loading result in its own wire form. Any other provider
+    # receives the loaded tools after the eager ones, in load order.
     def tool_options(history)
       return { tools: @eager_specs } if @deferred_specs.empty?
+
+      @loaded = history.reject(&:tool_error?).flat_map { |message| message.loads.to_a }.uniq
       return { tools: @eager_specs, deferred_tools: @deferred_list } if @defers_tools
 
-      { tools: offered_tools(history) }
-    end
-
-    # A deferred tool is offered once a tool result the model can see has
-    # loaded it. Loaded tools follow the others, in the order they came.
-    def offered_tools(history)
-      loaded = history.flat_map { |message| message.loads.to_a }.uniq
-      @eager_specs + @deferred_specs.values_at(*loaded).compact
+      { tools: @eager_specs + @deferred_specs.values_at(*@loaded).compact }
     end
 
     def provider_output_schema(output_schema)

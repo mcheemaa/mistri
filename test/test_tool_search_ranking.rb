@@ -59,6 +59,43 @@ class TestToolSearchRanking < Minitest::Test
     assert_equal 8, rank("get_open_pull_request_status", tools).length
   end
 
+  def test_names_load_the_tools_they_name_and_no_others
+    named = %w[lookup crm__lookup crm__list docs__list].map { |name| tool(name) }
+    search = Mistri::ToolSearch.tool(named, loaded: [].method(:itself))
+    first = search.call({ "query" => "select:lookup, list, nope" })
+    second = search.call({ "query" => "crm__lookup docs__list crm__missing" })
+    third = search.call({ "query" => "lookup list" })
+
+    assert_equal %w[lookup crm__list docs__list], first.loads
+    assert_match(/^No tool is named nope\.$/, first.content)
+    assert_equal %w[crm__lookup], second.loads
+    assert_match(/^Already loaded, call them directly: docs__list\.$/, second.content)
+    assert_match(/^No tool is named crm__missing\.$/, second.content)
+    assert_empty third.loads
+    assert_match(/^Already loaded, call them directly: .*crm__lookup/, third.content)
+  end
+
+  def test_a_name_many_tools_share_loads_no_more_than_the_limit
+    search = Mistri::ToolSearch.tool(Array.new(30) { |index| tool("s#{index}__list") },
+                                     loaded: [].method(:itself))
+    one = search.call({ "query" => "list", "limit" => 1 })
+    listed = Array.new(25) { |index| "s#{index + 5}__list" }.join(",")
+    many = search.call({ "query" => "select:#{listed}" })
+    another = search.call({ "query" => "list", "limit" => 1 })
+    rest = search.call({ "query" => "list", "limit" => 20 })
+    none = search.call({ "query" => "list" })
+
+    assert_equal %w[s0__list], one.loads
+    assert_match(/^29 more tools with these names\. Search again to load them\.$/, one.content)
+    assert_equal 20, many.loads.length
+    assert_equal %w[s1__list], another.loads
+    assert_match(/^8 more tools with these names\./, another.content)
+    assert_equal 8, rest.loads.length
+    assert_empty none.loads
+    assert_includes none.content, "s19__list and 10 more."
+    refute_includes none.content, "s20__list"
+  end
+
   def test_text_written_without_spaces_is_matched_by_pairs_of_characters
     search = tool("docs__search", "搜索团队文档并返回结果")
     other = tool("docs__delete", "删除一个页面")

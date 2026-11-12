@@ -33,7 +33,9 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   the model until it is needed, so a long tool list no longer costs its
   definitions on every round. An agent that holds a deferred tool adds a
   `tool_search` tool: the model asks in words, the best matches are loaded,
-  and it calls them from its next step. A load is stored with the session, so
+  and it calls them from its next step. A query that is a tool's name, or
+  `select:` and a list of names, loads those tools and no others, and a tool
+  is not loaded twice. A load is stored with the session, so
   a later run offers the same tools. A tool result can load tools itself with
   `ToolResult.new(content:, loads:)`. On Anthropic the deferred definitions
   travel marked to stay out of the prompt and a load is a reference to one,

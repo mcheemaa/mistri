@@ -39,15 +39,14 @@ class TestDeferredTools < Minitest::Test
 
     assert_predicate result, :completed?
     assert_equal %w[lookup_order tool_search], offered(provider, 0)
-    assert_equal %w[lookup_order tool_search tracker__create_issue tracker__delete_issue],
-                 offered(provider, 1)
+    assert_equal %w[lookup_order tool_search tracker__create_issue], offered(provider, 1)
     assert_equal ["ran tracker__create_issue"],
                  agent.session.messages.select { |m| m.tool_name == "tracker__create_issue" }
                       .map(&:text)
   end
 
   def test_the_search_answers_with_what_it_loaded_and_stores_the_names
-    agent, = agent([{ tool_calls: [search("create issue")] }, { text: "Found." }])
+    agent, = agent([{ tool_calls: [search("issue tracker")] }, { text: "Found." }])
 
     agent.run("Open an issue.")
     answer = agent.session.messages.find(&:tool?)
@@ -114,10 +113,11 @@ class TestDeferredTools < Minitest::Test
                              { text: "Ready." }], tools: many)
 
     agent.run("Get ready.")
-    loads = agent.session.messages.select(&:tool?).map { |message| message.loads.length }
+    loads = agent.session.messages.select(&:tool?).map(&:loads)
 
-    assert_equal [8, 20, 1], loads
-    assert_equal 21, offered(provider).length
+    assert_equal [8, 20, 1], loads.map(&:length)
+    assert_equal 29, loads.flatten.uniq.length
+    assert_equal 30, offered(provider).length
   end
 
   def test_a_blank_query_is_an_error_the_model_can_read
@@ -127,7 +127,7 @@ class TestDeferredTools < Minitest::Test
     answer = agent.session.messages.find(&:tool?)
 
     assert_predicate answer, :tool_error?
-    assert_match(/nothing to search by/i, answer.text)
+    assert_match(/no words to search for/, answer.text)
     assert_nil answer.loads
   end
 
@@ -249,7 +249,7 @@ class TestDeferredTools < Minitest::Test
     answer = agent.session.messages.find(&:tool?)
 
     assert_predicate answer, :tool_error?
-    assert_match(/nothing to search by/i, answer.text)
+    assert_match(/no words to search for/, answer.text)
   end
 
   def test_a_failed_result_loads_nothing
