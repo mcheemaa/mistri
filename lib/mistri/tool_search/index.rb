@@ -24,13 +24,16 @@ module Mistri
       private_constant :K1, :B, :NAME_WEIGHT, :STOP_WORDS, :UNSPACED, :WORD, :UNSPACED_RUN,
                        :UNSPACED_PAIR
 
-      Document = Data.define(:tool, :size, :alike, :name_words, :local_words, :counts, :length)
+      Document = Data.define(:name, :size, :alike, :name_words, :local_words, :counts, :length)
       private_constant :Document
 
       module_function
 
       # The matches for a query, best first.
-      def search(query, documents)
+      def search(query, documents) = documents.values_at(*positions(query, documents))
+
+      # Where the matches for a query stand among the documents, best first.
+      def positions(query, documents)
         terms = words(query).uniq
         weights = weights(terms, documents)
         average = documents.sum(&:length).fdiv(documents.length).nonzero? || 1.0
@@ -39,7 +42,7 @@ module Mistri
         matches = documents.each_with_index.filter_map do |document, index|
           name = name_rank(document, text, wanted)
           covered, score = score(document, terms, weights, average)
-          [name, -covered, -score, index, document] if covered.positive? || name < 3
+          [name, -covered, -score, index] if covered.positive? || name < 3
         end
         matches.sort.map(&:last)
       end
@@ -47,7 +50,7 @@ module Mistri
       # How a query names a tool: 0 its name, 1 its name without the prefix,
       # 2 a name that reads the same, 3 not at all.
       def name_rank(document, query, wanted)
-        name = document.tool.name
+        name = document.name
         return 3 if query.empty?
         return 0 if name == query
         return 1 if name.end_with?("__#{query}")
@@ -56,8 +59,16 @@ module Mistri
         alike && (alike == wanted || alike.end_with?("__#{wanted}")) ? 2 : 3
       end
 
-      # One document for each tool.
-      def documents(tools) = tools.map { |tool| document(tool) }
+      # One document for each tool. A tool that keeps its search document has
+      # it built once. Any other object that acts as a tool has one built for
+      # each agent.
+      def documents(tools)
+        tools.map do |tool|
+          next document(tool) unless tool.respond_to?(:search_document)
+
+          tool.search_document { document(tool) }
+        end
+      end
 
       def document(tool)
         spec = tool.spec.transform_keys(&:to_sym)
@@ -65,12 +76,19 @@ module Mistri
         schema_text(spec[:input_schema], parts)
         text = plain(parts.join(" "))
         terms = words(text)
-        Document.new(tool:, size: JSON.generate(spec).bytesize, alike: identifier(tool.name),
-                     name_words: (words(tool.name) + characters(plain(tool.name))).uniq,
-                     local_words: words(tool.name.split("__").last).uniq,
-                     counts: (terms + characters(text)).tally, length: terms.length)
+        Document.new(name: -tool.name, size: JSON.generate(spec).bytesize,
+                     alike: identifier(tool.name).freeze,
+                     name_words: fixed(words(tool.name) + characters(plain(tool.name))),
+                     local_words: fixed(words(tool.name.split("__").last)),
+                     counts: (terms + characters(text)).map(&:-@).tally.freeze,
+                     length: terms.length)
       end
       private_class_method :document
+
+      # A document is shared by every agent that holds its tool, so its parts
+      # are frozen.
+      def fixed(words) = words.uniq.map(&:-@).freeze
+      private_class_method :fixed
 
       # The single characters of the runs that are matched by pairs, so that a
       # query of one character finds them. They are extra entries: a text's

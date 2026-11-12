@@ -29,6 +29,24 @@ class TestDeferredToolsLoaded < Minitest::Test
       .each { |message| session.append_message(message) }
   end
 
+  def test_a_deferred_tool_that_is_not_a_tool_object_is_found_and_loaded
+    duck = Class.new do
+      def name = "duck_invoices"
+      def spec = { name:, description: "Finds invoices.", input_schema: { type: "object" } }
+      def deferred? = true
+      def call(_arguments, _context) = "found"
+      def needs_approval?(_arguments) = false
+      def ends_turn? = false
+      def timeout = nil
+    end.new
+    agent, = agent([{ tool_calls: [search("invoices")] },
+                    { tool_calls: [{ name: "duck_invoices" }] }, { text: "Done." }], tools: [duck])
+
+    agent.run("Find them.")
+
+    assert_equal "found", agent.session.messages.select(&:tool?).last.text
+  end
+
   def test_two_searches_in_one_turn_do_not_load_the_same_tool
     many = Array.new(8) { |index| tool("tracker__issue_#{index}", "An issue tool.") }
     agent, = agent([{ tool_calls: [search("issue"), search("issue")] }, { text: "Ready." }],

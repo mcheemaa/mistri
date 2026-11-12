@@ -72,7 +72,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   the nano models, a load is an item in the input that makes the tools
   callable from there on, which keeps the cache as well. A provider built for
   another origin takes `defers_tools: true` when that origin supports these
-  forms.
+  forms. Agents that are given the same tool objects share the search index.
 - A bridged MCP tool gets a name every provider takes. MCP allows dots,
   slashes and any length in a tool name, and one name the model's API refused
   failed the whole request. A name of letters, digits, underscores and
