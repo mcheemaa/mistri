@@ -14,10 +14,9 @@ module Mistri
   #
   # Status is a walk over the child's own entries: a terminal entry wins; a
   # started child is :running while its lease holds and :interrupted once
-  # it lapses (with a lock adapter; without one, or when it cannot be read,
-  # there is no liveness signal and no-terminal stays :running); a
-  # dispatched-but-never-started child is :queued, honestly, because the
-  # host's queue owns that gap.
+  # it lapses (with a lock adapter; without one there is no liveness signal
+  # and no-terminal stays :running); a dispatched-but-never-started child is
+  # :queued, honestly, because the host's queue owns that gap.
   class Child
     TERMINAL = "subagent_result"
     DISPATCHED = "subagent_dispatched"

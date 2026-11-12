@@ -14,8 +14,7 @@ module Mistri
         @namespace = namespace
       end
 
-      # False means held. A down backend answers nil, except on Rails 7.0 and
-      # 7.1, where it answers false and reads as held.
+      # False means held. Rails 7.0 and 7.1 also answer false when the backend is down.
       def acquire(key, ttl:)
         written = @cache.write(scoped(key), true, unless_exist: true, expires_in: ttl)
         written.nil? ? failed(key) : written
@@ -44,7 +43,7 @@ module Mistri
         renew(key, ttl: ttl)
       end
 
-      # Unprobed: the holder polls every second and looks again after an outage.
+      # Unprobed: the holder polls again within a second.
       def flag?(key) = @cache.exist?(scoped(key))
 
       def clear_flag(key) = release(key)
