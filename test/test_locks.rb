@@ -143,6 +143,15 @@ class TestLocks < Minitest::Test
     assert_equal :running, parent.children.first.status
   end
 
+  def test_a_child_whose_lease_cannot_be_read_reads_running
+    Mistri.locks = Class.new(Mistri::Locks::Memory) { def held?(*) = raise("backend down") }.new
+    store = Mistri::Stores::Memory.new
+    parent = Mistri::Session.new(store:)
+    parent.append("subagent", "name" => "Husky", "session_id" => Mistri::Session.new(store:).id)
+
+    assert_equal :running, parent.children.first.status
+  end
+
   def test_a_live_child_holds_its_lease_while_running
     Mistri.locks = Mistri::Locks::Memory.new
     store = Mistri::Stores::Memory.new
@@ -200,6 +209,7 @@ class TestLocks < Minitest::Test
     locks.clear_flag("stop:1")
 
     refute locks.held?("run:1")
+    refute locks.held?("probe"), "the outage probe is not a lease"
     refute locks.flag?("stop:1")
   end
 
@@ -211,5 +221,44 @@ class TestLocks < Minitest::Test
 
     assert_raises(Mistri::Error) { locks.acquire("run:1", ttl: 60) }
     assert_raises(Mistri::Error) { locks.renew("run:1", ttl: 60) }
+  end
+
+  def test_rails_cache_raises_when_a_lease_cannot_be_read
+    require "mistri/locks/rails_cache"
+    # A down backend reads as a miss.
+    down = Class.new do
+      def exist?(*) = false
+      def write(*, **) = nil
+    end.new
+    locks = Mistri::Locks::RailsCache.new(cache: down)
+
+    assert_raises(Mistri::Error) { locks.held?("run:1") }
+    refute locks.flag?("stop:1"), "a stop check reads a down cache as unset"
+  end
+
+  def test_rails_cache_reads_false_from_a_plain_write_as_a_failure
+    require "mistri/locks/rails_cache"
+    # Rails 7.0 and 7.1 answer false to a failed write.
+    down = Class.new do
+      def exist?(*) = false
+      def write(*, **) = false # rubocop:disable Naming/PredicateMethod -- the cache store's name
+    end.new
+    locks = Mistri::Locks::RailsCache.new(cache: down)
+
+    assert_raises(Mistri::Error) { locks.held?("run:1") }
+    assert_raises(Mistri::Error) { locks.renew("run:1", ttl: 60) }
+  end
+
+  def test_rails_cache_reads_a_lease_again_after_one_failed_read
+    require "mistri/locks/rails_cache"
+    # One failed read, then the cache recovers.
+    flaky = Class.new do
+      def initialize = @reads = [false, true]
+      def exist?(*) = @reads.shift
+      def write(*, **) = true # rubocop:disable Naming/PredicateMethod -- the cache store's name
+    end.new
+    locks = Mistri::Locks::RailsCache.new(cache: flaky)
+
+    assert locks.held?("run:1")
   end
 end

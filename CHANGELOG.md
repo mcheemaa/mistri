@@ -5,6 +5,12 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+- A child no longer reads `:interrupted` while the lock cache is down.
+  `Locks::RailsCache#held?` raises `Mistri::Error` instead of answering false,
+  and `Child#status` reads `:running` when its lease cannot be read. Before,
+  the model was told to replace a running worker and `max_children`
+  undercounted. On Rails 7.0 and 7.1, where a failed cache write answers
+  false, `renew` and `set_flag` now raise too.
 - The instructions of an MCP server reach the model. `MCP.tools` sets them on
   each bridged tool as `Tool#instructions`. An agent appends the instructions
   of every server to the conversation with its first request, as one reminder

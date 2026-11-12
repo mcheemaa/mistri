@@ -53,9 +53,8 @@ module Mistri
          log.none? { |entry| entry["type"] == STARTED }
         return :queued
       end
-      return :interrupted if Mistri.locks && !Mistri.locks.held?(self.class.lease_key(@session_id))
 
-      :running
+      lease_lapsed? ? :interrupted : :running
     end
 
     # A terminal entry exists: the child ended as done, stopped, or failed,
@@ -135,6 +134,13 @@ module Mistri
     end
 
     private
+
+    # A lease that cannot be read is no liveness signal, as with no adapter.
+    def lease_lapsed?
+      Mistri.locks && !Mistri.locks.held?(self.class.lease_key(@session_id))
+    rescue StandardError
+      false
+    end
 
     # Cancellation and a runner compete for the same lease. Acquiring it
     # proves no unexpired lease is present, so ordinary inactive dispatched
