@@ -368,7 +368,10 @@ of the tools loaded before it.
 The message states that their definitions are no longer in the model's
 context and instructs it to load the ones it needs again by name. A call to
 one of them without a new load still runs, after the usual argument check:
-the model received that definition when it loaded the tool.
+the model received that definition when it loaded the tool. When that check
+fails, the result states that the tool is not loaded and instructs the model
+to load it, because the model cannot correct arguments for a definition it
+no longer has.
 
 Any tool can load deferred tools with its result:
 

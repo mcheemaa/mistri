@@ -629,6 +629,14 @@ module Mistri
       refusal = uncallable(call.name, tool, fresh: normalize)
       return [call, refusal] if refusal
 
+      prepared, failure = prepare_arguments(tool, call, normalize:, signal:)
+      # The model called a tool loaded before a compaction without its
+      # definition, so it cannot correct the arguments. It has to load the tool.
+      failure = unloaded_tool(call.name) if failure && normalize && unloaded?(call.name)
+      [prepared, failure]
+    end
+
+    def prepare_arguments(tool, call, normalize:, signal:)
       if call.arguments_error
         violation = if call.arguments_error == "invalid_json"
                       "arguments were not valid JSON"
@@ -851,11 +859,13 @@ module Mistri
     # before a compaction was sent to the model then.
     def uncallable(name, tool, fresh:)
       return unavailable_tool(name) unless tool
-      return unless fresh && @deferred_specs.key?(name) && !@loaded.include?(name)
+      return unless fresh && unloaded?(name)
 
       carried = @session.last_compaction&.dig("carried", "loaded").to_a
       unloaded_tool(name) unless carried.include?(name)
     end
+
+    def unloaded?(name) = @deferred_specs.key?(name) && !@loaded.include?(name)
 
     # The model has a name and no schema, so its arguments would be a guess.
     def unloaded_tool(name)

@@ -122,4 +122,23 @@ class TestDeferredToolsLoaded < Minitest::Test
     assert_predicate voided, :tool_error?
     assert_match(/not loaded/, voided.text)
   end
+
+  def test_an_invalid_call_to_a_tool_loaded_before_a_compaction_is_reported_as_not_loaded
+    schema = -> { string :charge, required: true }
+    refund = Mistri::Tool.define("refund_charge", "Refunds.", deferred: true, schema:) { "refunded" }
+    first, = agent([{ tool_calls: [search("select:refund_charge")] }, { text: "Loaded." }],
+                   tools: [refund])
+    first.run("Get ready.")
+    first.session.checkpoint(summary: "Ready.", kept_from: first.session.entries.length)
+    later, = agent([{ tool_calls: [{ name: "refund_charge", arguments: { "charge" => 7 } }] },
+                    { tool_calls: [{ name: "refund_charge", arguments: { "charge" => "ch_7" } }] },
+                    { text: "Done." }], tools: [refund], session: first.session)
+
+    later.run("Refund it.")
+    invalid, valid = first.session.messages.select(&:tool?).last(2)
+
+    assert_predicate invalid, :tool_error?
+    assert_match(/not loaded, so it did not run\. Load it with tool_search first/, invalid.text)
+    assert_equal "refunded", valid.text
+  end
 end
