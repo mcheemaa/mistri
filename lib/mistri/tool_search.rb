@@ -19,7 +19,8 @@ module Mistri
     LISTING_BYTES = 20_000
     QUERY_LIMIT = 500
     # The list names every deferred tool, the loaded ones too.
-    LOADED = "A tool whose definition you already have is loaded, so call it directly."
+    LOADED = "Once a #{NAME} result states that a tool is loaded, call it directly and do not " \
+             "load it again.".freeze
     SELECT = /\Aselect:/i
     # Okapi BM25 over the description and the parameters.
     K1 = 1.2
@@ -189,13 +190,12 @@ module Mistri
 
       if names.sum(&:bytesize) > LISTING_BYTES
         return "These tools load on demand. There are too many to list by name: " \
-               "#{inventory(names)}. #{LOADED} Load any other with #{NAME} before you call " \
-               "it: search with words that describe what you need. This list replaces any " \
-               "earlier one."
+               "#{inventory(names)}. Load one with #{NAME} before you call it: search with " \
+               "words that describe what you need. #{LOADED} This list replaces any earlier one."
       end
 
-      "These tools load on demand. #{LOADED} Load any other with #{NAME} before you call it: " \
-        "search with words that describe what you need, or use select: followed by the names. " \
+      "These tools load on demand. Load one with #{NAME} before you call it: search with " \
+        "words that describe what you need, or use select: followed by the names. #{LOADED} " \
         "This list replaces any earlier one.\n#{names.join("\n")}"
     end
 

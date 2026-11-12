@@ -30,7 +30,7 @@ class TestDeferredToolsListed < Minitest::Test
     listing = Mistri::ToolSearch.listing(names)
 
     assert_operator listing.bytesize, :<, Mistri::ToolSearch::LISTING_BYTES + 500
-    assert_match(/server_number_0 \(1 tool\), .*, \d{4} others\. /, listing)
+    assert_match(/server_number_0 \(1 tool\), .*, \d{4} others\. Load one/, listing)
   end
 
   def test_a_compaction_does_not_summarize_the_list_and_it_is_appended_again
