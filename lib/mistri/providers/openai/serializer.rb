@@ -23,10 +23,11 @@ module Mistri
 
         # The deferred tools are indexed by the name they are sent with. One
         # is converted when a result loads it, not on every request.
-        def input_items(history, deferred: [])
+        def input_items(history, deferred: [], system_messages: false)
           specs = deferred.to_h { |tool| [tool.transform_keys(&:to_sym)[:name], tool] }
           declared = {}
-          Reminder.as_user_turns(history).flat_map do |msg|
+          history = Reminder.as_user_turns(history) unless system_messages
+          history.flat_map do |msg|
             items = items_for(msg, declared)
             msg.tool? ? items + additions(msg, specs, declared) : items
           end
@@ -57,8 +58,15 @@ module Mistri
           when :user then [user_item(msg)]
           when :tool then [tool_result_item(msg)]
           when :assistant then assistant_items(msg, declared)
-          else []
+          else msg.reminder ? [developer_item(msg)] : []
           end
+        end
+
+        # A reminder as a developer message. The API takes one anywhere in the
+        # input, so it is sent where the conversation holds it.
+        def developer_item(msg)
+          texts = msg.content.grep(Content::Text).map(&:text)
+          { role: "developer", content: texts.map { |text| { type: "input_text", text: } } }
         end
 
         def user_item(msg)

@@ -334,15 +334,25 @@ The reminder is a system message of the conversation whose `reminder` is
 user and assistant messages to a person does not show it. A compaction does
 not summarize it.
 
-How a reminder reaches the model depends on the provider. Anthropic takes a
-system message in the middle of a conversation on Opus 4.8 and later, Sonnet
-5.5, Haiku 5.5 and the Fable models, and a reminder is sent to those as one,
-on the official origin. A user cannot write a system message, so the model
-can tell a reminder from text a user typed. The message is sent after a user
-turn and before the assistant turn that follows, which is where the API takes
-it. Every other model, origin and provider receives a reminder as text of a
-user turn in a system-reminder block. `provider.system_messages?` states
-which of the two a provider sends.
+How a reminder reaches the model depends on the provider. A user cannot write
+a system or developer message, so where a provider has one in the middle of a
+conversation, the model can tell a reminder from text a user typed.
+
+- Anthropic takes a system message in the middle of a conversation on Opus
+  4.8 and later, Sonnet 5.5, Haiku 5.5 and the Fable models, and a reminder
+  is sent to those as one, on the official origin. It is sent after a user
+  turn and before the assistant turn that follows, which is where the API
+  takes it.
+- OpenAI takes a developer message anywhere in a conversation, and a
+  reminder is sent as one, on the official origin.
+- Every other model, origin and provider receives a reminder as text of a
+  user turn in a system-reminder block.
+
+`provider.system_messages?` states which form a provider sends. On both
+providers a request whose last message is such a reminder is not read from
+the prompt cache by the next request, so the reminder's tokens are sent
+uncached once more than they are as text of a user turn. After that the
+cache holds.
 
 A conversation that starts on one form and continues on the other, such as a
 session moved to an older model, changes what was sent before. The prompt

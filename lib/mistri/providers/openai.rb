@@ -51,6 +51,11 @@ module Mistri
         @defers_tools.nil? ? @official && Models.tool_loading?(@model) : @defers_tools
       end
 
+      # The API takes a developer message anywhere in a conversation, and a
+      # reminder is sent as one. Another origin may refuse the role, and
+      # receives a reminder as text of a user turn.
+      def system_messages? = @official
+
       def stream(messages:, system: nil, tools: [], signal: nil, **overrides, &emit)
         delivery = EventDelivery.wrap(emit)
         model = overrides.fetch(:model, @model)
@@ -80,7 +85,8 @@ module Mistri
         body = {
           model: model,
           input: Serializer.input_items(messages,
-                                        deferred: overrides.fetch(:deferred_tools, [])),
+                                        deferred: overrides.fetch(:deferred_tools, []),
+                                        system_messages: system_messages?),
           stream: true,
           store: false,
           include: ["reasoning.encrypted_content"]

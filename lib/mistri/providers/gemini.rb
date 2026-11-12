@@ -34,6 +34,10 @@ module Mistri
         @catalog_pricing && Models.priced?(model) && tier_known
       end
 
+      # The API has no system message in the middle of a conversation, so a
+      # reminder is sent as text of a user turn.
+      def system_messages? = false
+
       def native_output_schema(schema)
         return unless Models.find(model)&.provider == :gemini
 

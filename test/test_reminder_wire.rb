@@ -2,10 +2,11 @@
 
 require_relative "test_helper"
 
-# A reminder is a system message in the conversation. A provider sends it as
-# a system message where its model takes one in the middle of a conversation,
-# and otherwise as text of a user turn in a system-reminder block. No other
-# system message of the conversation is sent.
+# A reminder is a system message in the conversation. Anthropic sends it as a
+# system message where the model takes one in the middle of a conversation,
+# OpenAI as a developer message, and every other case as text of a user turn
+# in a system-reminder block. No other system message of the conversation is
+# sent.
 class TestReminderWire < Minitest::Test
   LIST = "<system-reminder>\nThe list.\n</system-reminder>"
   MORE = "<system-reminder>\nMore.\n</system-reminder>"
@@ -125,6 +126,39 @@ class TestReminderWire < Minitest::Test
     assert_equal [{ role: "user", content: [{ type: "input_text", text: "Go." }] },
                   { role: "user", content: [{ type: "input_text", text: LIST },
                                             { type: "input_text", text: MORE }] }], wire
+  end
+
+  def test_openai_sends_a_reminder_as_a_developer_message_where_the_conversation_holds_it
+    user = history.first
+    serializer = Mistri::Providers::OpenAI::Serializer
+    wire = serializer.input_items([*history, user], system_messages: true)
+
+    assert_equal [{ role: "user", content: [{ type: "input_text", text: "Go." }] },
+                  { role: "developer", content: [{ type: "input_text", text: "The list." },
+                                                 { type: "input_text", text: "More." }] },
+                  { role: "user", content: [{ type: "input_text", text: "Go." }] }], wire
+  end
+
+  def test_the_openai_provider_sends_a_developer_message_on_its_own_origin
+    official = Mistri::Providers::OpenAI.new(api_key: "k", model: "gpt-5-nano")
+    gateway = Mistri::Providers::OpenAI.new(api_key: "k", origin: "https://gateway.example")
+    sent = Recorded.new
+    [official, gateway].each { |provider| provider.instance_variable_set(:@transport, sent) }
+
+    official.stream(messages: history)
+    gateway.stream(messages: history)
+
+    assert_equal(%w[developer user], sent.bodies.map { |body| body[:input].last[:role] })
+    assert_predicate official, :system_messages?
+    refute_predicate gateway, :system_messages?
+  end
+
+  def test_gemini_has_no_system_message_in_a_conversation
+    gemini = Mistri::Providers::Gemini.new(api_key: "k")
+
+    refute_predicate gemini, :system_messages?
+  ensure
+    gemini&.close
   end
 
   def test_gemini_sends_a_reminder_as_text_of_a_user_turn

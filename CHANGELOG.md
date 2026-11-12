@@ -72,7 +72,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   the conversation: the agent appends a system message with `reminder` set,
   which is not the user's message. A reminder is sent as a system
   message to the Anthropic models that take one in the middle of a
-  conversation, and as text of a user turn to every other model and provider. The definition of `tool_search` does not
+  conversation, as a developer message to OpenAI, and as text of a user turn
+  to every other model, origin and provider. The definition of `tool_search` does not
   change with the list, so connecting a server keeps the prompt cache. A tool
   result can load tools itself with
   `ToolResult.new(content:, loads:)`. On Anthropic a loaded definition travels
