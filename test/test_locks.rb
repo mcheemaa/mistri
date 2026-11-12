@@ -233,4 +233,17 @@ class TestLocks < Minitest::Test
 
     assert_raises(Mistri::Error) { locks.held?("run:1") }
   end
+
+  def test_rails_cache_reads_a_lease_again_after_one_failed_read
+    require "mistri/locks/rails_cache"
+    # A failed read answers false; the cache has recovered by the write.
+    flaky = Class.new do
+      def initialize = @reads = [false, true]
+      def exist?(*) = @reads.shift
+      def write(*, **) = true # rubocop:disable Naming/PredicateMethod -- the cache store's name
+    end.new
+    locks = Mistri::Locks::RailsCache.new(cache: flaky)
+
+    assert locks.held?("run:1")
+  end
 end

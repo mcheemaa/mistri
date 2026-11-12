@@ -31,9 +31,9 @@ module Mistri
       def held?(key)
         return true if @cache.exist?(scoped(key))
 
-        # A miss and an outage read alike; only a write tells them apart.
+        # A miss and an outage read alike, so confirm the cache answers and read again.
         write("probe", expires_in: 60)
-        false
+        @cache.exist?(scoped(key))
       end
 
       def set_flag(key, ttl: 300)
