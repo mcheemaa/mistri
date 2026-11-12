@@ -14,6 +14,15 @@ module Mistri
       # defer_loading, which keeps it out of the prompt, and a result that
       # loads one carries a tool_reference to it.
       module Serializer
+        # The first deferred definition in a conversation rebuilds its cached
+        # prefix. This one is sent from the first request, so a load never
+        # does. No result references it, so it never enters the prompt.
+        RESERVED = { name: "mistri_deferred_tools",
+                     description: "Reserved. Keeps tool loading in place. Never call it.",
+                     input_schema: { type: "object", properties: {}.freeze }.freeze,
+                     defer_loading: true }.freeze
+        private_constant :RESERVED
+
         module_function
 
         def system_blocks(system, cache:)
@@ -35,9 +44,27 @@ module Mistri
           wire
         end
 
-        def tools(definitions, deferred = [])
-          definitions.map { |tool| definition(tool) } +
-            deferred.map { |tool| definition(tool).merge(defer_loading: true) }
+        # deferred is nil for an agent that defers nothing, and the loaded
+        # deferred tools for one that does.
+        def tools(definitions, deferred = nil)
+          eager = definitions.map { |tool| definition(tool) }
+          return eager unless deferred
+
+          loaded = deferred.map { |tool| definition(tool).merge(defer_loading: true) }
+          if (eager + loaded).any? { |tool| tool[:name] == RESERVED[:name] }
+            raise ConfigurationError, "the tool name #{RESERVED[:name]} is reserved while " \
+                                      "tools are deferred on Anthropic"
+          end
+
+          eager + [RESERVED] + loaded
+        end
+
+        # The names a result may reference: the deferred tools of the request,
+        # never the reserved definition.
+        def referable(definitions)
+          definitions.filter_map do |tool|
+            tool[:name] if tool[:defer_loading] && !tool.equal?(RESERVED)
+          end
         end
 
         def definition(tool)

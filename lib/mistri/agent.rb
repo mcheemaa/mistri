@@ -169,7 +169,6 @@ module Mistri
       specs, @external_tool_validators = compile_tool_contracts
       names = deferred.to_h { |tool| [tool.name, true] }
       later, @eager_specs = specs.partition { |spec| names.key?(spec[:name]) }.map(&:freeze)
-      @deferred_list = later
       @deferred_specs = later.to_h { |spec| [spec[:name], spec] }.freeze
       @defers_tools = @provider.respond_to?(:defers_tools?) && @provider.defers_tools?
     end
@@ -400,16 +399,17 @@ module Mistri
     end
 
     # A deferred tool is loaded once a tool result in the history has loaded
-    # it. A provider that defers natively receives every deferred definition
-    # and marks the loading result in its own wire form. Any other provider
-    # receives the loaded tools after the eager ones, in load order.
+    # it. A provider that defers natively receives the loaded definitions
+    # separately, in load order, and marks the loading result in its own wire
+    # form. Any other provider receives them after the eager tools.
     def tool_options(history)
       return { tools: @eager_specs } if @deferred_specs.empty?
 
       @loaded = history.reject(&:tool_error?).flat_map { |message| message.loads.to_a }.uniq
-      return { tools: @eager_specs, deferred_tools: @deferred_list } if @defers_tools
+      loaded = @deferred_specs.values_at(*@loaded).compact
+      return { tools: @eager_specs, deferred_tools: loaded } if @defers_tools
 
-      { tools: @eager_specs + @deferred_specs.values_at(*@loaded).compact }
+      { tools: @eager_specs + loaded }
     end
 
     def provider_output_schema(output_schema)

@@ -374,11 +374,17 @@ fails Agent construction.
 How a loaded tool reaches the model depends on the provider, and a host does
 not choose:
 
-- Anthropic is sent every deferred definition marked to stay out of the
-  prompt, and a result that loads tools carries references to them. The tool
-  list never changes, so the prompt cache holds across a load. The result's
-  own text follows the tool results of that turn. This is used on the official
-  origin; another origin is treated like the last provider below.
+- Anthropic receives a deferred definition from the request whose result
+  loads it, marked `defer_loading` so that it stays out of the prompt, and
+  that result carries a reference to it. The prompt cache holds across a
+  load. One reserved definition, `mistri_deferred_tools`, is sent the same
+  way from the first request, because the first deferred definition in a
+  conversation would otherwise rebuild the cache once. No result references
+  it, so it never enters the prompt. No result can load it, and a tool of
+  that name beside deferred tools fails the request before it is sent. The
+  result's own text follows the tool results of that turn. This form is used
+  on the official origin; another origin is treated like the last provider
+  below.
 - OpenAI keeps the request's own tools as they are, and a result that loads
   tools is followed by an item in the input that makes them callable from
   that point on. The prompt cache holds across a load here too. This is used
@@ -392,18 +398,14 @@ What it costs in the process is small. Building an agent with deferred tools
 costs what a flat list costs. The search index is built once, on an agent's
 first search, from each deferred tool's description and schema. Building a
 request adds one pass over the history to find what was loaded, and on
-OpenAI one pass over the deferred definitions to index them by name.
+OpenAI one pass over the loaded definitions to index them by name.
 
-On the wire the forms differ. On OpenAI and Gemini a request carries no
-deferred definition until a result loads it. On Anthropic every deferred
-definition travels in the body of every request, as the API requires, though
-one is not counted as input until it is loaded. The body grows by the size
-of the definitions: 600 deferred tools of a kilobyte each add 600 KB to
-every request.
+On the wire no request carries the definition of a deferred tool until a
+result loads it, on any provider.
 
 A provider of your own is sent the growing tool list. To hold definitions
 back itself it answers `defers_tools?` with true, and `stream` is then given
-the deferred definitions as `deferred_tools:` beside `tools:`.
+the loaded deferred definitions as `deferred_tools:` beside `tools:`.
 
 ## Hand off the turn
 

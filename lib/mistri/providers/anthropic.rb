@@ -54,10 +54,10 @@ module Mistri
         SchemaCapabilities.derive(schema, :anthropic)
       end
 
-      # The API holds a definition back until a result references it, so an
-      # agent hands every deferred tool over as deferred_tools and the tool
-      # list never changes. Another origin may not take this, and is sent the
-      # loaded tools as tools.
+      # The API keeps a deferred definition out of the prompt until a result
+      # references it, so an agent passes the loaded deferred tools as
+      # deferred_tools and the eager tools of a request never change. Another
+      # origin may not support this, and receives the loaded tools as tools.
       def defers_tools? = @official
 
       def stream(messages:, system: nil, tools: [], signal: nil, **overrides, &emit)
@@ -86,8 +86,8 @@ module Mistri
       def official_origin?(origin) = origin.to_s.delete_suffix("/") == DEFAULT_ORIGIN
 
       def build_body(model, messages, system, tools, overrides)
-        definitions = Serializer.tools(tools, overrides.fetch(:deferred_tools, []))
-        deferred = definitions.filter_map { |tool| tool[:name] if tool[:defer_loading] }
+        definitions = Serializer.tools(tools, overrides[:deferred_tools])
+        deferred = Serializer.referable(definitions)
         body = {
           model: model,
           max_tokens: max_tokens_for(model, overrides),
