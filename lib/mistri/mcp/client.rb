@@ -90,14 +90,17 @@ module Mistri
         end
       end
 
-      # An error raised before the call is sent is tagged NotSent.
+      # An error raised before the call is sent is raised as a copy tagged
+      # NotSent. The error itself may be frozen, or raised again by a later
+      # call that was sent.
       def call_tool(name, arguments = {})
         @mutex.synchronize do
           @sent = false
           request("tools/call", { name: name, arguments: arguments })
         rescue StandardError => e
-          e.extend(NotSent) unless @sent
-          raise
+          raise if @sent
+
+          raise e.dup.extend(NotSent)
         end
       end
 

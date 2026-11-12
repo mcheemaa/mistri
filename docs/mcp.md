@@ -303,8 +303,8 @@ credential. An ambiguous outcome never takes those replay paths.
 
 The opposite case is a call that was never sent. A client connects on its
 first request, so a server that cannot be reached fails in the handshake,
-before `tools/call` leaves. `Client#call_tool` raises that error tagged with
-`Mistri::MCP::NotSent`, and its class is unchanged. A bridged tool turns it
+before `tools/call` leaves. `Client#call_tool` raises a copy of that error
+tagged with `Mistri::MCP::NotSent`, of the same class. A bridged tool turns it
 into an error result that states no connection could be established and the
 tool did not run, so the model does not report a partial effect.
 
