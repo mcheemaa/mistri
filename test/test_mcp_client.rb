@@ -198,7 +198,15 @@ class TestMcpClient < Minitest::Test
     with_server(require_token: "right") do |server|
       client = remote_client(server, token: "wrong")
 
-      assert_raises(Mistri::AuthenticationError) { client.call_tool("echo", {}) }
+      error = assert_raises(Mistri::AuthenticationError) { client.call_tool("echo", {}) }
+      revoked = Mistri::AuthenticationError.new("refresh credential revoked", status: 400)
+      own = assert_raises(Mistri::AuthenticationError) do
+        remote_client(server, token: -> { raise revoked }).call_tool("echo", {})
+      end
+
+      assert_equal "the MCP server did not authorize the request", error.message
+      assert_equal 401, error.status
+      assert_equal ["refresh credential revoked", 400], [own.message, own.status]
     end
   end
 

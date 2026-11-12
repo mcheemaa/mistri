@@ -5,6 +5,12 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+- An authorization failure on an MCP server has its own error message. A 401
+  or 403 from an MCP server raised `AuthenticationError` with the message
+  "invalid or missing API key", which describes a model provider. The message
+  now states that the MCP server did not authorize the request. The class,
+  the status and the response body are unchanged, and an error raised by a
+  host's token callable is passed on as it is.
 - A bridged MCP tool whose server cannot be reached reports that it did not
   run. The failure happens in the handshake, before the call is sent, and the
   tool result read "The tool may have completed partially; verify its effects
