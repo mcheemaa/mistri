@@ -691,11 +691,7 @@ module Mistri
       refusal = uncallable(call.name, tool, fresh: normalize)
       return [call, refusal] if refusal
 
-      prepared, failure = prepare_arguments(tool, call, normalize:, signal:)
-      # The model called a tool loaded before a compaction without its
-      # definition, so it cannot correct the arguments. It has to load the tool.
-      failure = unloaded_tool(call.name) if failure && normalize && unloaded?(call.name)
-      [prepared, failure]
+      prepare_arguments(tool, call, normalize:, signal:)
     end
 
     def prepare_arguments(tool, call, normalize:, signal:)
@@ -705,17 +701,18 @@ module Mistri
                     else
                       "arguments were not valid bounded JSON"
                     end
-        return [call, argument_failure(call.name, violation)]
+        return [call, argument_failure(call.name, violation, fresh: normalize)]
       end
       unless call.arguments.is_a?(Hash)
-        return [call, argument_failure(call.name, "arguments must be a JSON object")]
+        violation = "arguments must be a JSON object"
+        return [call, argument_failure(call.name, violation, fresh: normalize)]
       end
 
       prepared, failure = normalize ? normalize_call(tool, call) : [call, nil]
       return [prepared, nil] if signal&.aborted?
       return [prepared, failure] if failure
 
-      [prepared, validate_call(tool, prepared)]
+      [prepared, validate_call(tool, prepared, fresh: normalize)]
     end
 
     # Tool-result correlation is provider-owned opaque state. If any ID is
@@ -882,7 +879,7 @@ module Mistri
       [call, preparation_failure(call.name, "normalizer", e.class)]
     end
 
-    def validate_call(tool, call)
+    def validate_call(tool, call, fresh:)
       validator = @external_tool_validators[call.name]
       errors = if tool.is_a?(Tool)
                  TOOL_ARGUMENT_VALIDATOR.bind_call(tool, call.arguments, owned: true)
@@ -892,12 +889,16 @@ module Mistri
       if errors.empty? && !tool.is_a?(Tool) && tool.respond_to?(:prepared_argument_violations)
         errors = tool.prepared_argument_violations(call.arguments)
       end
-      errors.empty? ? nil : argument_failure(call.name, *errors)
+      errors.empty? ? nil : argument_failure(call.name, *errors, fresh:)
     rescue StandardError => e
       preparation_failure(call.name, "validator", e.class)
     end
 
-    def argument_failure(name, *violations)
+    # The model called a tool loaded before a compaction without its
+    # definition, so it cannot correct the arguments. It has to load the tool.
+    def argument_failure(name, *violations, fresh:)
+      return unloaded_tool(name) if fresh && unloaded?(name)
+
       header = "Invalid arguments for tool #{tool_label(name)}:\n"
       footer = "\nThe tool did not run. Correct the arguments and try again."
       available = MAX_ARGUMENT_ERROR_BYTES - header.bytesize - footer.bytesize

@@ -161,4 +161,24 @@ class TestDeferredToolsLoaded < Minitest::Test
     assert_match(/not loaded, so it did not run\. Load it with tool_search first/, invalid.text)
     assert_equal "refunded", valid.text
   end
+
+  def test_a_host_s_failure_on_a_tool_loaded_before_a_compaction_stays_as_it_is
+    raises = ->(*) { raise "host failure" }
+    { "normalizer" => { argument_normalizer: raises },
+      "validator" => { argument_validator: raises } }.each do |phase, option|
+      refund = Mistri::Tool.define("refund_charge", "Refunds.", deferred: true, **option) { "ran" }
+      first, = agent([{ tool_calls: [search("select:refund_charge")] }, { text: "Loaded." }],
+                     tools: [refund])
+      first.run("Get ready.")
+      first.session.checkpoint(summary: "Ready.", kept_from: first.session.entries.length)
+      later, = agent([{ tool_calls: [{ name: "refund_charge" }] }, { text: "Done." }],
+                     tools: [refund], session: first.session)
+
+      later.run("Refund it.")
+      failed = first.session.messages.reverse_each.find(&:tool?)
+
+      assert_predicate failed, :tool_error?
+      assert_match(/its argument #{phase} failed \(RuntimeError\)/, failed.text)
+    end
+  end
 end
