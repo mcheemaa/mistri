@@ -40,12 +40,13 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   session, so a later run offers the same tools. A compaction keeps the names
   of the loaded tools, and the summary message lists them with an instruction
   to load the needed ones again. A tool result can load tools itself with
-  `ToolResult.new(content:, loads:)`. On Anthropic a loaded definition
-  travels marked to stay out of the prompt and a load is a reference to it, so
-  the prompt cache holds across a load. On
-  OpenAI, for gpt-5.4 and later except the nano models, a load is an item in
-  the input that makes the tools callable from there on, which keeps the cache
-  as well.
+  `ToolResult.new(content:, loads:)`. On Anthropic a loaded definition travels
+  marked to stay out of the prompt and a load is a reference to it, so the
+  prompt cache holds across a load. On OpenAI, for gpt-5.4 and later except
+  the nano models, a load is an item in the input that makes the tools
+  callable from there on, which keeps the cache as well. A provider built for
+  another origin takes `defers_tools: true` when that origin supports these
+  forms.
 - A bridged MCP tool gets a name every provider takes. MCP allows dots,
   slashes and any length in a tool name, and one name the model's API refused
   failed the whole request. A name of letters, digits, underscores and
