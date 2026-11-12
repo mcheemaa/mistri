@@ -181,6 +181,8 @@ module Mistri
     # The listing the model reads: every deferred name, or the number of
     # tools under each prefix once the names exceed LISTING_BYTES.
     def listing(names)
+      return "No tools load on demand now. This list replaces any earlier one." if names.empty?
+
       if names.sum(&:bytesize) > LISTING_BYTES
         return "These tools load on demand. There are too many to list by name: " \
                "#{inventory(names)}. Load one with #{NAME} before you call it: search with " \

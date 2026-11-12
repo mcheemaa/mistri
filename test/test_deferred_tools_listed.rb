@@ -61,4 +61,17 @@ class TestDeferredToolsListed < Minitest::Test
     assert_includes listings.last, "tracker__create_issue"
     assert_includes listings[1], "docs__search_pages"
   end
+
+  def test_an_agent_without_deferred_tools_withdraws_an_earlier_list_once
+    one, = agent([{ text: "One." }])
+    one.run("First.")
+    plain, provider = agent([{ text: "Two." }, { text: "Three." }], session: one.session, tools: [])
+
+    plain.run("Second.")
+    plain.run("Third.")
+    listings = provider.requests.last[:messages].select(&:reminder).map(&:text)
+
+    assert_equal 2, listings.length
+    assert_includes listings.last, "No tools load on demand now."
+  end
 end

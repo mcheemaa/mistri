@@ -153,6 +153,7 @@ class TestDeferredTools < Minitest::Test
     agent.run("Hello.")
 
     assert_equal %w[lookup_order refund_charge], offered(provider)
+    assert_empty agent.session.messages.filter_map(&:reminder)
   end
 
   def test_a_host_tool_named_tool_search_collides_loudly

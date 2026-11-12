@@ -401,12 +401,14 @@ module Mistri
 
     # The list goes into the conversation, not into a definition, so the tools
     # and the system prompt of a request are unchanged by what a host connects.
+    # An agent without deferred tools appends nothing, unless the conversation
+    # holds a list from an agent that had some.
     def listing_deferred_tools(messages)
-      return messages if @deferred_specs.empty?
-
       @listing ||= Message.reminder("deferred_tools", ToolSearch.listing(@deferred_specs.keys))
       latest = messages.reverse_each.find { |message| message.reminder == @listing.reminder }
-      latest == @listing ? messages : messages + [@session.append_message(@listing)]
+      return messages if latest == @listing || (latest.nil? && @deferred_specs.empty?)
+
+      messages + [@session.append_message(@listing)]
     end
 
     # A deferred tool is loaded once a tool result in the history has loaded

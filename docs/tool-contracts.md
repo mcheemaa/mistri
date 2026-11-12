@@ -318,12 +318,13 @@ search loads them.
 The deferred tools are listed in the conversation. With its first request an
 agent appends a reminder to the session, after the user's message, that names
 every deferred tool. It appends one again when the list has changed, and
-after a compaction that summarized the previous one. Past 20 KB of names the
-reminder gives the number of tools under each name prefix instead, up to
-20 KB of prefixes, and one count for the rest. So give a server a prefix that
-describes it. The definition of `tool_search` is the same whatever the list
-holds. Connecting a server therefore changes neither the tools nor the system
-prompt of a request, and the prompt cache holds.
+after a compaction that summarized the previous one. An agent that holds no
+deferred tool, on a session that has a list, appends one that states so. Past
+20 KB of names the reminder gives the number of tools under each name prefix
+instead, up to 20 KB of prefixes, and one count for the rest. So give a server
+a prefix that describes it. The definition of `tool_search` is the same
+whatever the list holds. Connecting a server therefore changes neither the
+tools nor the system prompt of a request, and the prompt cache holds.
 
 The reminder is a user message whose `reminder` is `"deferred_tools"`. The
 user did not write it, so a host that shows a conversation to a person hides
