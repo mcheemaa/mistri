@@ -60,12 +60,13 @@ module Mistri
     # that cannot be bridged is left out: the block is given its definition
     # and the error, and without a block it is named in a warning. deferred
     # keeps the server's tools out of the model's sight until a search loads
-    # them.
+    # them. instructions: false keeps the server's instructions out of the
+    # conversation, and a string is sent in their place.
     def tools(client, allow: nil, deny: [], prefix: nil, needs_approval: false, gates: {},
-              complete_argument_validator: nil, deferred: false)
+              complete_argument_validator: nil, deferred: false, instructions: true)
       taken = {}
       listed = client.tools
-      instructions = client.instructions if client.respond_to?(:instructions)
+      instructions = instructions_for(client, instructions)
       listed.filter_map do |tool|
         remote = tool["name"] if tool.is_a?(Hash)
         next if deny.include?(remote) || (allow && !allow.include?(remote))
@@ -102,6 +103,15 @@ module Mistri
     # A remote name is the server's to choose, so a message carries its start.
     def label(remote) = remote.inspect[0, 120]
     private_class_method :label
+
+    # The text a server's tools carry into the conversation: the host's own
+    # string, the server's instructions, or none.
+    def instructions_for(client, choice)
+      return choice if choice.is_a?(String)
+
+      client.instructions if choice && client.respond_to?(:instructions)
+    end
+    private_class_method :instructions_for
 
     # The model calls the tool by name, or by a safe name made from prefix and
     # the remote name. The server is always called with the remote name.

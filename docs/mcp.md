@@ -145,6 +145,14 @@ A server may send `instructions` in its initialize result: text on how to use
 its tools. `client.instructions` returns it, and `Mistri::MCP.tools` sets it
 on every tool it bridges, as `Tool#instructions`.
 
+The text is the server's, and the host decides whether the model reads it:
+
+```ruby
+Mistri::MCP.tools(client)                                  # the server's instructions
+Mistri::MCP.tools(client, instructions: false)             # none
+Mistri::MCP.tools(client, instructions: "Use for orders.") # the host's own text
+```
+
 An agent appends the instructions of every server to the conversation with
 its first request, before the model chooses a tool, so they can guide the
 choice. They are appended as one reminder, a system message of the
