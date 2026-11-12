@@ -25,6 +25,14 @@ class TestDeferredToolsListed < Minitest::Test
     refute_includes listing, "tracker__operation_number_1"
   end
 
+  def test_the_counted_list_is_bounded_and_counts_the_remaining_prefixes_together
+    names = Array.new(2_000) { |index| "server_number_#{index}__read" }
+    listing = Mistri::ToolSearch.listing(names)
+
+    assert_operator listing.bytesize, :<, Mistri::ToolSearch::LISTING_BYTES + 500
+    assert_match(/server_number_0 \(1 tool\), .*, \d{4} others\. Load one/, listing)
+  end
+
   def test_a_compaction_does_not_summarize_the_list_and_it_is_appended_again
     agent, provider = agent([{ text: "One." }, { text: "Two." }, { text: "Summary." },
                              { text: "Three." }],

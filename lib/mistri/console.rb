@@ -209,6 +209,8 @@ module Mistri
     # Tool calls ride the message's content as typed blocks, never as a
     # separate key; render both channels from the blocks.
     def message_line(message)
+      return "reminder: #{message["reminder"]}" if message["reminder"]
+
       blocks = message["content"].is_a?(Array) ? message["content"] : []
       calls = blocks.filter_map do |block|
         next unless block.is_a?(Hash) && block["type"] == "tool_call"

@@ -192,13 +192,18 @@ module Mistri
         "replaces any earlier one.\n#{names.join("\n")}"
     end
 
+    # The number of tools under each prefix, up to LISTING_BYTES of prefixes.
+    # Tools without a prefix and tools under the remaining prefixes are
+    # counted together.
     def inventory(names)
-      prefixed, plain = names.partition { |name| name.include?("__") }
-      groups = prefixed.group_by { |name| name.split("__", 2).first }.map do |prefix, group|
-        "#{prefix} (#{count(group.length, "tool")})"
-      end
-      groups << count(plain.length, groups.empty? ? "tool" : "other") if plain.any?
-      groups.join(", ")
+      groups = names.select { |name| name.include?("__") }
+                    .group_by { |name| name.split("__", 2).first }
+      room = LISTING_BYTES
+      listed = groups.map { |prefix, group| "#{prefix} (#{count(group.length, "tool")})" }
+                     .take_while { |entry| (room -= entry.bytesize + 2) >= 0 }
+      others = names.length - groups.values.first(listed.length).sum(&:length)
+      listed << count(others, listed.empty? ? "tool" : "other") if others.positive?
+      listed.join(", ")
     end
     private_class_method :inventory
 
