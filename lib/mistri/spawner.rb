@@ -259,8 +259,8 @@ module Mistri
       end
     end
 
-    # The pool for an error the model reads. Tools that load on demand are
-    # counted, as tool_search counts them, and not named.
+    # The pool as an error result lists it. Deferred tools are counted, not
+    # named.
     def available
       later, ready = @pool.partition(&:deferred?)
       names = ready.map(&:name).join(", ")
@@ -297,8 +297,9 @@ module Mistri
       end
     end
 
-    # How the tools argument reads and what it takes. A pool that holds
-    # tools that load on demand names only the ones at hand.
+    # The description and item schema of the tools argument. For a pool that
+    # holds deferred tools, the description names only the tools that are not
+    # deferred.
     def tools_argument
       names = @pool.map(&:name)
       return if names.empty?
@@ -308,8 +309,8 @@ module Mistri
              "grants none)"
       return [text, { type: "string", enum: names }] if ready.length == names.length
 
-      ["#{text}. At hand: #{ready.join(", ")}. A tool that loads on demand goes by the name " \
-       "tool_search gives it.", { type: "string" }]
+      ["#{text}. Available without loading: #{ready.join(", ")}. To grant a tool that loads " \
+       "on demand, use the name tool_search returned.", { type: "string" }]
     end
 
     def description

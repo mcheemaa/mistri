@@ -98,7 +98,7 @@ class TestSpawnTypes < Minitest::Test
     refusal = session.messages.select(&:tool?).last.text
 
     refute_includes definition, "tracker__create_issue"
-    assert_includes definition, "At hand: archive."
+    assert_includes definition, "Available without loading: archive."
     assert_equal(%w[tool_search], child_fake.requests.first[:options][:tools].map { |t| t[:name] })
     assert_match(/unknown tool "nope"; available: archive and 1 that loads on demand/, refusal)
   end
