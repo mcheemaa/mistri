@@ -18,6 +18,9 @@ module Mistri
     # 25 bytes, so about 800 names fit.
     LISTING_BYTES = 20_000
     QUERY_LIMIT = 500
+    # The list names every deferred tool, the loaded ones too.
+    LOADED = "Once a #{NAME} result states that a tool is loaded, call it directly and do not " \
+             "load it again.".freeze
     SELECT = /\Aselect:/i
     # Okapi BM25 over the description and the parameters.
     K1 = 1.2
@@ -34,7 +37,7 @@ module Mistri
     WORD = /[#{UNSPACED}]+|[[:alnum:]&&[^#{UNSPACED}]]+/
     UNSPACED_RUN = /\A[#{UNSPACED}]/
     UNSPACED_PAIR = /[#{UNSPACED}]{2,}/
-    private_constant :DESCRIPTION, :SELECT, :K1, :B, :NAME_WEIGHT, :STOP_WORDS, :UNSPACED,
+    private_constant :DESCRIPTION, :LOADED, :SELECT, :K1, :B, :NAME_WEIGHT, :STOP_WORDS, :UNSPACED,
                      :WORD, :UNSPACED_RUN, :UNSPACED_PAIR
 
     Document = Data.define(:tool, :size, :alike, :name_words, :local_words, :counts, :length)
@@ -188,12 +191,12 @@ module Mistri
       if names.sum(&:bytesize) > LISTING_BYTES
         return "These tools load on demand. There are too many to list by name: " \
                "#{inventory(names)}. Load one with #{NAME} before you call it: search with " \
-               "words that describe what you need. This list replaces any earlier one."
+               "words that describe what you need. #{LOADED} This list replaces any earlier one."
       end
 
       "These tools load on demand. Load one with #{NAME} before you call it: search with " \
-        "words that describe what you need, or use select: followed by the names. This list " \
-        "replaces any earlier one.\n#{names.join("\n")}"
+        "words that describe what you need, or use select: followed by the names. #{LOADED} " \
+        "This list replaces any earlier one.\n#{names.join("\n")}"
     end
 
     # The number of tools under each prefix, up to LISTING_BYTES of prefixes.
