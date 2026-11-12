@@ -185,6 +185,8 @@ module Mistri
                              claude-opus-4-6 claude-sonnet-5 claude-sonnet-4-6
                              claude-haiku-4-5].freeze
     TOOL_LOADING_FROM = [5, 4].freeze
+    SYSTEM_MESSAGES_FROM = { "opus" => [4, 8], "sonnet" => [5, 5], "haiku" => [5, 5],
+                             "fable" => [5], "mythos" => [5] }.freeze
 
     # Published family aliases and dated ids resolve to their canonical entry.
     def self.find(id)
@@ -224,6 +226,17 @@ module Mistri
       return false if version.nil? || id.to_s.include?("-nano")
 
       (version.split(".").map(&:to_i) <=> TOOL_LOADING_FROM) >= 0
+    end
+
+    # Anthropic takes a system message in the middle of a conversation from
+    # these versions of each family on. Sonnet 5 is left out because its
+    # reference names it as a model that does not. The version is read from
+    # the id, so a later model qualifies before the catalog knows it, and an
+    # id of any other form is taken for an older model.
+    def self.system_messages?(id)
+      family, version = id.to_s.match(/\Aclaude-([a-z]+)-(\d+(?:-\d{1,2})?)(?:-\d{8})?\z/)&.captures
+      from = SYSTEM_MESSAGES_FROM[family]
+      !from.nil? && (version.split("-").map(&:to_i) <=> from) >= 0
     end
 
     def self.rates(id, usage: nil, at: Time.now) = find(id)&.rates(usage:, at:)

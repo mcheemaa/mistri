@@ -332,8 +332,21 @@ tools nor the system prompt of a request, and the prompt cache holds.
 The reminder is a system message of the conversation whose `reminder` is
 `"deferred_tools"`. It is not the user's message, so a host that shows the
 user and assistant messages to a person does not show it. A compaction does
-not summarize it. Each provider sends it as text of a user turn in a
-system-reminder block.
+not summarize it.
+
+How a reminder reaches the model depends on the provider. Anthropic takes a
+system message in the middle of a conversation on Opus 4.8 and later, Sonnet
+5.5, Haiku 5.5 and the Fable models, and a reminder is sent to those as one,
+on the official origin. A user cannot write a system message, so the model
+can tell a reminder from text a user typed. The message is sent after a user
+turn and before the assistant turn that follows, which is where the API takes
+it. Every other model, origin and provider receives a reminder as text of a
+user turn in a system-reminder block. `provider.system_messages?` states
+which of the two a provider sends.
+
+A conversation that starts on one form and continues on the other, such as a
+session moved to an older model, changes what was sent before. The prompt
+cache is rebuilt once, and signed thinking from before the move is dropped.
 
 A query that is a tool's name loads that tool and no other. The same applies
 to the name without its prefix and to the words of the name, so `create issue`

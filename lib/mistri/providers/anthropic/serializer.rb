@@ -35,14 +35,50 @@ module Mistri
 
         # deferred names the deferred tools of this request: only those can
         # be referenced, and the API refuses a reference to any other.
-        def messages(history, cache: false, deferred: [])
+        # system_messages sends each reminder as a system message. Without it
+        # a reminder is text of a user turn.
+        def messages(history, cache: false, deferred: [], system_messages: false)
           unreferenced = deferred.dup
-          turns = Reminder.as_user_turns(history).chunk_while { |a, b| a.tool? && b.tool? }
-          wire = turns.filter_map do |group|
-            group.first.tool? ? tool_results(group, unreferenced) : message(group.first)
+          history = results_first(history)
+          history = Reminder.as_user_turns(history) unless system_messages
+          wire = []
+          held = []
+          history.chunk_while { |a, b| a.tool? && b.tool? }.each do |group|
+            first = group.first
+            next (held << first if first.reminder) if first.system?
+
+            turn = first.tool? ? tool_results(group, unreferenced) : message(first)
+            next unless turn
+
+            wire.concat(system_turns(held, wire.last)) if first.assistant?
+            wire << turn
           end
+          wire.concat(system_turns(held, wire.last))
           mark_last_user_turn(wire) if cache
           wire
+        end
+
+        # A system message stored among the results of one turn follows them,
+        # so the results of parallel calls stay one user turn.
+        def results_first(history)
+          history.chunk_while { |a, b| (a.tool? || a.system?) && (b.tool? || b.system?) }
+                 .flat_map { |run| run.partition(&:tool?).flatten(1) }
+        end
+
+        # The API takes a system message after a user turn, and before an
+        # assistant turn or at the end. A reminder stored anywhere else is
+        # sent there. When no user turn precedes that place, it is sent as
+        # text of a user turn.
+        def system_turns(held, before)
+          reminders = held.slice!(0..)
+          unless before && before[:role] == "user"
+            return Reminder.as_user_turns(reminders).filter_map { |msg| message(msg) }
+          end
+
+          reminders.filter_map do |reminder|
+            blocks = reminder.content.grep(Content::Text).filter_map { |text| text_block(text) }
+            { role: "system", content: blocks } if blocks.any?
+          end
         end
 
         # deferred is nil for an agent that defers nothing, and the loaded
