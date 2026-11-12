@@ -11,7 +11,9 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   that holds a text block for each server, cut at 2,000 bytes. When they are
   more than 20,000 bytes together, the instructions of a server whose tools
   are all deferred are appended after one of its tools is loaded. They are
-  appended again after a compaction that summarized them.
+  appended again after a compaction that summarized them. `MCP.tools` takes
+  `instructions: false` to leave a server's instructions out, and a string to
+  send the host's own text in their place.
 - An authorization failure on an MCP server has its own error message. A 401
   or 403 from an MCP server raised `AuthenticationError` with the message
   "invalid or missing API key", which describes a model provider. The message

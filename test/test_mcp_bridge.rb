@@ -303,9 +303,14 @@ class TestMcpBridge < Minitest::Test
     tools = { "lookup" => { description: "Looks up facts.", handler: ->(_args) { "fact" } } }
     server = Mistri::Test::McpStubServer.new(tools: tools, instructions: "Cite the source.")
 
-    bridged = Mistri::MCP.tools(remote_client(server), deferred: true)
+    client = remote_client(server)
+    bridged = Mistri::MCP.tools(client, deferred: true)
+    declined = Mistri::MCP.tools(client, instructions: false)
+    replaced = Mistri::MCP.tools(client, instructions: "Use for facts about orders.")
 
     assert_equal ["Cite the source."], bridged.map(&:instructions)
+    assert_equal [nil], declined.map(&:instructions)
+    assert_equal ["Use for facts about orders."], replaced.map(&:instructions)
   ensure
     server&.stop
   end
