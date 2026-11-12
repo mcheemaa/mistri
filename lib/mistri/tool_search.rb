@@ -9,7 +9,6 @@ module Mistri
     LIMIT = 8
     MAX_LIMIT = 20
     QUERY_LIMIT = 500
-    SUMMARY_LIMIT = 200
     SELECT = /\Aselect:/i
     # Okapi BM25 over the description and the parameters.
     K1 = 1.2
@@ -29,7 +28,7 @@ module Mistri
     private_constant :SELECT, :K1, :B, :NAME_WEIGHT, :STOP_WORDS, :UNSPACED, :WORD,
                      :UNSPACED_RUN, :UNSPACED_PAIR
 
-    Document = Data.define(:tool, :summary, :alike, :name_words, :local_words, :counts, :length)
+    Document = Data.define(:tool, :alike, :name_words, :local_words, :counts, :length)
     private_constant :Document
 
     module_function
@@ -188,11 +187,8 @@ module Mistri
 
     def answer(fresh, held, missing, left)
       lines = []
-      if fresh.any?
-        lines << "Loaded #{count(fresh.length, "tool")}. You can call them from your next step:"
-        lines.concat(fresh.map { |document| "- #{document.tool.name}: #{document.summary}" })
-      end
-      lines << "Already loaded, call them directly: #{held_names(held)}." if held.any?
+      lines << "Loaded: #{names(fresh)}. You can call them from your next step." if fresh.any?
+      lines << "Already loaded, call them directly: #{names(held)}." if held.any?
       if left.positive?
         lines << "#{count(left, "more tool")} with these names. Search again to load them."
       end
@@ -203,20 +199,19 @@ module Mistri
     end
     private_class_method :answer
 
-    def held_names(held)
-      names = held.first(MAX_LIMIT).map { |document| document.tool.name }.join(", ")
-      held.length > MAX_LIMIT ? "#{names} and #{held.length - MAX_LIMIT} more" : names
+    def names(documents)
+      listed = documents.first(MAX_LIMIT).map { |document| document.tool.name }.join(", ")
+      documents.length > MAX_LIMIT ? "#{listed} and #{documents.length - MAX_LIMIT} more" : listed
     end
-    private_class_method :held_names
+    private_class_method :names
 
     def document(tool)
       spec = tool.spec.transform_keys(&:to_sym)
-      description = spec[:description].to_s
-      parts = [description]
+      parts = [spec[:description].to_s]
       schema_text(spec[:input_schema], parts)
       text = plain(parts.join(" "))
       terms = words(text)
-      Document.new(tool:, summary: summary(description), alike: identifier(tool.name),
+      Document.new(tool:, alike: identifier(tool.name),
                    name_words: (words(tool.name) + characters(plain(tool.name))).uniq,
                    local_words: words(tool.name.split("__").last).uniq,
                    counts: (terms + characters(text)).tally, length: terms.length)
@@ -236,13 +231,6 @@ module Mistri
       text.ascii_only? ? text : text.unicode_normalize(:nfkc)
     end
     private_class_method :plain
-
-    # The first line of a description, short enough to list twenty of.
-    def summary(description)
-      line = description.lines.first.to_s.strip
-      line.length > SUMMARY_LIMIT ? "#{line[0, SUMMARY_LIMIT - 3]}..." : line
-    end
-    private_class_method :summary
 
     # Descriptions and property names, through nested objects, arrays,
     # alternatives and shared definitions.
