@@ -39,8 +39,11 @@ module Mistri
         # a reminder is text of a user turn.
         def messages(history, cache: false, deferred: [], system_messages: false)
           unreferenced = deferred.dup
-          history = results_first(history)
-          history = Reminder.as_user_turns(history) unless system_messages
+          history = if system_messages
+                      Reminder.after_results(history)
+                    else
+                      Reminder.as_user_turns(history)
+                    end
           wire = []
           held = []
           history.chunk_while { |a, b| a.tool? && b.tool? }.each do |group|
@@ -56,13 +59,6 @@ module Mistri
           wire.concat(system_turns(held, wire.last))
           mark_last_user_turn(wire) if cache
           wire
-        end
-
-        # A system message stored among the results of one turn follows them,
-        # so the results of parallel calls stay one user turn.
-        def results_first(history)
-          history.chunk_while { |a, b| (a.tool? || a.system?) && (b.tool? || b.system?) }
-                 .flat_map { |run| run.partition(&:tool?).flatten(1) }
         end
 
         # The API takes a system message after a user turn, and before an

@@ -167,4 +167,52 @@ class TestReminderWire < Minitest::Test
     assert_equal [{ role: "user", parts: [{ text: "Go." }] },
                   { role: "user", parts: [{ text: LIST }, { text: MORE }] }], wire
   end
+
+  def test_a_provider_of_the_host_s_own_is_given_a_reminder_as_a_user_turn
+    refund = Mistri::Tool.define("refund_charge", "Refunds.", deferred: true) { "ran" }
+    own = Class.new do
+      def initialize(fake) = @fake = fake
+      def model = @fake.model
+      def stream(...) = @fake.stream(...)
+    end
+    takes = Class.new(own) { def system_messages? = true }
+    declines = Class.new(own) { def system_messages? = false }
+    { own => :user, declines => :user, takes => :system }.each do |provider_class, role|
+      fake = Mistri::Providers::Fake.new(turns: [{ text: "Done." }])
+      agent = Mistri::Agent.new(provider: provider_class.new(fake), tools: [refund])
+
+      agent.run("Refund it.")
+      given = fake.requests.first[:messages]
+      note = given.find { |message| message.text.include?("refund_charge") }
+
+      assert_equal role, note.role
+      assert_equal role == :system, given.any?(&:system?)
+      assert_predicate agent.session.messages.find(&:reminder), :system?
+    end
+  end
+
+  def test_an_agent_keeps_the_results_of_one_turn_together_on_a_model_without_system_messages
+    provider = Mistri::Providers::Anthropic.new(api_key: "k", model: "claude-opus-4-7")
+    sent = Recorded.new
+    provider.instance_variable_set(:@transport, sent)
+    tools = %w[x y].map { |name| Mistri::Tool.define(name, "Does #{name}.", deferred: true) { name } }
+    calls = %w[a b].map { |id| Mistri::ToolCall.new(id:, name: "tool_search", arguments: {}) }
+    results = { "a" => "x", "b" => "y" }.map do |id, tool|
+      Mistri::Message.tool(content: "Loaded: #{tool}.", tool_call_id: id,
+                           tool_name: "tool_search", loads: [tool])
+    end
+    session = Mistri::Session.new(store: Mistri::Stores::Memory.new)
+    [Mistri::Message.user("Go."),
+     Mistri::Message.assistant(tool_calls: calls, stop_reason: :tool_use), *results]
+      .each { |message| session.append_message(message) }
+    between = lambda do |messages|
+      messages.dup.insert(messages.index(&:tool?) + 1, Mistri::Message.reminder("probe", "Stop."))
+    end
+
+    Mistri::Agent.new(provider:, session:, tools:, transform_context: between, retries: false)
+                 .run("Go on.")
+    turns = sent.bodies.first[:messages].map { |turn| turn[:content].map { |block| block[:type] } }
+
+    assert_equal [%w[tool_result tool_result text text], %w[text]], turns[2, 2]
+  end
 end

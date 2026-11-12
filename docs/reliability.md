@@ -472,6 +472,10 @@ A malformed completed envelope rejects the whole provider attempt before the
 assistant message persists or any sibling tool runs. Do not invent missing IDs
 inside the Agent; the provider owns its wire correlation.
 
+A reminder Mistri wrote for the model arrives in `messages` as a user
+message, unless the provider answers `system_messages?` with true; see
+[Tools on demand](tool-contracts.md#tools-on-demand).
+
 Custom providers may return `native_output_schema(schema)` when they can enforce
 the requested task contract. Returning nil leaves the prompt and local
 validation path intact.
