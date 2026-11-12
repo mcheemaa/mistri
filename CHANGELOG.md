@@ -60,7 +60,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   run, and its error names the search to run. A load is stored with the
   session, so a later run offers the same tools. A compaction keeps the names
   of the loaded tools, and the summary message lists them with an instruction
-  to load the needed ones again. The names of the deferred tools are listed in
+  to load the needed ones again. A call to one of them with invalid
+  arguments is reported as a call to a tool that is not loaded. The names of the deferred tools are listed in
   the conversation: the agent appends a user message with `reminder` set,
   which a host hides from a person. The definition of `tool_search` does not
   change with the list, so connecting a server keeps the prompt cache. A tool
