@@ -130,17 +130,17 @@ class TestDeferredTools < Minitest::Test
     assert_nil answer.loads
   end
 
-  def test_the_model_is_told_what_can_be_loaded_once_and_in_the_conversation
+  def test_the_deferred_tools_are_listed_once_and_in_the_conversation
     agent, provider = agent([{ text: "Hello." }, { text: "Again." }])
 
     agent.run("Hello.")
     agent.run("Again.")
-    told = provider.requests.first[:messages].last.text
+    listing = provider.requests.first[:messages].last.text
     search = provider.requests.first.dig(:options, :tools)
                      .find { |spec| spec[:name] == "tool_search" }
 
-    assert_match(/\A<system-reminder>\n.*^tracker__create_issue$.*^refund_charge$/m, told)
-    refute_includes told, "lookup_order"
+    assert_match(/\A<system-reminder>\n.*^tracker__create_issue$.*^refund_charge$/m, listing)
+    refute_includes listing, "lookup_order"
     refute_includes search.fetch(:description), "tracker"
     assert_equal %w[deferred_tools], agent.session.messages.filter_map(&:reminder)
     assert_equal "Hello.", provider.requests.first[:messages].first.text

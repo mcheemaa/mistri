@@ -20,7 +20,7 @@ module Mistri
       new(interval: interval, text: text, after: after)
     end
 
-    # How a note from the harness reads inside a user turn.
+    # The wire form of a harness note inside a user turn.
     def self.wrap(text) = "<system-reminder>\n#{text}\n</system-reminder>"
 
     def initialize(interval:, text:, after: nil)

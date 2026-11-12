@@ -14,8 +14,8 @@ module Mistri
     # The definitions of one load, in bytes. Of 303 measured MCP definitions,
     # nine in ten were under 2,200.
     LOAD_BYTES = 20_000
-    # The names of the tools that can be loaded, in bytes: about eight hundred
-    # real MCP names.
+    # The names in one listing, in bytes. The 303 measured MCP names average
+    # 25 bytes, so about 800 names fit.
     LISTING_BYTES = 20_000
     QUERY_LIMIT = 500
     SELECT = /\Aselect:/i
@@ -178,18 +178,18 @@ module Mistri
     end
     private_class_method :name_rank
 
-    # What can be loaded, for the model to read: every name, or how many
-    # tools each prefix holds once the names pass LISTING_BYTES.
+    # The listing the model reads: every deferred name, or the number of
+    # tools under each prefix once the names exceed LISTING_BYTES.
     def listing(names)
       if names.sum(&:bytesize) > LISTING_BYTES
-        return "These tools load on demand, too many to name: #{inventory(names)}. Load one " \
-               "with #{NAME} before you call it: search with words for what you need. This " \
-               "list replaces any earlier one."
+        return "These tools load on demand. There are too many to list by name: " \
+               "#{inventory(names)}. Load one with #{NAME} before you call it: search with " \
+               "words that describe what you need. This list replaces any earlier one."
       end
 
       "These tools load on demand. Load one with #{NAME} before you call it: search with " \
-        "words for what you need, or write select: and the names. This list replaces any " \
-        "earlier one.\n#{names.join("\n")}"
+        "words that describe what you need, or use select: followed by the names. This list " \
+        "replaces any earlier one.\n#{names.join("\n")}"
     end
 
     def inventory(names)

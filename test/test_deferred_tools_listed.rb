@@ -2,9 +2,8 @@
 
 require_relative "test_helper"
 
-# The model reads what can be loaded in the conversation: a reminder the
-# harness stores once, and again when the list changed or a compaction took
-# it away.
+# The deferred tools are listed in the conversation: a reminder the agent
+# appends once, and again when the list changed or a compaction removed it.
 class TestDeferredToolsListed < Minitest::Test
   def tool(name, **)
     Mistri::Tool.define(name, "Does #{name.tr("_", " ")}.", deferred: true, **) { "ran #{name}" }
@@ -26,7 +25,7 @@ class TestDeferredToolsListed < Minitest::Test
     refute_includes listing, "tracker__operation_number_1"
   end
 
-  def test_a_compaction_never_summarizes_the_list_and_it_is_said_again
+  def test_a_compaction_does_not_summarize_the_list_and_it_is_appended_again
     agent, provider = agent([{ text: "One." }, { text: "Two." }, { text: "Summary." },
                              { text: "Three." }],
                             compaction: Mistri::Compaction.new(keep_recent: 1))
@@ -40,7 +39,7 @@ class TestDeferredToolsListed < Minitest::Test
     assert_equal [nil, nil, nil, nil, "deferred_tools", nil], reminders(agent.session)
   end
 
-  def test_a_list_that_changed_is_said_again
+  def test_a_changed_list_is_appended_again
     one, = agent([{ text: "One." }])
     one.run("First.")
     two, = agent([{ text: "Two." }], session: one.session, tools: [tool("docs__search_pages")])
@@ -48,10 +47,10 @@ class TestDeferredToolsListed < Minitest::Test
     again, provider = agent([{ text: "Three." }], session: one.session)
 
     again.run("Third.")
-    told = provider.requests.last[:messages].select(&:reminder).map(&:text)
+    listings = provider.requests.last[:messages].select(&:reminder).map(&:text)
 
-    assert_equal 3, told.length
-    assert_includes told.last, "tracker__create_issue"
-    assert_includes told[1], "docs__search_pages"
+    assert_equal 3, listings.length
+    assert_includes listings.last, "tracker__create_issue"
+    assert_includes listings[1], "docs__search_pages"
   end
 end

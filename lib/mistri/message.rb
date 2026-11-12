@@ -15,8 +15,7 @@ module Mistri
   # field. error is the machine-readable failure on an errored provider turn
   # (ErrorData shape); error_message stays the human story. loads names the
   # deferred tools a tool result made available. reminder marks a user message
-  # that the harness wrote for the model and says which note it is; the user
-  # never said it.
+  # that the harness wrote, not the user, and holds the kind of note.
   class Message < Data.define(:role, :content, :tool_call_id, :tool_name,
                               :model, :provider, :usage, :stop_reason, :error_message, :ui,
                               :error, :tool_error, :loads, :reminder)
