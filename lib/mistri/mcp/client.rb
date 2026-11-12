@@ -25,6 +25,9 @@ module Mistri
     #
     # One client serializes its calls; parallel tool calls against one
     # server queue rather than interleave.
+    #
+    # listing: takes the value an earlier client's listing returned. A client
+    # built with it sends no request until a tool is called.
     class Client
       PROTOCOL_VERSION = "2025-11-25"
       SUPPORTED_VERSIONS = %w[2025-11-25 2025-06-18 2025-03-26 2024-11-05].freeze
@@ -33,7 +36,7 @@ module Mistri
       def initialize(url: nil, command: nil, env: {}, token: nil, headers: {},
                      client_name: "mistri", open_timeout: 15, read_timeout: 120,
                      allow_non_public: nil, max_tool_pages: 100, max_tools: 10_000,
-                     max_record_bytes: DEFAULT_MAX_RECORD_BYTES)
+                     max_record_bytes: DEFAULT_MAX_RECORD_BYTES, listing: nil)
         if [url, command].compact.length != 1
           raise ConfigurationError, "pass exactly one of url: or command:"
         end
@@ -57,6 +60,25 @@ module Mistri
         @connected = false
         @max_tool_pages = max_tool_pages
         @max_tools = max_tools
+        keep(listing) unless listing.nil?
+      end
+
+      # The server's tools, and its instructions when it sent any, as JSON a
+      # host can store.
+      def listing(refresh: false)
+        @mutex.synchronize do
+          @tools = nil if refresh
+          @tools ||= list_tools
+          { "tools" => @tools, "instructions" => @instructions }.compact
+        end
+      end
+
+      # The instructions field of the server's initialize result, or nil.
+      def instructions
+        @mutex.synchronize do
+          ensure_connected unless @described
+          @instructions
+        end
       end
 
       # The server's tools as it describes them: hashes with "name",
@@ -99,6 +121,9 @@ module Mistri
 
         @wire.protocol_version = version
         @server_info = result["serverInfo"]
+        text = result["instructions"]
+        @instructions = (text if text.is_a?(String) && !text.empty?)
+        @described = true
         @wire.notify({ jsonrpc: "2.0", method: "notifications/initialized" })
         @connected = true
       rescue Mistri::Error
@@ -188,6 +213,17 @@ module Mistri
           seen_cursors[cursor] = true
         end
         raise Error, "tool discovery exceeded #{@max_tool_pages} pages"
+      end
+
+      def keep(listing)
+        tools, text = listing.values_at("tools", "instructions") if listing.is_a?(Hash)
+        unless tools.is_a?(Array) && (text.nil? || text.is_a?(String))
+          raise ConfigurationError, "listing: must be a value that Client#listing returned"
+        end
+
+        @tools = tools
+        @instructions = (text unless text.to_s.empty?)
+        @described = true
       end
 
       def validate_limit(name, value)

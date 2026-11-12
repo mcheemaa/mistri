@@ -47,6 +47,46 @@ class TestMcpClient < Minitest::Test
     end
   end
 
+  def test_a_client_built_with_a_listing_sends_no_request_until_a_tool_is_called
+    with_server(instructions: "Echo with care.") do |server|
+      kept = JSON.parse(JSON.generate(remote_client(server).listing))
+      sent = server.bodies.length
+      later = remote_client(server, listing: kept)
+
+      assert_equal(%w[echo], later.tools.map { |tool| tool["name"] })
+      assert_equal "Echo with care.", later.instructions
+      assert_equal kept, later.listing
+      assert_equal sent, server.bodies.length
+      assert_equal "echo: hi", later.call_tool("echo", { "text" => "hi" }).dig("content", 0, "text")
+    end
+  end
+
+  def test_a_refresh_replaces_a_stored_listing_with_the_server_s
+    with_server(instructions: "Echo with care.") do |server|
+      stale = remote_client(server, listing: { "tools" => [], "instructions" => "" })
+
+      assert_empty stale.tools
+      assert_nil stale.instructions
+
+      current = stale.listing(refresh: true)
+
+      assert_equal(%w[echo], current["tools"].map { |tool| tool["name"] })
+      assert_equal "Echo with care.", current["instructions"]
+    end
+  end
+
+  def test_a_listing_omits_absent_instructions_and_a_malformed_one_is_refused
+    with_server do |server|
+      plain = remote_client(server)
+
+      assert_nil plain.instructions
+      assert_equal %w[tools], plain.listing.keys
+      [{ "tools" => "echo" }, [plain.tools], false].each do |malformed|
+        assert_raises(Mistri::ConfigurationError) { remote_client(server, listing: malformed) }
+      end
+    end
+  end
+
   def test_tools_list_merges_pages_and_caches
     tools = { "a" => { description: "A.", handler: ->(_) { "a" } },
               "b" => { description: "B.", handler: ->(_) { "b" } },
