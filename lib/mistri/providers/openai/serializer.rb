@@ -26,7 +26,7 @@ module Mistri
         def input_items(history, deferred: [])
           specs = deferred.to_h { |tool| [tool.transform_keys(&:to_sym)[:name], tool] }
           declared = {}
-          history.reject(&:system?).flat_map do |msg|
+          Reminder.as_user_turns(history).flat_map do |msg|
             items = items_for(msg, declared)
             msg.tool? ? items + additions(msg, specs, declared) : items
           end

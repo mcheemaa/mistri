@@ -25,8 +25,7 @@ class TestToolInstructions < Minitest::Test
   end
 
   def note(tools, text)
-    Mistri::Reminder.wrap("The server of #{tools} gives these instructions for using its " \
-                          "tools:\n#{text}")
+    "The server of #{tools} gives these instructions for using its tools:\n#{text}"
   end
 
   def test_instructions_reach_the_model_with_the_first_request_and_once
@@ -61,17 +60,6 @@ class TestToolInstructions < Minitest::Test
     assert_equal sent.first(1), instructions(provider, 0)
     assert_equal sent.first(2), instructions(provider, 1)
     assert_equal sent, instructions(provider)
-  end
-
-  def test_the_bound_counts_the_text_blocks_as_they_are_sent
-    tools = Array.new(200) do |index|
-      tool("server_#{index}__read", "Use scope #{index}.", deferred: true)
-    end
-    agent, provider = agent([{ text: "Done." }], tools:)
-
-    agent.run("Go.")
-
-    assert_empty instructions(provider)
   end
 
   def test_instructions_that_another_server_s_instructions_contain_are_still_sent

@@ -23,6 +23,18 @@ module Mistri
     # The wire form of a harness note inside a user turn.
     def self.wrap(text) = "<system-reminder>\n#{text}\n</system-reminder>"
 
+    # The history for a provider that sends a note as text of a user turn:
+    # each reminder message as a user message of wrapped text blocks, and no
+    # other system message.
+    def self.as_user_turns(history)
+      history.filter_map do |message|
+        next message unless message.system?
+        next unless message.reminder
+
+        Message.user(message.content.grep(Content::Text).map { |block| wrap(block.text) })
+      end
+    end
+
     def initialize(interval:, text:, after: nil)
       @interval = [interval.to_i, 1].max
       @after = (after || @interval).to_i

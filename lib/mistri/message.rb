@@ -14,8 +14,10 @@ module Mistri
   # newly produced tool results and nil on legacy records that predate the
   # field. error is the machine-readable failure on an errored provider turn
   # (ErrorData shape); error_message stays the human story. loads names the
-  # deferred tools a tool result made available. reminder marks a user message
-  # that the harness wrote, not the user, and holds the kind of note.
+  # deferred tools a tool result made available. reminder marks a system
+  # message that the harness wrote into the conversation for the model, and
+  # holds the kind of note. Its content is the note's text alone: each
+  # provider gives it the wire form the model reads.
   class Message < Data.define(:role, :content, :tool_call_id, :tool_name,
                               :model, :provider, :usage, :stop_reason, :error_message, :ui,
                               :error, :tool_error, :loads, :reminder)
@@ -37,7 +39,9 @@ module Mistri
         raise ArgumentError, "tool_error is only valid on tool messages" if role != :tool
       end
       loads = owned_loads(loads, role)
-      raise ArgumentError, "reminder is only valid on user messages" if reminder && role != :user
+      if reminder && role != :system
+        raise ArgumentError, "reminder is only valid on system messages"
+      end
 
       super(role:, content: Content.wrap(content).freeze, tool_call_id:, tool_name:,
             model:, provider:, usage:, stop_reason:, error_message:, ui:, error:, tool_error:,
@@ -66,8 +70,9 @@ module Mistri
       new(role: :user, content: blocks)
     end
 
-    def self.reminder(kind, text)
-      new(role: :user, content: Reminder.wrap(text), reminder: kind.to_s)
+    # One text block for each text.
+    def self.reminder(kind, *texts)
+      new(role: :system, content: texts, reminder: kind.to_s)
     end
 
     def self.assistant(content: nil, tool_calls: [], **meta)

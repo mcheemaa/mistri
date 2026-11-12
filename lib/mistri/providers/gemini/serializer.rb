@@ -20,7 +20,7 @@ module Mistri
 
         def contents(history)
           result_metadata = tool_result_metadata(history)
-          groups = history.reject(&:system?).chunk_while do |a, b|
+          groups = Reminder.as_user_turns(history).chunk_while do |a, b|
             a.tool? && b.tool? && native_tool_result?(a, result_metadata) ==
               native_tool_result?(b, result_metadata)
           end
