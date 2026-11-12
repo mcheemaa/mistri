@@ -834,11 +834,14 @@ module Mistri
 
     # The error for a call that cannot run: no tool has the name, or the tool
     # is deferred and no result has loaded it. A call that waited for approval
-    # was loaded when the model made it.
+    # was loaded when the model made it, and the definition of a tool loaded
+    # before a compaction was sent to the model then.
     def uncallable(name, tool, fresh:)
       return unavailable_tool(name) unless tool
+      return unless fresh && @deferred_specs.key?(name) && !@loaded.include?(name)
 
-      unloaded_tool(name) if fresh && @deferred_specs.key?(name) && !@loaded.include?(name)
+      carried = @session.last_compaction&.dig("carried", "loaded").to_a
+      unloaded_tool(name) unless carried.include?(name)
     end
 
     # The model has a name and no schema, so its arguments would be a guess.

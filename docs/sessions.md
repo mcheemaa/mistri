@@ -91,8 +91,8 @@ built-in stores answer both.
 A compaction written by Mistri is a checkpoint. Besides the summary and
 `kept_from`, the position replay starts at, its entry carries what a later
 turn needs from before that position: the links to sub-agents, which of them
-have reported, and the old-style `call_N` ids that already took part in an
-approval. When the newest compaction is a checkpoint, a session's window is
+have reported, the old-style `call_N` ids that already took part in an
+approval, and the names of the deferred tools that were loaded. When the newest compaction is a checkpoint, a session's window is
 the entries from its `kept_from` to the end. Replay, the context size, the
 inbox, open approvals and the audit of tool calls all work on the window,
 however old the session is. `Session#children` adds the carried links, so it
