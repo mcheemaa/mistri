@@ -72,11 +72,7 @@ class TestPrefixBoundCompactionLive < Minitest::Test
     call = reply.tool_calls.first
     secret = "checkpoint-#{SecureRandom.hex(12)}"
     session.append_message(reply)
-    session.append_message(Mistri::Message.tool(
-                             content: "CHECKPOINT_VALUE=#{secret}\n" \
-                                      "Return CHECKPOINT_VALUE exactly.",
-                             tool_call_id: call.id, tool_name: call.name
-                           ))
+    session.append_message(checkpoint(call, secret))
 
     assert_completed_value(session.messages, secret, "before the compaction")
     durable = session.entries
@@ -93,7 +89,8 @@ class TestPrefixBoundCompactionLive < Minitest::Test
     assert_empty retained.content.grep(Mistri::Content::Thinking)
     assert_equal durable, session.entries.take(durable.length), "the durable history changed"
 
-    continued = assert_completed_value(session.messages, secret, "after the compaction")
+    continued = assert_value(after_a_repeated_lookup(session, secret), secret,
+                             "after the compaction")
     session.append_message(continued)
 
     assert_equal continued, session.messages.last, "new post-compaction thinking must remain intact"
@@ -103,6 +100,24 @@ class TestPrefixBoundCompactionLive < Minitest::Test
                            ))
 
     assert_completed_value(session.messages, secret, "asked to repeat the value")
+  end
+
+  # The summary is written from the summarized turns alone, so it can list
+  # the lookup as the next step, and the model then makes the call once
+  # more. The API accepted the replay either way, which is what this test
+  # checks, so one repeated call is answered and the reply after it returned.
+  def after_a_repeated_lookup(session, secret)
+    reply = stream(session.messages)
+    return reply unless reply.stop_reason == :tool_use
+
+    session.append_message(reply)
+    reply.tool_calls.each { |call| session.append_message(checkpoint(call, secret)) }
+    stream(session.messages)
+  end
+
+  def checkpoint(call, secret)
+    Mistri::Message.tool(content: "CHECKPOINT_VALUE=#{secret}\nReturn CHECKPOINT_VALUE exactly.",
+                         tool_call_id: call.id, tool_name: call.name)
   end
 
   # The summary request is the compactor's own: no thinking, so no binding
@@ -145,8 +160,10 @@ class TestPrefixBoundCompactionLive < Minitest::Test
   end
 
   def assert_completed_value(messages, secret, check)
-    reply = stream(messages)
+    assert_value(stream(messages), secret, check)
+  end
 
+  def assert_value(reply, secret, check)
     assert_equal :stop, reply.stop_reason,
                  "#{check}: #{reply.error_message || reply.tool_calls.map(&:to_h)}"
     assert_includes reply.text, secret, check
