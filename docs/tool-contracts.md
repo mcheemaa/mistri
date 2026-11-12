@@ -309,12 +309,12 @@ model asks it in words for what it needs to do. The search ranks the deferred
 tools by their name, their description and the names and descriptions of their
 parameters, loads the best matches (five by default, twenty at most) and
 answers with their names. From its next step the model calls them like any
-other tool. One load also holds no more than 20 KB of definitions; nine in
-ten real MCP definitions are under 2.2 KB. A first match larger than that
-still loads, alone. When more tools matched than fit,
-the answer says so and the next search loads them. The description of `tool_search` tells the model how many tools it
-searches under each name prefix, so give a server a prefix that says what it
-is.
+other tool. One load also holds no more than 20 KB of definitions; of 303
+definitions measured on 22 public servers, nine in ten were under 2.2 KB. A
+first match larger than that still loads, alone. When the size bound stops a
+load before its count, the result states that more tools match, and the next
+search loads them. The description of `tool_search` gives the number of tools
+under each name prefix, so give a server a prefix that describes it.
 
 A query that is a tool's name loads that tool and no other. The same applies
 to the name without its prefix and to the words of the name, so `create issue`

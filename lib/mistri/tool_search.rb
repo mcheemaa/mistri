@@ -8,8 +8,8 @@ module Mistri
     NAME = "tool_search"
     LIMIT = 5
     MAX_LIMIT = 20
-    # The definitions of one load, in bytes. Nine in ten real MCP definitions
-    # stay under 2,200.
+    # The definitions of one load, in bytes. Of 303 measured MCP definitions,
+    # nine in ten were under 2,200.
     LOAD_BYTES = 20_000
     QUERY_LIMIT = 500
     SELECT = /\Aselect:/i
@@ -192,8 +192,9 @@ module Mistri
     def count(number, noun) = "#{number} #{noun}#{"s" unless number == 1}"
     private_class_method :count
 
-    # named: the query named tools, so the model is told how many are left.
-    # full: the load reached its count, so words that match more need no line.
+    # named: the query named tools, so the result gives the number left
+    # unloaded. full: the load reached its count, so a word search adds no
+    # line about further matches.
     def answer(fresh, held, missing, left, named:, full:)
       lines = []
       lines << "Loaded: #{names(fresh)}. You can call them from your next step." if fresh.any?
