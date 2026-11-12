@@ -67,8 +67,9 @@ class TestMcpClient < Minitest::Test
 
       assert_nil plain.instructions
       assert_equal %w[tools], plain.listing.keys
-      assert_raises(Mistri::ConfigurationError) { remote_client(server, listing: { "tools" => "echo" }) }
-      assert_raises(Mistri::ConfigurationError) { remote_client(server, listing: [plain.tools]) }
+      [{ "tools" => "echo" }, [plain.tools], false].each do |malformed|
+        assert_raises(Mistri::ConfigurationError) { remote_client(server, listing: malformed) }
+      end
     end
   end
 

@@ -60,13 +60,18 @@ module Mistri
         @connected = false
         @max_tool_pages = max_tool_pages
         @max_tools = max_tools
-        keep(listing) if listing
+        keep(listing) unless listing.nil?
       end
 
       # The server's tools, and its instructions when it sent any, as JSON a
       # host can store.
       def listing(refresh: false)
-        { "tools" => tools(refresh:), "instructions" => instructions }.compact
+        @mutex.synchronize do
+          @tools = nil if refresh
+          @tools ||= list_tools
+          ensure_connected unless @described
+          { "tools" => @tools, "instructions" => @instructions }.compact
+        end
       end
 
       # The instructions field of the server's initialize result, or nil.
@@ -218,7 +223,7 @@ module Mistri
         end
 
         @tools = tools
-        @instructions = text
+        @instructions = (text unless text.to_s.empty?)
         @described = true
       end
 
