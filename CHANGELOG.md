@@ -62,32 +62,42 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   the model until it is needed, so a long tool list no longer costs its
   definitions on every round. An agent that holds a deferred tool adds a
   `tool_search` tool: the model asks in words, the best matches are loaded,
-  and it calls them from its next step. A query that is a tool's name, or
-  `select:` and a list of names, loads those tools and no others, and a tool
-  is not loaded twice: a search that finds a tool loaded names it in its
-  result, so the tool stays loaded while that result is in the history. A call to a deferred tool that was not loaded does not
-  run, and its error names the search to run. A load is stored with the
-  session, so a later run offers the same tools. A compaction keeps the names
-  of the loaded tools, and the summary message lists them with an instruction
-  to load the needed ones again. A call to one of them with invalid
-  arguments is reported as a call to a tool that is not loaded. The names of the deferred tools are listed in
-  the conversation: the agent appends a system message with `reminder` set,
-  which is not the user's message. A reminder is sent as a system
-  message to the Anthropic models that take one in the middle of a
-  conversation, as a developer message to OpenAI, and as text of a user turn
-  to every other model, origin and provider. A provider class of the host's
-  own is given a reminder as a user message unless it answers
-  `system_messages?` with true, and `Providers::Fake` records it as the
-  session holds it. The definition of `tool_search` does not
-  change with the list, so connecting a server keeps the prompt cache. A tool
-  result can load tools itself with
-  `ToolResult.new(content:, loads:)`. On Anthropic a loaded definition travels
-  marked to stay out of the prompt and a load is a reference to it, so the
-  prompt cache holds across a load. On OpenAI, for gpt-5.4 and later except
-  the nano models, a load is an item in the input that makes the tools
-  callable from there on, which keeps the cache as well. A provider built for
-  another origin takes `defers_tools: true` when that origin supports these
-  forms. Agents that are given the same tool objects share the search index.
+  and it calls them from its next step. A search loads five tools unless
+  `limit` gives another count, twenty at most, and no more than 20,000 bytes
+  of definitions, except that its first tool always loads. A query that is a
+  tool's name, or `select:` and a list of names, loads those tools and no
+  others, as many as it names within the same bounds. A tool is not loaded
+  twice: a search that finds a tool loaded names it in its result, so the tool
+  stays loaded while that result is in the history. A call to a deferred tool
+  that was not loaded does not run, and its error names the search to run. A
+  load is stored with the session, so a later run offers the same tools. A
+  compaction keeps the names of the loaded tools, and the summary message
+  lists them with an instruction to load the needed ones again. A call to one
+  of them with invalid arguments is reported as a call to a tool that is not
+  loaded. A tool result can load tools itself with
+  `ToolResult.new(content:, loads:)`.
+- The names of the deferred tools are listed in the conversation: the agent
+  appends a system message with `reminder` set, which is not the user's
+  message. A reminder is sent as a system message to the Anthropic models that
+  take one in the middle of a conversation, as a developer message to OpenAI,
+  and as text of a user turn to every other model, origin and provider. A
+  provider class of the host's own is given a reminder as a user message
+  unless it answers `system_messages?` with true, and `Providers::Fake`
+  records it as the session holds it. The definition of `tool_search` does not
+  change with the list, so connecting a server keeps the prompt cache.
+- A load keeps the prompt cache on Anthropic and OpenAI. On Anthropic a loaded
+  definition travels marked to stay out of the prompt and a load is a
+  reference to it. On OpenAI, for gpt-5.4 and later except the nano models, a
+  load is an item in the input that makes the tools callable from there on. A
+  provider built for another origin takes `defers_tools: true` when that
+  origin supports these forms. Agents that are given the same tool objects
+  share the search index.
+- A sub-agent pool may hold deferred tools. The `spawn_agent` definition then
+  names only the tools that are not deferred, and its `tools` argument takes
+  any string in place of a fixed list of names. A name outside the pool is
+  still refused, with an error that counts the deferred tools and does not
+  name them. A child that is granted the whole pool gets its own
+  `tool_search`.
 - A bridged MCP tool gets a name every provider takes. MCP allows dots,
   slashes and any length in a tool name, and one name the model's API refused
   failed the whole request. A name of letters, digits, underscores and

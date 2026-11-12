@@ -148,9 +148,9 @@ on every tool it bridges, as `Tool#instructions`.
 The text is the server's, and the host decides whether the model reads it:
 
 ```ruby
-Mistri::MCP.tools(client)                                  # the server's instructions
+Mistri::MCP.tools(client)                                  # the server's text
 Mistri::MCP.tools(client, instructions: false)             # none
-Mistri::MCP.tools(client, instructions: "Use for orders.") # the host's own text
+Mistri::MCP.tools(client, instructions: "Use for orders.") # the host's text
 ```
 
 An agent appends the instructions of every server to the conversation with

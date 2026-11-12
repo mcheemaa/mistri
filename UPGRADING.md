@@ -64,6 +64,38 @@ unchanged.
   given, so it has to be one your provider takes.
 - `allow:`, `deny:` and `gates:` still go by the remote name.
 
+### A session can hold a system message
+
+An agent appends a system message with `reminder` set to the session when it
+holds a deferred tool, and when a tool was bridged from an MCP server that
+sends instructions. Mistri wrote it for the model. It is not the user's
+message.
+
+- Allow the `system` role where code reads `Session#messages` by role. In a
+  view that shows a conversation to a person, leave out a message whose
+  `reminder` is set.
+- Keep these messages in a `transform_context` lambda. One that drops them
+  takes the list of deferred tools and the servers' instructions away from the
+  model.
+- A provider class of your own needs no change. It is given each one as a user
+  message whose text is in a system-reminder block.
+
+### An MCP server's instructions reach the model
+
+A server may send `instructions` in its initialize result. `MCP.tools` now
+sets that text on every tool it bridges, and an agent appends it to the
+conversation, cut at 2,000 bytes for each server. It is appended with the
+agent's first request. When the instructions of all servers are more than
+20,000 bytes together, those of a server whose tools are all deferred are
+appended once one of its tools is loaded. On an earlier release the model
+received none of it.
+
+- Read what each server sends with `client.instructions` before you upgrade.
+- Pass `instructions: false` to `MCP.tools` to leave a server's instructions
+  out, or a string to send your own text in their place.
+- A session from before the upgrade gets the message appended on its next run,
+  by the same rule.
+
 ### Blank input raises
 
 `Agent#run` and `Session#steer` now raise `ArgumentError` for text that is
