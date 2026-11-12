@@ -323,6 +323,27 @@ class TestMcpBridge < Minitest::Test
     server&.stop
   end
 
+  def test_a_call_that_was_never_sent_reports_that_the_tool_did_not_run
+    tools = { "send" => { description: "Sends once.", handler: ->(_) { "sent" } } }
+    server = Mistri::Test::McpStubServer.new(tools: tools)
+    client = remote_client(server)
+    bridged = Mistri::MCP.tools(client)
+    client.close
+    server.stop
+    provider = Mistri::Providers::Fake.new(turns: [
+                                             { tool_calls: [{ name: "send", arguments: {} }] },
+                                             { text: "It was not sent." }
+                                           ])
+
+    Mistri::Agent.new(provider:, tools: bridged).run("send it")
+    result = provider.requests.last[:messages].find(&:tool?)
+
+    assert_match(/\ANo connection to the MCP server could be established, so send did not run: /,
+                 result.text)
+    refute_match(/partially/, result.text)
+    assert_predicate result, :tool_error?
+  end
+
   def test_an_ambiguous_delivery_warns_the_model_not_to_retry
     tools = { "send" => { description: "Sends once.", handler: ->(_) { "sent" } } }
     server = Mistri::Test::McpStubServer.new(tools: tools, drop_after: "tools/call")

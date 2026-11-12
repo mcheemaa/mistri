@@ -5,6 +5,13 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+- A bridged MCP tool whose server cannot be reached reports that it did not
+  run. The failure happens in the handshake, before the call is sent, and the
+  tool result read "The tool may have completed partially; verify its effects
+  before retrying", so a model reported a possible partial effect to the
+  user. `Client#call_tool` now raises a copy of an error from before the call
+  was sent, tagged with `MCP::NotSent`, and the bridged tool's result states
+  that no connection could be established and the tool did not run.
 - An MCP client can be built from a stored listing. `Client#listing` returns
   the server's tools and its instructions as JSON for a host to store, and a
   client built with `listing:` returns them without a request and connects

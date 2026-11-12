@@ -90,8 +90,15 @@ module Mistri
         end
       end
 
+      # An error raised before the call is sent is tagged NotSent.
       def call_tool(name, arguments = {})
-        @mutex.synchronize { request("tools/call", { name: name, arguments: arguments }) }
+        @mutex.synchronize do
+          @sent = false
+          request("tools/call", { name: name, arguments: arguments })
+        rescue StandardError => e
+          e.extend(NotSent) unless @sent
+          raise
+        end
       end
 
       def connect
@@ -133,6 +140,7 @@ module Mistri
 
       def request(method, params, reconnected: false, refreshed: false)
         ensure_connected
+        @sent = true
         rpc(method, params)
       rescue AuthenticationError
         raise if refreshed || !@wire.refreshable?
