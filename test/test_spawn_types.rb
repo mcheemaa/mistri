@@ -83,6 +83,40 @@ class TestSpawnTypes < Minitest::Test
     assert_empty child_fake.requests.first[:options][:tools]
   end
 
+  def test_a_pool_with_deferred_tools_does_not_name_them_in_the_spawner
+    later = Mistri::Tool.define("tracker__create_issue", "Opens an issue.", deferred: true) { "ok" }
+    child_fake = fake({ text: "Opened." })
+    spawn = Mistri::SubAgent.spawner(provider: child_fake, tools: [archive, later])
+    grant = { "task" => "Open it.", "instructions" => "Open issues." }
+    calls = [{ name: "spawn_agent", arguments: grant.merge("tools" => ["tracker__create_issue"]) },
+             { name: "spawn_agent", arguments: grant.merge("tools" => ["nope"]) }]
+    parent_fake = fake({ tool_calls: calls }, { text: "Parent done." })
+    session = Mistri::Session.new(store: Mistri::Stores::Memory.new)
+
+    Mistri::Agent.new(provider: parent_fake, tools: [spawn], session:).run("go")
+    definition = JSON.generate(parent_fake.requests.first[:options][:tools].first)
+    refusal = session.messages.select(&:tool?).last.text
+    all_deferred = Mistri::SubAgent.spawner(provider: child_fake, tools: [later]).spec
+
+    refute_includes definition, "tracker__create_issue"
+    assert_includes definition, "Available without loading: archive. The others load on demand"
+    assert_includes JSON.generate(all_deferred), "Every tool of the pool loads on demand"
+    assert_equal(%w[tool_search], child_fake.requests.first[:options][:tools].map { |t| t[:name] })
+    assert_match(/unknown tool "nope"; available: archive, tools that load on demand: 1/, refusal)
+  end
+
+  def test_an_unknown_tool_lists_a_pool_without_deferred_tools_by_name
+    spawn = Mistri::SubAgent.spawner(provider: fake, tools: [archive])
+    context = Mistri::ToolContext.new(session: Mistri::Session.new(store: Mistri::Stores::Memory.new),
+                                      signal: nil, emit: nil, app: nil)
+
+    error = assert_raises(ArgumentError) do
+      spawn.call({ "task" => "t", "instructions" => "i", "tools" => ["nope"] }, context)
+    end
+
+    assert_equal 'unknown tool "nope"; available: archive', error.message
+  end
+
   def test_spawner_owns_its_tool_pool_and_model_allowlist
     declared = archive
     pool = [declared]
