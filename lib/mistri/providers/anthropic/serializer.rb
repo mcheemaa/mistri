@@ -36,9 +36,10 @@ module Mistri
         # deferred names the deferred tools of this request: only those can
         # be referenced, and the API refuses a reference to any other.
         def messages(history, cache: false, deferred: [])
+          unreferenced = deferred.dup
           turns = history.reject(&:system?).chunk_while { |a, b| a.tool? && b.tool? }
           wire = turns.filter_map do |group|
-            group.first.tool? ? tool_results(group, deferred) : message(group.first)
+            group.first.tool? ? tool_results(group, unreferenced) : message(group.first)
           end
           mark_last_user_turn(wire) if cache
           wire
@@ -84,11 +85,11 @@ module Mistri
 
         # The API takes references alone in a tool_result, so the result's own
         # content follows the results of the turn.
-        def tool_results(group, deferred = [])
+        def tool_results(group, unreferenced = [])
           after = []
           results = group.map do |msg|
             blocks = msg.content.filter_map { |content| block(content, own: false) }
-            references = references(msg, deferred)
+            references = references(msg, unreferenced)
             if references.any?
               after.concat(blocks)
               blocks = references
@@ -103,11 +104,16 @@ module Mistri
           { role: "user", content: results + after }
         end
 
-        # A failed result must be text alone.
-        def references(msg, deferred)
+        # A failed result must be text alone. The API adds a tool's definition
+        # to the prompt at every reference, so only the first result that
+        # loads a tool references it: its name is then removed from
+        # unreferenced.
+        def references(msg, unreferenced)
           return [] if msg.tool_error?
 
-          (msg.loads.to_a & deferred).map { |name| { type: "tool_reference", tool_name: name } }
+          names = msg.loads.to_a & unreferenced
+          unreferenced.reject! { |name| names.include?(name) }
+          names.map { |name| { type: "tool_reference", tool_name: name } }
         end
 
         # Returns nil for a block the API would reject (empty text, unusable

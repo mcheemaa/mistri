@@ -11,6 +11,10 @@ class TestToolSearchRanking < Minitest::Test
 
   def rank(query, tools, limit = 8) = Mistri::ToolSearch.rank(query, tools, limit).map(&:name)
 
+  # The names a search result states it loaded. Its loads also name the
+  # tools it found loaded.
+  def loaded(result) = result.content[/^Loaded: (.*?)\. /, 1].to_s.split(", ")
+
   def test_a_word_in_the_name_beats_any_number_of_mentions_in_the_description
     tools = [tool("list_pages", "Issue issue issue: pages that mention an issue."),
              tool("create_issue", "Opens a ticket.")]
@@ -68,10 +72,11 @@ class TestToolSearchRanking < Minitest::Test
 
     assert_equal %w[lookup crm__list docs__list], first.loads
     assert_match(/^No tool is named nope\.$/, first.content)
-    assert_equal %w[crm__lookup], second.loads
+    assert_equal %w[crm__lookup], loaded(second)
     assert_match(/^Already loaded, call them directly: docs__list\.$/, second.content)
+    assert_equal %w[crm__lookup docs__list], second.loads
     assert_match(/^No tool is named crm__missing\.$/, second.content)
-    assert_empty third.loads
+    assert_empty loaded(third)
     assert_match(/^Already loaded, call them directly: .*crm__lookup/, third.content)
   end
 
@@ -88,10 +93,10 @@ class TestToolSearchRanking < Minitest::Test
     assert_equal %w[s0__list], one.loads
     assert_match(/^29 more tools with these names\. Search again to load them\.$/, one.content)
     assert_equal 20, many.loads.length
-    assert_equal %w[s1__list], another.loads
+    assert_equal %w[s1__list], loaded(another)
     assert_match(/^8 more tools with these names\./, another.content)
-    assert_equal 8, rest.loads.length
-    assert_empty none.loads
+    assert_equal 8, loaded(rest).length
+    assert_empty loaded(none)
     assert_includes none.content, "s19__list and 10 more."
     refute_includes none.content, "s20__list"
   end
@@ -107,7 +112,7 @@ class TestToolSearchRanking < Minitest::Test
     assert_equal %w[export_0 export_1], first.loads
     assert_match(/^More tools match than one load holds\. Search again to load them\.$/,
                  first.content)
-    assert_equal %w[export_2 export_3], second.loads
+    assert_equal %w[export_2 export_3], loaded(second)
     assert_equal %w[huge], huge.call({ "query" => "exports" }).loads
   end
 

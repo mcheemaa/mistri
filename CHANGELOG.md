@@ -55,7 +55,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   `tool_search` tool: the model asks in words, the best matches are loaded,
   and it calls them from its next step. A query that is a tool's name, or
   `select:` and a list of names, loads those tools and no others, and a tool
-  is not loaded twice. A call to a deferred tool that was not loaded does not
+  is not loaded twice: a search that finds a tool loaded names it in its
+  result, so the tool stays loaded while that result is in the history. A call to a deferred tool that was not loaded does not
   run, and its error names the search to run. A load is stored with the
   session, so a later run offers the same tools. A compaction keeps the names
   of the loaded tools, and the summary message lists them with an instruction

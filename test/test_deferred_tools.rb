@@ -112,10 +112,11 @@ class TestDeferredTools < Minitest::Test
                              { text: "Ready." }], tools: many)
 
     agent.run("Get ready.")
-    loads = agent.session.messages.select(&:tool?).map(&:loads)
+    results = agent.session.messages.select(&:tool?)
+    loaded = results.map { |result| result.text[/^Loaded: (.*?)\. /, 1].split(", ") }
 
-    assert_equal [5, 20, 1], loads.map(&:length)
-    assert_equal 26, loads.flatten.uniq.length
+    assert_equal [5, 20, 1], loaded.map(&:length)
+    assert_equal 26, results.flat_map(&:loads).uniq.length
     assert_equal 27, offered(provider).length
   end
 
