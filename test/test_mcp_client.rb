@@ -61,6 +61,20 @@ class TestMcpClient < Minitest::Test
     end
   end
 
+  def test_a_refresh_replaces_a_stored_listing_with_the_server_s
+    with_server(instructions: "Echo with care.") do |server|
+      stale = remote_client(server, listing: { "tools" => [], "instructions" => "" })
+
+      assert_empty stale.tools
+      assert_nil stale.instructions
+
+      current = stale.listing(refresh: true)
+
+      assert_equal(%w[echo], current["tools"].map { |tool| tool["name"] })
+      assert_equal "Echo with care.", current["instructions"]
+    end
+  end
+
   def test_a_listing_omits_absent_instructions_and_a_malformed_one_is_refused
     with_server do |server|
       plain = remote_client(server)

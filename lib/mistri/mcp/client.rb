@@ -69,7 +69,6 @@ module Mistri
         @mutex.synchronize do
           @tools = nil if refresh
           @tools ||= list_tools
-          ensure_connected unless @described
           { "tools" => @tools, "instructions" => @instructions }.compact
         end
       end
