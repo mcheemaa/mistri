@@ -29,14 +29,19 @@ module Mistri
       end
 
       def held?(key)
-        @cache.exist?(scoped(key))
+        return true if @cache.exist?(scoped(key))
+
+        # A miss and an outage read alike; only a write tells them apart.
+        write("probe", expires_in: 60)
+        false
       end
 
       def set_flag(key, ttl: 300)
         renew(key, ttl: ttl)
       end
 
-      def flag?(key) = held?(key)
+      # Unprobed: the holder polls every second and looks again after an outage.
+      def flag?(key) = @cache.exist?(scoped(key))
 
       def clear_flag(key) = release(key)
 

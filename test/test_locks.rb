@@ -143,6 +143,15 @@ class TestLocks < Minitest::Test
     assert_equal :running, parent.children.first.status
   end
 
+  def test_a_child_whose_lease_cannot_be_read_reads_running
+    Mistri.locks = Class.new(Mistri::Locks::Memory) { def held?(*) = raise("backend down") }.new
+    store = Mistri::Stores::Memory.new
+    parent = Mistri::Session.new(store:)
+    parent.append("subagent", "name" => "Husky", "session_id" => Mistri::Session.new(store:).id)
+
+    assert_equal :running, parent.children.first.status
+  end
+
   def test_a_live_child_holds_its_lease_while_running
     Mistri.locks = Mistri::Locks::Memory.new
     store = Mistri::Stores::Memory.new
@@ -211,5 +220,17 @@ class TestLocks < Minitest::Test
 
     assert_raises(Mistri::Error) { locks.acquire("run:1", ttl: 60) }
     assert_raises(Mistri::Error) { locks.renew("run:1", ttl: 60) }
+  end
+
+  def test_rails_cache_raises_when_a_lease_cannot_be_read
+    require "mistri/locks/rails_cache"
+    # A down backend reads as a miss.
+    down = Class.new do
+      def exist?(*) = false
+      def write(*, **) = nil
+    end.new
+    locks = Mistri::Locks::RailsCache.new(cache: down)
+
+    assert_raises(Mistri::Error) { locks.held?("run:1") }
   end
 end

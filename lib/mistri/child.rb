@@ -14,9 +14,10 @@ module Mistri
   #
   # Status is a walk over the child's own entries: a terminal entry wins; a
   # started child is :running while its lease holds and :interrupted once
-  # it lapses (with a lock adapter; without one there is no liveness signal
-  # and no-terminal stays :running); a dispatched-but-never-started child is
-  # :queued, honestly, because the host's queue owns that gap.
+  # it lapses (with a lock adapter; without one, or when it cannot be read,
+  # there is no liveness signal and no-terminal stays :running); a
+  # dispatched-but-never-started child is :queued, honestly, because the
+  # host's queue owns that gap.
   class Child
     TERMINAL = "subagent_result"
     DISPATCHED = "subagent_dispatched"
@@ -53,9 +54,8 @@ module Mistri
          log.none? { |entry| entry["type"] == STARTED }
         return :queued
       end
-      return :interrupted if Mistri.locks && !Mistri.locks.held?(self.class.lease_key(@session_id))
 
-      :running
+      lease_lapsed? ? :interrupted : :running
     end
 
     # A terminal entry exists: the child ended as done, stopped, or failed,
@@ -135,6 +135,13 @@ module Mistri
     end
 
     private
+
+    # A lease that cannot be read is no liveness signal, as with no adapter.
+    def lease_lapsed?
+      Mistri.locks && !Mistri.locks.held?(self.class.lease_key(@session_id))
+    rescue StandardError
+      false
+    end
 
     # Cancellation and a runner compete for the same lease. Acquiring it
     # proves no unexpired lease is present, so ordinary inactive dispatched

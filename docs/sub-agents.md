@@ -381,7 +381,9 @@ flag?(key) -> boolean
 clear_flag(key)
 ```
 
-`acquire` returns false only when the key is held; a backend failure raises.
+`acquire` returns false only when the key is held, and `held?` only when it is
+not; a backend failure raises. A started child whose lease cannot be read
+reads `:running`, as it does without an adapter.
 
 The current lease is a best-effort duplicate-suppression and liveness signal,
 not an ownership token or exactly-once fence. It stores no holder identity. A
