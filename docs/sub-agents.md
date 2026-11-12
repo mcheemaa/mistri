@@ -383,7 +383,15 @@ clear_flag(key)
 
 `acquire` returns false only when the key is held, and `held?` only when it is
 not; a backend failure raises. A started child whose lease cannot be read
-reads `:running`, as it does without an adapter.
+reads `:running`, as it does without an adapter. After an outage that
+outlasted the lease, a running child reads `:interrupted` until its next
+renewal, up to a minute.
+
+`Locks::RailsCache` detects an outage by writing a probe key, so `held?` can
+still answer false for a held lease when reads fail and writes succeed, or
+when the probe and the lease live on different cache nodes. Inside a web
+request, `Rails.cache` remembers a failed read as a miss until the request
+ends; give the adapter its own store instance if you read child status there.
 
 The current lease is a best-effort duplicate-suppression and liveness signal,
 not an ownership token or exactly-once fence. It stores no holder identity. A
