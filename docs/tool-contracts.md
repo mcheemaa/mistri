@@ -238,7 +238,9 @@ not bypass current authorization. A raised hook error blocks conservatively.
 result. Returning nil keeps the original. If the original result is an error,
 rewriting its text cannot relabel it as success. Text returned for a result
 that [loads tools](#tools-on-demand) replaces what the model reads and the
-tools still load; return a `Mistri::ToolResult` to decide the loads yourself.
+tools still load. A `Mistri::ToolResult` returned for it decides the loads:
+`result.with(content: text)` keeps them, and one built without `loads:`
+cancels the load.
 
 ## Results and UI
 
@@ -317,17 +319,17 @@ search loads them.
 
 The deferred tools are listed in the conversation. With its first request an
 agent appends a reminder to the session, after the user's message, that names
-every deferred tool, the loaded ones too. It states that a tool is loaded
-with `tool_search` before it is called, and that a tool is called directly
-once a search result has stated that it is loaded. The agent appends one
-again when the list has changed, and
-after a compaction that summarized the previous one. An agent that holds no
-deferred tool, on a session that has a list, appends one that states so. Past
-20 KB of names the reminder gives the number of tools under each name prefix
-instead, up to 20 KB of prefixes, and one count for the rest. So give a server
-a prefix that describes it. The definition of `tool_search` is the same
-whatever the list holds. Connecting a server therefore changes neither the
-tools nor the system prompt of a request, and the prompt cache holds.
+every deferred tool, the loaded ones too. It states that a tool is loaded with
+`tool_search` before it is called, and that a tool is called directly once a
+search result has stated that it is loaded. The agent appends one again when
+the list has changed, and after a compaction that summarized the previous one.
+An agent that holds no deferred tool, on a session that has a list, appends
+one that states so. Past 20 KB of names the reminder gives the number of tools
+under each name prefix instead, up to 20 KB of prefixes, and one count for the
+rest. So give a server a prefix that describes it. The definition of
+`tool_search` is the same whatever the list holds. Connecting a server
+therefore changes neither the tools nor the system prompt of a request, and
+the prompt cache holds.
 
 The reminder is a system message of the conversation whose `reminder` is
 `"deferred_tools"`. It is not the user's message, so a host that shows the
@@ -389,14 +391,13 @@ A load is stored with the tool result that names it. A later run on the same
 session offers the same tools with no new search. A tool is loaded while a
 successful result that names it is in the history. After a compaction that
 summarizes every such result of a tool, the summary is followed by the names
-of the tools loaded before it.
-The message states that their definitions are no longer in the model's
-context and instructs it to load the ones it needs again by name. A call to
-one of them without a new load still runs, after the usual argument check:
-the model received that definition when it loaded the tool. When that check
-fails, the result states that the tool is not loaded and instructs the model
-to load it, because the model cannot correct arguments for a definition it
-no longer has.
+of the tools loaded before it. The message states that their definitions are
+no longer in the model's context and instructs it to load the ones it needs
+again by name. A call to one of them without a new load still runs, after the
+usual argument check: the model received that definition when it loaded the
+tool. When that check fails, the result states that the tool is not loaded and
+instructs the model to load it, because the model cannot correct arguments for
+a definition it no longer has.
 
 Any tool can load deferred tools with its result:
 
@@ -412,31 +413,32 @@ marked `error: true` loads nothing.
 
 A deferred tool is still one of the agent's tools. Its approval gate, the
 argument check, `before_tool` and `after_tool` apply when it runs. A call to
-one that no result has loaded does not run: the model has the name and not
-the schema, so its arguments would be a guess. The error result instructs the
+one that no result has loaded does not run: the model has the name and not the
+schema, so its arguments would be a guess. The error result instructs the
 model to load the tool with `tool_search` and call it again. A call that
 waited for approval was loaded when the model made it, and it is not checked
-again when the run resumes. Keep the few tools every conversation needs out
-of deferral, so the model does not search for them, and do not name a
-deferred tool in a system prompt as if it were already loaded. A
-host tool named `tool_search` beside a deferred tool is a duplicate name and
-fails Agent construction.
+again when the run resumes. Keep the few tools every conversation needs out of
+deferral, so the model does not search for them, and do not name a deferred
+tool in a system prompt as if it were already loaded. A host tool named
+`tool_search` beside a deferred tool is a duplicate name and fails Agent
+construction.
 
 How a loaded tool reaches the model depends on the provider, and a host does
 not choose:
 
-- Anthropic receives a deferred definition from the request whose result
-  loads it, marked `defer_loading` so that it stays out of the prompt, and
-  that result carries a reference to it. A later result that names the same
-  tool carries none, because every reference adds the definition to the
-  prompt again. The prompt cache holds across a load. One reserved definition, `mistri_deferred_tools`, is sent the same
-  way from the first request, because the first deferred definition in a
-  conversation would otherwise rebuild the cache once. No result references
-  it, so it never enters the prompt. No result can load it, and a tool of
-  that name beside deferred tools fails the request before it is sent. The
-  result's own text follows the tool results of that turn. This form is used
-  on the official origin. Another origin is treated like the last provider
-  below unless the host sets `defers_tools: true`.
+- Anthropic receives a deferred definition from the request whose result loads
+  it, marked `defer_loading` so that it stays out of the prompt, and that
+  result carries a reference to it. A later result that names the same tool
+  carries none, because every reference adds the definition to the prompt
+  again. The prompt cache holds across a load. One reserved definition,
+  `mistri_deferred_tools`, is sent the same way from the first request,
+  because the first deferred definition in a conversation would otherwise
+  rebuild the cache once. No result references it, so it never enters the
+  prompt. No result can load it, and a tool of that name beside deferred tools
+  fails the request before it is sent. The result's own text follows the tool
+  results of that turn. This form is used on the official origin. Another
+  origin is treated like the last provider below unless the host sets
+  `defers_tools: true`.
 - OpenAI keeps the request's own tools as they are, and a result that loads
   tools is followed by an item in the input that makes them callable from
   that point on. The prompt cache holds across a load here too. This is used
@@ -458,8 +460,11 @@ gateway that forwards requests unchanged sets `defers_tools: true`, which
 selects the form that keeps the cached prefix across a load:
 
 ```ruby
-Mistri.agent("claude-opus-5-5", tools: tools,
-             provider_options: { origin: "https://gateway.example", defers_tools: true })
+Mistri.agent(
+  "claude-opus-5-5",
+  tools: tools,
+  provider_options: { origin: "https://gateway.example", defers_tools: true },
+)
 ```
 
 `defers_tools: false` selects the growing list on the official origin.
@@ -468,12 +473,15 @@ What it costs in the process is small. Building an agent with deferred tools
 costs what a flat list costs. The search document of a deferred tool is built
 from its description and schema on the first search that covers it, and is
 kept on the tool. Agents that are given the same tool objects therefore share
-the index, so bridge a server once for the process. A tool's name,
-description and schema are fixed once it is built; a different definition is
-a new tool. Building a request adds
-two passes over the history, one that collects the loaded names and one that
-finds the newest reminder with the list of deferred tools, and on OpenAI one
-pass over the loaded definitions to index them by name.
+the index, so bridge a server once for the process. A tool's name, description
+and schema are fixed once it is built; a different definition is a new tool.
+Building a request reads the history a few more times, each a single pass: one
+collects the loaded names, one finds the newest reminder with the list of
+deferred tools, and one finds the reminders that hold server instructions when
+a tool carries any. Where the provider takes no system message in a
+conversation, the agent makes each reminder a user message in one more pass,
+and a built-in provider checks the history for one once more. On OpenAI one
+pass over the loaded definitions indexes them by name.
 
 On the wire no request carries the definition of a deferred tool until a
 result loads it, on any provider.
