@@ -65,6 +65,17 @@ class TestMessage < Minitest::Test
       Mistri::Message.tool(content: "x", tool_call_id: "c1", tool_error: "yes")
     end
     assert_raises(ArgumentError) { Mistri::Message.new(role: :user, tool_error: false) }
-    assert_raises(ArgumentError) { Mistri::Message.new(role: :assistant, reminder: "deferred_tools") }
+  end
+
+  def test_a_reminder_is_a_system_message_with_one_text_block_for_each_text
+    reminder = Mistri::Message.reminder(:deferred_tools, "The list.", "More.")
+
+    assert_predicate reminder, :system?
+    assert_equal "deferred_tools", reminder.reminder
+    assert_equal ["The list.", "More."], reminder.content.map(&:text)
+    assert_equal reminder, Mistri::Message.from_h(JSON.parse(JSON.generate(reminder.to_h)))
+    %i[user assistant tool].each do |role|
+      assert_raises(ArgumentError) { Mistri::Message.new(role:, reminder: "deferred_tools") }
+    end
   end
 end

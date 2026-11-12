@@ -39,9 +39,11 @@ is not an authorization or redaction boundary: prompts, tool arguments and
 results, UI payloads, errors, and provider metadata can remain. Authorize and
 redact before exposing a transcript.
 
-A user message with `reminder` set was written by Mistri for the model, such
-as the list of deferred tools or a server's instructions. The user did not
-write it. Hide it in a conversation shown to a person.
+A system message with `reminder` set was written by Mistri for the model, such
+as the list of deferred tools or a server's instructions. It is a message of
+the conversation and holds the note's text alone. It is not the user's
+message, so a host that shows the user and assistant messages to a person
+does not show it.
 
 Mistri does not encrypt JSONL or Active Record session payloads. The host owns
 storage encryption, access control, retention, deletion, and redaction specific

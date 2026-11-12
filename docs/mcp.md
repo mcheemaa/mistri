@@ -147,9 +147,10 @@ on every tool it bridges, as `Tool#instructions`.
 
 An agent appends the instructions of every server to the conversation with
 its first request, before the model chooses a tool, so they can guide the
-choice. They are appended as one reminder, a user message whose `reminder` is
-`"tool_instructions"`. It holds one text block for each server, which names
-that server's tools. A server's instructions are cut at 2,000 bytes.
+choice. They are appended as one reminder, a system message of the
+conversation whose `reminder` is `"tool_instructions"`. It holds one text
+block for each server, which names that server's tools. A server's
+instructions are cut at 2,000 bytes.
 
 When the text blocks of all servers are more than 20,000 bytes together, the
 instructions of a server whose tools are all deferred are appended with the

@@ -329,9 +329,11 @@ a prefix that describes it. The definition of `tool_search` is the same
 whatever the list holds. Connecting a server therefore changes neither the
 tools nor the system prompt of a request, and the prompt cache holds.
 
-The reminder is a user message whose `reminder` is `"deferred_tools"`. The
-user did not write it, so a host that shows a conversation to a person hides
-a message with `reminder` set. A compaction does not summarize it.
+The reminder is a system message of the conversation whose `reminder` is
+`"deferred_tools"`. It is not the user's message, so a host that shows the
+user and assistant messages to a person does not show it. A compaction does
+not summarize it. Each provider sends it as text of a user turn in a
+system-reminder block.
 
 A query that is a tool's name loads that tool and no other. The same applies
 to the name without its prefix and to the words of the name, so `create issue`

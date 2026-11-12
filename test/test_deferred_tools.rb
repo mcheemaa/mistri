@@ -140,7 +140,8 @@ class TestDeferredTools < Minitest::Test
     search = provider.requests.first.dig(:options, :tools)
                      .find { |spec| spec[:name] == "tool_search" }
 
-    assert_match(/\A<system-reminder>\n.*^tracker__create_issue$.*^refund_charge$/m, listing)
+    assert_match(/\AThese tools load on demand\..*^tracker__create_issue$.*^refund_charge$/m,
+                 listing)
     refute_includes listing, "lookup_order"
     refute_includes search.fetch(:description), "tracker"
     assert_equal %w[deferred_tools], agent.session.messages.filter_map(&:reminder)

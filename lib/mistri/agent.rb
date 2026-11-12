@@ -423,8 +423,7 @@ module Mistri
       owed = owed_instructions(messages)
       return messages if owed.empty?
 
-      note = Message.new(role: :user, content: owed, reminder: "tool_instructions")
-      messages + [@session.append_message(note)]
+      messages + [@session.append_message(Message.reminder("tool_instructions", *owed))]
     end
 
     # Each server's instructions that no reminder in the conversation holds
@@ -452,8 +451,8 @@ module Mistri
               .group_by { |tool| tool.instructions.to_s.strip }.except("")
               .to_h do |text, tools|
                 names = tools.map(&:name)
-                [Reminder.wrap("The server of #{instructed(names)} gives these instructions " \
-                               "for using its tools:\n#{bounded_instructions(text)}"), names]
+                ["The server of #{instructed(names)} gives these instructions for using its " \
+                 "tools:\n#{bounded_instructions(text)}", names]
               end
     end
 

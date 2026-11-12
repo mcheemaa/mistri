@@ -2,8 +2,9 @@
 
 require_relative "test_helper"
 
-# The deferred tools are listed in the conversation: a reminder the agent
-# appends once, and again when the list changed or a compaction removed it.
+# The deferred tools are listed in the conversation: a reminder, a system
+# message the agent appends once, and again when the list changed or a
+# compaction removed it.
 class TestDeferredToolsListed < Minitest::Test
   def tool(name, **)
     Mistri::Tool.define(name, "Does #{name.tr("_", " ")}.", deferred: true, **) { "ran #{name}" }
@@ -45,6 +46,21 @@ class TestDeferredToolsListed < Minitest::Test
 
     refute_includes provider.requests[2][:messages].last.text, "load on demand"
     assert_equal [nil, nil, nil, nil, "deferred_tools", nil], reminders(agent.session)
+  end
+
+  def test_a_turn_that_waits_for_approval_starts_at_the_user_s_message
+    gated = Mistri::Tool.define("send_note", "Sends a note.", needs_approval: true) { "sent" }
+    agent, provider = agent([{ tool_calls: [{ name: "send_note" }] }, { text: "Summary." }],
+                            tools: [gated, tool("tracker__create_issue")])
+    agent.run("Send the note. #{"Background. " * 60}")
+    session = agent.session
+
+    compacted = Mistri::Compactor.call(session:, provider:,
+                                       settings: Mistri::Compaction.new(keep_recent: 1))
+
+    assert_nil compacted
+    assert_equal 0, session.open_from
+    assert_equal [nil, "deferred_tools", nil], reminders(session)
   end
 
   def test_a_changed_list_is_appended_again

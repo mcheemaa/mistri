@@ -37,7 +37,7 @@ module Mistri
         # be referenced, and the API refuses a reference to any other.
         def messages(history, cache: false, deferred: [])
           unreferenced = deferred.dup
-          turns = history.reject(&:system?).chunk_while { |a, b| a.tool? && b.tool? }
+          turns = Reminder.as_user_turns(history).chunk_while { |a, b| a.tool? && b.tool? }
           wire = turns.filter_map do |group|
             group.first.tool? ? tool_results(group, unreferenced) : message(group.first)
           end
