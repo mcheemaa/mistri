@@ -38,6 +38,9 @@ module Mistri
 
       def prices_usage? = @prices_usage
 
+      # A request is recorded with each reminder as the session holds it.
+      def system_messages? = true
+
       def stream(messages: [], **options, &emit)
         # Snapshot the array: the loop appends replies to it in place.
         @requests << { messages: messages.dup, options: }

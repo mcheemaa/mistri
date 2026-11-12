@@ -375,6 +375,7 @@ module Mistri
       history = @transform_context.reduce(history) do |messages, transform|
         transform.call(messages)
       end
+      history = Reminder.as_user_turns(history) unless system_messages?
       attempt = 0
       usage = Usage.zero
       schema = provider_output_schema(output_schema)
@@ -401,6 +402,12 @@ module Mistri
         reserve_tool_call_ids(message.tool_calls)
         return [message, usage]
       end
+    end
+
+    # A provider that does not state that it takes a system message in a
+    # conversation is given each reminder as text of a user turn.
+    def system_messages?
+      @provider.respond_to?(:system_messages?) && @provider.system_messages?
     end
 
     # The list goes into the conversation, not into a definition, so the tools

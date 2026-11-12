@@ -23,13 +23,19 @@ module Mistri
     # The wire form of a harness note inside a user turn.
     def self.wrap(text) = "<system-reminder>\n#{text}\n</system-reminder>"
 
+    # The history with each system message that is stored among the results
+    # of one turn moved after them, so the results of parallel calls stay
+    # together in whichever form a reminder is sent.
+    def self.after_results(history)
+      history.chunk_while { |a, b| (a.tool? || a.system?) && (b.tool? || b.system?) }
+             .flat_map { |run| run.partition(&:tool?).flatten(1) }
+    end
+
     # The history for a provider that sends a note as text of a user turn:
-    # each reminder message as a user message of wrapped text blocks, and no
-    # other system message.
+    # each reminder message as a user message of wrapped text blocks.
     def self.as_user_turns(history)
-      history.filter_map do |message|
-        next message unless message.system?
-        next unless message.reminder
+      after_results(history).map do |message|
+        next message unless message.reminder
 
         Message.user(message.content.grep(Content::Text).map { |block| wrap(block.text) })
       end

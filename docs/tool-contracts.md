@@ -480,7 +480,10 @@ result loads it, on any provider.
 
 A provider of your own is sent the growing tool list. To hold definitions
 back itself it answers `defers_tools?` with true, and `stream` is then given
-the loaded deferred definitions as `deferred_tools:` beside `tools:`.
+the loaded deferred definitions as `deferred_tools:` beside `tools:`. It is
+given each reminder as a user message whose text is in a system-reminder
+block. To send a reminder its own way it answers `system_messages?` with
+true, and `messages:` then holds the system message the session stores.
 
 ## Hand off the turn
 
