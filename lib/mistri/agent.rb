@@ -23,6 +23,10 @@ module Mistri
     MAX_ARGUMENT_VIOLATIONS = 8
     MAX_ARGUMENT_ERROR_BYTES = 2048
     MAX_VIOLATION_SOURCE_BYTES = 4096
+    # One server's instructions in the conversation, in bytes, and all of
+    # them together when they are sent before any tool is loaded.
+    INSTRUCTIONS_BYTES = 2_000
+    INSTRUCTIONS_TOGETHER_BYTES = 20_000
     TOOL_ARGUMENT_VALIDATOR = Tool.instance_method(:validate_arguments)
     private_constant :MAX_ARGUMENT_VIOLATIONS, :MAX_ARGUMENT_ERROR_BYTES,
                      :MAX_VIOLATION_SOURCE_BYTES, :TOOL_ARGUMENT_VALIDATOR
@@ -367,7 +371,7 @@ module Mistri
     # model and a recovered retry never shows the subscriber an error it
     # walks back. Only the accepted attempt persists and terminates.
     def run_turn(signal, output_schema = nil, &emit)
-      history = listing_deferred_tools(@session.messages)
+      history = sending_instructions(listing_deferred_tools(@session.messages))
       history = @transform_context.reduce(history) do |messages, transform|
         transform.call(messages)
       end
@@ -411,6 +415,65 @@ module Mistri
       messages + [@session.append_message(@listing)]
     end
 
+    # The instructions of each tool's server go into the conversation before
+    # the model chooses among its tools, so they can guide the choice. They
+    # are owed while no reminder in the conversation holds them, so a
+    # compaction and a load whose result failed afterwards lose nothing.
+    def sending_instructions(messages)
+      owed = owed_instructions(messages)
+      return messages if owed.empty?
+
+      note = Message.new(role: :user, content: owed, reminder: "tool_instructions")
+      messages + [@session.append_message(note)]
+    end
+
+    # Each server's instructions that no reminder in the conversation holds
+    # as one of its text blocks. Every server is due at once. When that is
+    # more than INSTRUCTIONS_TOGETHER_BYTES, a server with only deferred
+    # tools is due once one of its tools is loaded.
+    def owed_instructions(messages)
+      due = tool_instructions
+      return [] if due.empty?
+
+      if due.keys.sum(&:bytesize) > INSTRUCTIONS_TOGETHER_BYTES
+        held = (@tools_by_name.keys - @deferred_specs.keys) | loaded_names(messages)
+        due = due.select { |_text, names| names.intersect?(held) }
+      end
+      sent = messages.select { |message| message.reminder == "tool_instructions" }
+                     .flat_map { |message| message.content.grep(Content::Text).map(&:text) }
+      due.keys - sent
+    end
+
+    # Each distinct instructions text as the text block the model reads,
+    # with the names of the tools that carry it.
+    def tool_instructions
+      @tool_instructions ||=
+        @tools.select { |tool| tool.respond_to?(:instructions) }
+              .group_by { |tool| tool.instructions.to_s.strip }.except("")
+              .to_h do |text, tools|
+                names = tools.map(&:name)
+                [Reminder.wrap("The server of #{instructed(names)} gives these instructions " \
+                               "for using its tools:\n#{bounded_instructions(text)}"), names]
+              end
+    end
+
+    # Each server's tools by their prefix, and a tool without one by its name.
+    def instructed(names)
+      names.map { |name| name.include?("__") ? "#{name.split("__", 2).first}__*" : name }
+           .uniq.join(", ")
+    end
+
+    def bounded_instructions(text)
+      return text if text.bytesize <= INSTRUCTIONS_BYTES
+
+      "#{text.byteslice(0, INSTRUCTIONS_BYTES).scrub("")}\n" \
+        "[cut at #{INSTRUCTIONS_BYTES} of #{text.bytesize} bytes]"
+    end
+
+    def loaded_names(history)
+      history.reject(&:tool_error?).flat_map { |message| message.loads.to_a }.uniq
+    end
+
     # A deferred tool is loaded once a tool result in the history has loaded
     # it. A provider that defers natively receives the loaded definitions
     # separately, in load order, and marks the loading result in its own wire
@@ -418,7 +481,7 @@ module Mistri
     def tool_options(history)
       return { tools: @eager_specs } if @deferred_specs.empty?
 
-      @loaded = history.reject(&:tool_error?).flat_map { |message| message.loads.to_a }.uniq
+      @loaded = loaded_names(history)
       loaded = @deferred_specs.values_at(*@loaded).compact
       return { tools: @eager_specs, deferred_tools: loaded } if @defers_tools
 

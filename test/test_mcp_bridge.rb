@@ -299,6 +299,17 @@ class TestMcpBridge < Minitest::Test
     server.stop
   end
 
+  def test_a_bridged_tool_carries_the_instructions_of_its_server
+    tools = { "lookup" => { description: "Looks up facts.", handler: ->(_args) { "fact" } } }
+    server = Mistri::Test::McpStubServer.new(tools: tools, instructions: "Cite the source.")
+
+    bridged = Mistri::MCP.tools(remote_client(server), deferred: true)
+
+    assert_equal ["Cite the source."], bridged.map(&:instructions)
+  ensure
+    server&.stop
+  end
+
   def test_mcp_is_error_reaches_the_agent_event_and_session
     tools = { "lookup" => { description: "Looks up facts.", handler: lambda do |_args|
       { "isError" => true,

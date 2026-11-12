@@ -139,6 +139,30 @@ connection.
 the host's decision. Until then a tool the server has removed fails when it
 is called, and a tool it has added is not offered.
 
+### Server instructions
+
+A server may send `instructions` in its initialize result: text on how to use
+its tools. `client.instructions` returns it, and `Mistri::MCP.tools` sets it
+on every tool it bridges, as `Tool#instructions`.
+
+An agent appends the instructions of every server to the conversation with
+its first request, before the model chooses a tool, so they can guide the
+choice. They are appended as one reminder, a user message whose `reminder` is
+`"tool_instructions"`. It holds one text block for each server, which names
+that server's tools. A server's instructions are cut at 2,000 bytes.
+
+When the text blocks of all servers are more than 20,000 bytes together, the
+instructions of a server whose tools are all deferred are appended with the
+request after one of its tools is loaded. A server with a tool that is not
+deferred is not delayed.
+
+After a compaction that summarized them, the instructions are appended again
+by the same rule.
+
+The instructions are text from the server. On every provider they are sent as
+text of a user turn, in a system-reminder block that names the tools, and not
+inside a tool result. Give them the trust you give that server.
+
 `Mistri::MCP.tools` filters remote names with `allow:` and `deny:`. `prefix:`
 creates local names such as `linear__create_issue` while the remote call still
 uses `create_issue`. Duplicate local tool names from two servers make Agent

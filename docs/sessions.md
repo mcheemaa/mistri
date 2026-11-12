@@ -40,8 +40,8 @@ results, UI payloads, errors, and provider metadata can remain. Authorize and
 redact before exposing a transcript.
 
 A user message with `reminder` set was written by Mistri for the model, such
-as the list of deferred tools. The user did not write it. Hide it in a
-conversation shown to a person.
+as the list of deferred tools or a server's instructions. The user did not
+write it. Hide it in a conversation shown to a person.
 
 Mistri does not encrypt JSONL or Active Record session payloads. The host owns
 storage encryption, access control, retention, deletion, and redaction specific

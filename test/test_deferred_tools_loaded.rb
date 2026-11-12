@@ -43,8 +43,10 @@ class TestDeferredToolsLoaded < Minitest::Test
                     { tool_calls: [{ name: "duck_invoices" }] }, { text: "Done." }], tools: [duck])
 
     agent.run("Find them.")
+    loaded, found = agent.session.messages.select(&:tool?).map(&:text)
 
-    assert_equal "found", agent.session.messages.select(&:tool?).last.text
+    assert_equal "Loaded: duck_invoices. You can call them from your next step.", loaded
+    assert_equal "found", found
   end
 
   def test_two_searches_in_one_turn_do_not_load_the_same_tool
