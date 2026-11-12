@@ -29,7 +29,8 @@ module Mistri
     INSTRUCTIONS_TOGETHER_BYTES = 20_000
     TOOL_ARGUMENT_VALIDATOR = Tool.instance_method(:validate_arguments)
     private_constant :MAX_ARGUMENT_VIOLATIONS, :MAX_ARGUMENT_ERROR_BYTES,
-                     :MAX_VIOLATION_SOURCE_BYTES, :TOOL_ARGUMENT_VALIDATOR
+                     :MAX_VIOLATION_SOURCE_BYTES, :INSTRUCTIONS_BYTES,
+                     :INSTRUCTIONS_TOGETHER_BYTES, :TOOL_ARGUMENT_VALIDATOR
 
     # compaction defaults on so long sessions survive their context window;
     # pass false to disable, or a tuned Compaction. It only ever triggers
