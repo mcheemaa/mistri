@@ -264,7 +264,7 @@ module Mistri
     def available
       later, ready = @pool.partition(&:deferred?)
       listed = ready.map(&:name)
-      listed << "#{later.length} that load#{"s" if later.length == 1} on demand" if later.any?
+      listed << "tools that load on demand: #{later.length}" if later.any?
       "available: #{listed.join(", ")}"
     end
 

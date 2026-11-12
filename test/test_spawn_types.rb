@@ -102,7 +102,19 @@ class TestSpawnTypes < Minitest::Test
     assert_includes definition, "Available without loading: archive. The others load on demand"
     assert_includes JSON.generate(all_deferred), "Every tool of the pool loads on demand"
     assert_equal(%w[tool_search], child_fake.requests.first[:options][:tools].map { |t| t[:name] })
-    assert_match(/unknown tool "nope"; available: archive, 1 that loads on demand/, refusal)
+    assert_match(/unknown tool "nope"; available: archive, tools that load on demand: 1/, refusal)
+  end
+
+  def test_an_unknown_tool_lists_a_pool_without_deferred_tools_by_name
+    spawn = Mistri::SubAgent.spawner(provider: fake, tools: [archive])
+    context = Mistri::ToolContext.new(session: Mistri::Session.new(store: Mistri::Stores::Memory.new),
+                                      signal: nil, emit: nil, app: nil)
+
+    error = assert_raises(ArgumentError) do
+      spawn.call({ "task" => "t", "instructions" => "i", "tools" => ["nope"] }, context)
+    end
+
+    assert_equal 'unknown tool "nope"; available: archive', error.message
   end
 
   def test_spawner_owns_its_tool_pool_and_model_allowlist
