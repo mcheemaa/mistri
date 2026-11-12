@@ -613,7 +613,8 @@ module Mistri
     def prepare_call(call, normalize:, signal: nil)
       call = call.with unless call.arguments_owned?
       tool = @tools_by_name[call.name]
-      return [call, unavailable_tool(call.name)] unless tool
+      refusal = uncallable(call.name, tool, fresh: normalize)
+      return [call, refusal] if refusal
 
       if call.arguments_error
         violation = if call.arguments_error == "invalid_json"
@@ -828,6 +829,23 @@ module Mistri
 
     def unavailable_tool(name)
       content = "Unknown tool #{tool_label(name)}. The tool did not run; choose an available tool."
+      ToolResult.new(content: utf8_prefix(content, MAX_ARGUMENT_ERROR_BYTES), error: true)
+    end
+
+    # The error for a call that cannot run: no tool has the name, or the tool
+    # is deferred and no result has loaded it. A call that waited for approval
+    # was loaded when the model made it.
+    def uncallable(name, tool, fresh:)
+      return unavailable_tool(name) unless tool
+
+      unloaded_tool(name) if fresh && @deferred_specs.key?(name) && !@loaded.include?(name)
+    end
+
+    # The model has a name and no schema, so its arguments would be a guess.
+    def unloaded_tool(name)
+      content = "Tool #{tool_label(name)} is not loaded, so it did not run. Load it with " \
+                "#{ToolSearch::NAME} first: write select:#{name} as the query, with the other " \
+                "tools you expect to need after it, separated by commas. Then call it again."
       ToolResult.new(content: utf8_prefix(content, MAX_ARGUMENT_ERROR_BYTES), error: true)
     end
 
