@@ -95,6 +95,25 @@ class TestAnthropicDeferredTools < Minitest::Test
                     content: [{ type: "text", text: "Loaded." }] }], wire.last[:content]
   end
 
+  def test_only_the_first_result_that_loads_a_tool_references_it
+    held = { type: "text", text: "Already loaded." }
+    turn = history(loading(%w[create_issue], tool_error: true),
+                   loading(%w[create_issue list_teams], id: "call_2"),
+                   loading(%w[create_issue], content: held[:text], id: "call_3"))
+    later = [Mistri::Message.assistant(tool_calls: [CALL], stop_reason: :tool_use),
+             loading(%w[list_teams create_issue], content: held[:text], id: "call_4")]
+    deferred = %w[create_issue list_teams]
+    wire = SERIALIZER.messages(turn + later, deferred:)
+    failed, first, second = wire[2][:content].first(3).map { |result| result[:content] }
+
+    assert_equal [{ type: "text", text: "Loaded." }], failed
+    assert_equal [{ type: "tool_reference", tool_name: "create_issue" },
+                  { type: "tool_reference", tool_name: "list_teams" }], first
+    assert_equal [held], second
+    assert_equal [held], wire.last[:content].first[:content]
+    assert_equal %w[create_issue list_teams], deferred
+  end
+
   def test_text_comes_after_every_result_of_the_turn
     plain = Mistri::Message.tool(content: "Order 7.", tool_call_id: "call_2", tool_name: "lookup")
     wire = SERIALIZER.messages(history(loading(%w[create_issue]), plain,

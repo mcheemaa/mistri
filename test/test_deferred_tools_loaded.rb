@@ -3,8 +3,9 @@
 require_relative "test_helper"
 
 # What an agent counts as loaded: a tool that a successful result in the
-# history has loaded. A search does not load it again, in a later turn or in
-# the same one.
+# history names in its loads. A search does not load it again, in a later
+# turn or in the same one: its result states that the tool is loaded and
+# names it too.
 class TestDeferredToolsLoaded < Minitest::Test
   def tool(name, description = "Does #{name.tr("_", " ")}.")
     Mistri::Tool.define(name, description, deferred: true) { "ran #{name}" }
@@ -13,7 +14,8 @@ class TestDeferredToolsLoaded < Minitest::Test
   def search(query) = { name: "tool_search", arguments: { "query" => query } }
 
   def agent(turns, tools:, session: nil)
-    [Mistri::Agent.new(provider: Mistri::Providers::Fake.new(turns:), session:, tools:)]
+    provider = Mistri::Providers::Fake.new(turns:)
+    [Mistri::Agent.new(provider:, session:, tools:), provider]
   end
 
   # One exchange of four messages whose search result names these loads.
@@ -33,10 +35,33 @@ class TestDeferredToolsLoaded < Minitest::Test
                    tools: many)
 
     agent.run("Get ready.")
-    loads = agent.session.messages.select(&:tool?).map(&:loads)
+    results = agent.session.messages.select(&:tool?)
+    loaded = results.map { |result| result.text[/^Loaded: (.*?)\. /, 1].split(", ") }
 
-    assert_equal [3, 5], loads.map(&:length).sort
-    assert_equal 8, loads.flatten.uniq.length
+    assert_equal [3, 5], loaded.map(&:length).sort
+    assert_equal 8, loaded.flatten.uniq.length
+    assert_equal [5, 8], results.map { |result| result.loads.length }.sort
+  end
+
+  def test_a_tool_stays_loaded_while_a_kept_result_states_that_it_is_loaded
+    tools = [tool("refund_charge")]
+    first, = agent([{ tool_calls: [search("select:refund_charge")] }, { text: "Loaded." }], tools:)
+    first.run("Get ready.")
+    session = first.session
+    kept_from = session.entries.length
+    again, = agent([{ tool_calls: [search("select:refund_charge")] }, { text: "Ready." }],
+                   tools:, session:)
+    again.run("Check it.")
+    session.checkpoint(summary: "Ready.", kept_from:)
+    later, provider = agent([{ text: "Done." }], tools:, session:)
+
+    later.run("Refund it.")
+    request = provider.requests.first
+
+    assert_equal "Already loaded, call them directly: refund_charge.",
+                 request[:messages].find(&:tool?).text
+    assert_includes request[:options][:tools].map { |tool| tool[:name] }, "refund_charge"
+    assert_empty session.last_compaction.dig("carried", "loaded")
   end
 
   def test_a_failed_result_that_names_loads_does_not_count_as_loaded

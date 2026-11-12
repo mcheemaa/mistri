@@ -340,12 +340,14 @@ than the limit, and the result gives the number that remain. When the query
 gives no limit, a search loads five tools, or as many as the query names
 when that is more, up to twenty.
 
-A tool that is already loaded is not loaded again. The result names it, and
-the search continues with the next matches, so a repeated search loads tools
+A tool that is already loaded is not loaded again. The result states that it
+is loaded and names it in its own `loads`, so the tool stays loaded while
+either result is in the history. Its definition is still sent once. The
+search continues with the next matches, so a repeated search loads tools
 further down the ranking. A search also treats a tool as loaded once another
 search of the same turn has selected it, so two searches in one turn do not
-load the same tool. If an `after_tool` hook then cancels that load, a search
-can load the tool again from the next request.
+load the same tool. If an `after_tool` hook cancels a load and no other
+result names the tool, a search loads it again from the next request.
 
 Any other query is a word search. It matches the words of a name, a
 description or a parameter, not their meaning. A run of Han, kana or Hangul
@@ -355,10 +357,11 @@ half-width and full-width forms match each other; a name is matched as it is
 written. Other scripts written without spaces match poorly. A query is read
 up to 500 characters.
 
-A load is stored with the tool result that made it. A later run on the same
-session offers the same tools with no new search. A load whose result is no
-longer in the history has no effect. After a compaction that summarizes the
-search, the summary is followed by the names of the tools loaded before it.
+A load is stored with the tool result that names it. A later run on the same
+session offers the same tools with no new search. A tool is loaded while a
+successful result that names it is in the history. After a compaction that
+summarizes every such result of a tool, the summary is followed by the names
+of the tools loaded before it.
 The message states that their definitions are no longer in the model's
 context and instructs it to load the ones it needs again by name. A call to
 one of them without a new load still runs, after the usual argument check:
@@ -393,8 +396,9 @@ not choose:
 
 - Anthropic receives a deferred definition from the request whose result
   loads it, marked `defer_loading` so that it stays out of the prompt, and
-  that result carries a reference to it. The prompt cache holds across a
-  load. One reserved definition, `mistri_deferred_tools`, is sent the same
+  that result carries a reference to it. A later result that names the same
+  tool carries none, because every reference adds the definition to the
+  prompt again. The prompt cache holds across a load. One reserved definition, `mistri_deferred_tools`, is sent the same
   way from the first request, because the first deferred definition in a
   conversation would otherwise rebuild the cache once. No result references
   it, so it never enters the prompt. No result can load it, and a tool of

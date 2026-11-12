@@ -43,9 +43,11 @@ module Mistri
     module_function
 
     # The tool an agent adds when it holds deferred tools. loaded returns
-    # the names of the tools already loaded, which a search skips. A search
-    # appends the names it loads to that list, so two searches in one turn
-    # do not load the same tool.
+    # the names of the tools already loaded. A search does not load those
+    # again: its result states that they are loaded and names them in loads,
+    # so they stay loaded while that result is in the history. A search
+    # appends the names it loads to the list, so two searches in one turn do
+    # not load the same tool.
     def tool(deferred, loaded: -> { [] })
       documents = nil
       turn = Mutex.new
@@ -227,7 +229,8 @@ module Mistri
       lines << "No tool is named #{missing.join(", ")}." if missing.any?
       return "No tool matches. Try other words." if lines.empty?
 
-      ToolResult.new(content: lines.join("\n"), loads: fresh.map { |document| document.tool.name })
+      ToolResult.new(content: lines.join("\n"),
+                     loads: (fresh + held).map { |document| document.tool.name })
     end
     private_class_method :answer
 
