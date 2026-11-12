@@ -213,6 +213,71 @@ loads them, so the definitions of a server with a long tool list are left out
 of every request until one of its tools is needed. See
 [Tools on demand](tool-contracts.md#tools-on-demand).
 
+## Many servers
+
+An agent can be given the tools of tens or hundreds of servers. Four things
+keep that cheap, and each is a host decision that Mistri supports:
+
+1. List each server once, in a job, and store the listing. Listing takes a
+   connection for each server, so run the servers in parallel and let one
+   failure leave the others:
+
+   ```ruby
+   listings = servers.to_h do |name, url|
+     [name, Thread.new { Mistri::MCP::Client.new(url: url).listing }]
+   end
+   listings.each do |name, thread|
+     store.write(name, thread.value)
+   rescue StandardError => e
+     report(name, e)
+   end
+   ```
+
+2. Build the clients from the stored listings and bridge them once for the
+   process. Bridging validates each schema, so it is the part worth doing
+   once. Give every agent the same tool objects:
+
+   ```ruby
+   TOOLS = servers.flat_map do |name, url|
+     listing = store.read(name)
+     next [] unless listing
+
+     client = Mistri::MCP::Client.new(url: url, listing: listing)
+     Mistri::MCP.tools(client, prefix: name, deferred: true)
+   end
+
+   Mistri.agent("claude-haiku-5-5", tools: [*own_tools, *TOOLS])
+   ```
+
+   No connection is opened here. A server without a stored listing is left
+   out, because a client built with `listing: nil` lists the server itself
+   and connects to do so. A client connects when one of its tools is first
+   called, and one client runs one call at a time. A host whose servers take
+   a token for each user builds the clients of that user instead and keeps
+   them for the user's session. After a listing is stored again, bridge that
+   server again and replace its tools: a bridged tool keeps the definition
+   it was built from.
+
+3. Defer the tools, as above. The conversation then holds the names of the
+   tools and the instructions of the servers, and a request carries the
+   definition of a tool once a search has loaded it. When the instructions
+   are more than 20,000 bytes together, a server's instructions are appended
+   once one of its tools is loaded. See
+   [Tools on demand](tool-contracts.md#tools-on-demand) and
+   [Server instructions](#server-instructions).
+
+4. Expect a server to be unreachable when it is first used. Whether a server
+   can be reached is not known until one of its tools is called. If no
+   connection can be established then, the tool's result states that it did
+   not run, and the run continues.
+
+Measured in an application with 22 servers and 303 tools: listing every
+server took 21.6 seconds, once. After that, building the 22 clients took
+34 ms, bridging 88 ms once for the process, and building an agent 0.5 ms. The
+first search of the process took 33.5 ms and each later agent's first search
+0.5 ms. Every request carried two tool definitions until a search loaded
+more.
+
 ## Schema authority
 
 Mistri validates the directly reachable portable subset described in
