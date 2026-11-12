@@ -6,11 +6,17 @@ module Mistri
   # best matches are loaded, and it can call them from its next step.
   module ToolSearch
     NAME = "tool_search"
+    DESCRIPTION = "Finds tools you have not been shown and loads the best matches. You can " \
+                  "call a loaded tool from your next step. Search here before you say you " \
+                  "cannot do something."
     LIMIT = 5
     MAX_LIMIT = 20
     # The definitions of one load, in bytes. Of 303 measured MCP definitions,
     # nine in ten were under 2,200.
     LOAD_BYTES = 20_000
+    # The names in one listing, in bytes. The 303 measured MCP names average
+    # 25 bytes, so about 800 names fit.
+    LISTING_BYTES = 20_000
     QUERY_LIMIT = 500
     SELECT = /\Aselect:/i
     # Okapi BM25 over the description and the parameters.
@@ -28,8 +34,8 @@ module Mistri
     WORD = /[#{UNSPACED}]+|[[:alnum:]&&[^#{UNSPACED}]]+/
     UNSPACED_RUN = /\A[#{UNSPACED}]/
     UNSPACED_PAIR = /[#{UNSPACED}]{2,}/
-    private_constant :SELECT, :K1, :B, :NAME_WEIGHT, :STOP_WORDS, :UNSPACED, :WORD,
-                     :UNSPACED_RUN, :UNSPACED_PAIR
+    private_constant :DESCRIPTION, :SELECT, :K1, :B, :NAME_WEIGHT, :STOP_WORDS, :UNSPACED,
+                     :WORD, :UNSPACED_RUN, :UNSPACED_PAIR
 
     Document = Data.define(:tool, :size, :alike, :name_words, :local_words, :counts, :length)
     private_constant :Document
@@ -43,7 +49,7 @@ module Mistri
     def tool(deferred, loaded: -> { [] })
       documents = nil
       turn = Mutex.new
-      Tool.define(NAME, description(deferred), schema: lambda {
+      Tool.define(NAME, DESCRIPTION, schema: lambda {
         string :query, "Words that describe what you need to do, or select: followed by " \
                        "the exact names of the tools to load, separated by commas",
                required: true
@@ -172,20 +178,34 @@ module Mistri
     end
     private_class_method :name_rank
 
-    def description(deferred)
-      "Finds tools you have not been shown and loads the best matches. You can call a loaded " \
-        "tool from your next step. Search here before you say you cannot do something.\n" \
-        "It searches: #{inventory(deferred)}."
-    end
-    private_class_method :description
+    # The listing the model reads: every deferred name, or the number of
+    # tools under each prefix once the names exceed LISTING_BYTES.
+    def listing(names)
+      return "No tools load on demand now. This list replaces any earlier one." if names.empty?
 
-    def inventory(deferred)
-      prefixed, plain = deferred.map(&:name).partition { |name| name.include?("__") }
-      groups = prefixed.group_by { |name| name.split("__", 2).first }.map do |prefix, names|
-        "#{prefix} (#{count(names.length, "tool")})"
+      if names.sum(&:bytesize) > LISTING_BYTES
+        return "These tools load on demand. There are too many to list by name: " \
+               "#{inventory(names)}. Load one with #{NAME} before you call it: search with " \
+               "words that describe what you need. This list replaces any earlier one."
       end
-      groups << count(plain.length, groups.empty? ? "tool" : "other") if plain.any?
-      groups.join(", ")
+
+      "These tools load on demand. Load one with #{NAME} before you call it: search with " \
+        "words that describe what you need, or use select: followed by the names. This list " \
+        "replaces any earlier one.\n#{names.join("\n")}"
+    end
+
+    # The number of tools under each prefix, up to LISTING_BYTES of prefixes.
+    # Tools without a prefix and tools under the remaining prefixes are
+    # counted together.
+    def inventory(names)
+      groups = names.select { |name| name.include?("__") }
+                    .group_by { |name| name.split("__", 2).first }
+      room = LISTING_BYTES
+      listed = groups.map { |prefix, group| "#{prefix} (#{count(group.length, "tool")})" }
+                     .take_while { |entry| (room -= entry.bytesize + 2) >= 0 }
+      others = names.length - groups.values.first(listed.length).sum(&:length)
+      listed << count(others, listed.empty? ? "tool" : "other") if others.positive?
+      listed.join(", ")
     end
     private_class_method :inventory
 

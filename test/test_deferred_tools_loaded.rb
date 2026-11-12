@@ -86,7 +86,7 @@ class TestDeferredToolsLoaded < Minitest::Test
     tools = [tool("refund_charge"), tool("void_charge")]
     first, = agent([{ tool_calls: [search("select:refund_charge")] }, { text: "Loaded." }], tools:)
     first.run("Get ready.")
-    first.session.checkpoint(summary: "Ready.", kept_from: 4)
+    first.session.checkpoint(summary: "Ready.", kept_from: first.session.entries.length)
     later, = agent([{ tool_calls: [{ name: "refund_charge" }, { name: "void_charge" }] },
                     { text: "Done." }], tools:, session: first.session)
 

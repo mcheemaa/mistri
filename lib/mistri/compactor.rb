@@ -127,6 +127,7 @@ module Mistri
         previous = session.last_compaction&.fetch("summary", nil)
         head = replay.take_while { |(_, index)| index.nil? || index < cut }.map(&:first)
         head.shift if previous # the synthetic summary rides in <previous-summary>
+        head = head.reject(&:reminder) # not the user's words, and the agent appends it again
         return nil if head.empty?
 
         emit&.call(Event.new(type: :compacting))

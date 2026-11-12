@@ -59,7 +59,11 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   run, and its error names the search to run. A load is stored with the
   session, so a later run offers the same tools. A compaction keeps the names
   of the loaded tools, and the summary message lists them with an instruction
-  to load the needed ones again. A tool result can load tools itself with
+  to load the needed ones again. The names of the deferred tools are listed in
+  the conversation: the agent appends a user message with `reminder` set,
+  which a host hides from a person. The definition of `tool_search` does not
+  change with the list, so connecting a server keeps the prompt cache. A tool
+  result can load tools itself with
   `ToolResult.new(content:, loads:)`. On Anthropic a loaded definition travels
   marked to stay out of the prompt and a load is a reference to it, so the
   prompt cache holds across a load. On OpenAI, for gpt-5.4 and later except

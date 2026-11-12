@@ -367,7 +367,8 @@ module Mistri
     # model and a recovered retry never shows the subscriber an error it
     # walks back. Only the accepted attempt persists and terminates.
     def run_turn(signal, output_schema = nil, &emit)
-      history = @transform_context.reduce(@session.messages) do |messages, transform|
+      history = listing_deferred_tools(@session.messages)
+      history = @transform_context.reduce(history) do |messages, transform|
         transform.call(messages)
       end
       attempt = 0
@@ -396,6 +397,18 @@ module Mistri
         reserve_tool_call_ids(message.tool_calls)
         return [message, usage]
       end
+    end
+
+    # The list goes into the conversation, not into a definition, so the tools
+    # and the system prompt of a request are unchanged by what a host connects.
+    # An agent without deferred tools appends nothing, unless the conversation
+    # holds a list from an agent that had some.
+    def listing_deferred_tools(messages)
+      @listing ||= Message.reminder("deferred_tools", ToolSearch.listing(@deferred_specs.keys))
+      latest = messages.reverse_each.find { |message| message.reminder == @listing.reminder }
+      return messages if latest == @listing || (latest.nil? && @deferred_specs.empty?)
+
+      messages + [@session.append_message(@listing)]
     end
 
     # A deferred tool is loaded once a tool result in the history has loaded
