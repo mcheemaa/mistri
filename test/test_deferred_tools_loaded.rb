@@ -28,15 +28,15 @@ class TestDeferredToolsLoaded < Minitest::Test
   end
 
   def test_two_searches_in_one_turn_do_not_load_the_same_tool
-    many = Array.new(12) { |index| tool("tracker__issue_#{index}", "An issue tool.") }
+    many = Array.new(8) { |index| tool("tracker__issue_#{index}", "An issue tool.") }
     agent, = agent([{ tool_calls: [search("issue"), search("issue")] }, { text: "Ready." }],
                    tools: many)
 
     agent.run("Get ready.")
     loads = agent.session.messages.select(&:tool?).map(&:loads)
 
-    assert_equal [4, 8], loads.map(&:length).sort
-    assert_equal 12, loads.flatten.uniq.length
+    assert_equal [3, 5], loads.map(&:length).sort
+    assert_equal 8, loads.flatten.uniq.length
   end
 
   def test_a_failed_result_that_names_loads_does_not_count_as_loaded

@@ -114,9 +114,9 @@ class TestDeferredTools < Minitest::Test
     agent.run("Get ready.")
     loads = agent.session.messages.select(&:tool?).map(&:loads)
 
-    assert_equal [8, 20, 1], loads.map(&:length)
-    assert_equal 29, loads.flatten.uniq.length
-    assert_equal 30, offered(provider).length
+    assert_equal [5, 20, 1], loads.map(&:length)
+    assert_equal 26, loads.flatten.uniq.length
+    assert_equal 27, offered(provider).length
   end
 
   def test_a_blank_query_is_an_error_the_model_can_read

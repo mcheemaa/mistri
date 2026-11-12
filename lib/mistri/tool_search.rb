@@ -6,8 +6,11 @@ module Mistri
   # best matches are loaded, and it can call them from its next step.
   module ToolSearch
     NAME = "tool_search"
-    LIMIT = 8
+    LIMIT = 5
     MAX_LIMIT = 20
+    # The definitions of one load, in bytes. Of 303 measured MCP definitions,
+    # nine in ten were under 2,200.
+    LOAD_BYTES = 20_000
     QUERY_LIMIT = 500
     SELECT = /\Aselect:/i
     # Okapi BM25 over the description and the parameters.
@@ -28,7 +31,7 @@ module Mistri
     private_constant :SELECT, :K1, :B, :NAME_WEIGHT, :STOP_WORDS, :UNSPACED, :WORD,
                      :UNSPACED_RUN, :UNSPACED_PAIR
 
-    Document = Data.define(:tool, :alike, :name_words, :local_words, :counts, :length)
+    Document = Data.define(:tool, :size, :alike, :name_words, :local_words, :counts, :length)
     private_constant :Document
 
     module_function
@@ -62,7 +65,7 @@ module Mistri
             names.concat(picked.map { |document| document.tool.name })
           end
         end
-        answer(fresh, held, missing.to_a, chosen ? left : 0)
+        answer(fresh, held, missing.to_a, left, named: !chosen.nil?, full: fresh.length == limit)
       end
     end
 
@@ -132,18 +135,22 @@ module Mistri
     end
     private_class_method :pick
 
-    # The matches to load, up to limit, the loaded matches ranked before
-    # them, and the number of matches left unloaded.
+    # The matches to load, the loaded matches ranked before them, and the
+    # number of matches left unloaded. A load holds up to limit tools and up
+    # to LOAD_BYTES of definitions, and always its first tool.
     def unloaded(matches, loaded, limit)
       have = loaded.to_set
       fresh = []
       held = []
       left = 0
+      room = LOAD_BYTES
       matches.each do |document|
+        open = left.zero? && fresh.length < limit
         if have.include?(document.tool.name)
-          held << document if fresh.length < limit
-        elsif fresh.length < limit
+          held << document if open
+        elsif open && (fresh.empty? || document.size <= room)
           fresh << document
+          room -= document.size
         else
           left += 1
         end
@@ -185,12 +192,17 @@ module Mistri
     def count(number, noun) = "#{number} #{noun}#{"s" unless number == 1}"
     private_class_method :count
 
-    def answer(fresh, held, missing, left)
+    # named: the query named tools, so the result gives the number left
+    # unloaded. full: the load reached its count, so a word search adds no
+    # line about further matches.
+    def answer(fresh, held, missing, left, named:, full:)
       lines = []
       lines << "Loaded: #{names(fresh)}. You can call them from your next step." if fresh.any?
       lines << "Already loaded, call them directly: #{names(held)}." if held.any?
-      if left.positive?
+      if left.positive? && named
         lines << "#{count(left, "more tool")} with these names. Search again to load them."
+      elsif left.positive? && !full
+        lines << "More tools match than one load holds. Search again to load them."
       end
       lines << "No tool is named #{missing.join(", ")}." if missing.any?
       return "No tool matches. Try other words." if lines.empty?
@@ -211,7 +223,7 @@ module Mistri
       schema_text(spec[:input_schema], parts)
       text = plain(parts.join(" "))
       terms = words(text)
-      Document.new(tool:, alike: identifier(tool.name),
+      Document.new(tool:, size: JSON.generate(spec).bytesize, alike: identifier(tool.name),
                    name_words: (words(tool.name) + characters(plain(tool.name))).uniq,
                    local_words: words(tool.name.split("__").last).uniq,
                    counts: (terms + characters(text)).tally, length: terms.length)
