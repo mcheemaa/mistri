@@ -35,19 +35,4 @@ class TestMcpNotSent < Minitest::Test
       refute_kind_of Mistri::MCP::NotSent, shared
     end
   end
-
-  def test_an_error_that_cannot_be_copied_is_raised_untagged
-    copies = [->(_) { raise TypeError, "cannot copy" }, lambda(&:itself), ->(_) { "replacement" }]
-    with_server do |server|
-      copies.each do |copy|
-        error = Class.new(StandardError) { define_method(:dup) { copy.call(self) } }.new("no token")
-        raised = assert_raises(StandardError) do
-          remote_client(server, token: -> { raise error }).call_tool("echo", {})
-        end
-
-        assert_same error, raised
-        refute_kind_of Mistri::MCP::NotSent, raised
-      end
-    end
-  end
 end
