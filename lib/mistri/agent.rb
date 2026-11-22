@@ -1,6 +1,7 @@
 # frozen_string_literal: true
 
 require "json"
+require "securerandom"
 
 module Mistri
   # The agent loop: prompt the provider, run any tools it calls, feed the
@@ -52,13 +53,13 @@ module Mistri
                    max_concurrency: 4, transform_context: nil, compaction: Compaction.new,
                    retries: RetryPolicy.new, skills: [], before_tool: nil, after_tool: nil,
                    context: nil, log_label: nil, lease: true, result_limit: ResultLimit.new,
-                   scratchpad: nil)
+                   scratchpad: nil, sandbox: nil)
       @provider = provider
       @session = session || Session.new(store: Stores::Memory.new)
       skills = skills.is_a?(String) ? Skills.load(skills) : Array(skills)
       @system = Skills.amend(system, skills)
       @scratchpad = scratchpad && Scratchpad.new(scratchpad)
-      install_tools(with_own_tools(tools, skills, scratchpad))
+      install_tools(with_own_tools(tools, skills, scratchpad, sandbox))
 
       @budget = budget || Budget.new
       @budget.validate_provider!(@provider)
@@ -166,13 +167,97 @@ module Mistri
 
     private
 
-    # The skill reader for an agent with skills, and the document tools for an
-    # agent with a scratchpad whose host gave it none.
-    def with_own_tools(tools, skills, scratchpad)
+    # The skill reader for an agent with skills, the document tools for an
+    # agent with a scratchpad whose host gave it none, and run_code for an
+    # agent with a sandbox.
+    def with_own_tools(tools, skills, scratchpad, sandbox)
       tools += [Skills.reader(skills)] unless skills.empty?
-      return tools unless scratchpad && tools.none? { |tool| tool.name == "read_file" }
+      own_files = scratchpad && tools.none? { |tool| tool.name == "read_file" }
+      tools += Tools.files(scratchpad) if own_files
+      sandbox ? tools + [Tools.run_code(sandbox, &method(:from_code))] : tools
+    end
 
-      tools + Tools.files(scratchpad)
+    FILES_FROM_CODE = { "read" => "read_file", "write" => "write_file", "list" => "list_files",
+                        "delete" => "delete_file" }.freeze
+    private_constant :FILES_FROM_CODE
+
+    # What code in the sandbox asks for. Each call passes what a call from
+    # the model passes: the tool's contract, before_tool, the approval rule
+    # and after_tool, with its events. It is stored as an entry beside the
+    # messages, because the model reads its result in the code.
+    def from_code(operation, payload, context, run)
+      return tool_from_code(payload, context) if operation == "tool"
+
+      name = FILES_FROM_CODE[operation]
+      raise Error, "the code asked for #{operation}, which does not exist" unless name
+      raise Error, "this agent has no documents" unless @scratchpad
+      raise Error, "you do not have the #{name} tool" unless @tools_by_name.key?(name)
+
+      arguments = payload.slice("path", "prefix").compact
+      bytes = payload["content"]&.to_s&.bytesize
+      arguments["content"] = "[#{bytes} bytes]" if bytes
+      call = ToolCall.new(id: "code_#{SecureRandom.hex(8)}", name:, arguments:)
+      settle_from_code(call, context) do
+        Tools.file_from_code(@scratchpad.workspace, operation, payload, run)
+      end
+    end
+
+    def tool_from_code(payload, context)
+      name = payload["name"].to_s
+      raise Error, "run_code cannot be called from code" if name == "run_code"
+
+      call = ToolCall.new(id: "code_#{SecureRandom.hex(8)}", name:, arguments: payload["arguments"])
+      call, refusal = prepare_call(call, normalize: true, signal: context.signal)
+      settle_from_code(call, context, refusal:) do
+        result = @tools_by_name.fetch(call.name).call(call.arguments, context)
+        text = ResultLimit.texts(result.is_a?(ToolResult) ? result.content : result).join("\n")
+        [text, result]
+      end
+    end
+
+    # The block returns the value for the code and the result to store.
+    def settle_from_code(call, context, refusal: nil, &)
+      refusal ||= refused_from_code(call, context)
+      value, result, seconds = refusal ? [nil, refusal, nil] : run_from_code(call, context, &)
+      content, ui, tool_error = if result.is_a?(ToolResult)
+                                  [result.content, result.ui, result.error?]
+                                else
+                                  [result, nil, false]
+                                end
+      text = ResultLimit.texts(content).join("\n")
+      content, cut = @result_limit.bound(content, own_limit(call)) if @result_limit
+      message = Message.tool(content:, tool_call_id: call.id, tool_name: call.name, ui:,
+                             tool_error:, cut:)
+      @session.append("code_call", "call" => call.to_h, "message" => message.to_h)
+      context.emit&.call(Event.new(type: :tool_result, tool_call: call, message:, tool_error:,
+                                   content: content.is_a?(String) ? content : "[content]",
+                                   duration: seconds))
+      raise Error, text if tool_error
+
+      value
+    end
+
+    def refused_from_code(call, context)
+      _cleared, blocked = screen([call], context.signal, &context.emit)
+      return blocked.first[1] if blocked.any?
+      return unless gated?(call)
+
+      ToolResult.new(content: "#{call.name} needs a person's approval for this call, so code " \
+                              "cannot make it. Call the tool yourself.", error: true)
+    end
+
+    def run_from_code(call, context)
+      context.emit&.call(Event.new(type: :tool_started, tool_call: call))
+      started = monotonic_now
+      value, result = begin
+        yield
+      rescue EventDelivery::Failure
+        raise
+      rescue StandardError => e
+        [nil, ToolResult.new(content: e.message, error: true)]
+      end
+      result = rewrite(call, result, hook_context(context.signal, context.emit)) if @after_tool
+      [value, result, monotonic_now - started]
     end
 
     def install_tools(tools)
