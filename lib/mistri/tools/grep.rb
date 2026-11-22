@@ -14,6 +14,7 @@ module Mistri
                   "Search documents with a regular expression. Returns each match with its " \
                   "path and line number, or a count. On a very long line, each match comes " \
                   "with the characters around it and its column.",
+                  save_result: false,
                   schema: lambda {
                     string :pattern, "Regular expression", required: true
                     string :path, "A document, or a folder to search every document under. " \

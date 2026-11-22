@@ -56,6 +56,7 @@ module Mistri
     def reader(skills)
       by_name = skills.to_h { |skill| [skill.name, skill] }
       Tool.define(READER, "Reads the full playbook for a named skill.",
+                  result_limit: ResultLimit::DEFAULT_BYTES,
                   schema: -> { string :name, "Skill name", required: true }) do |args|
         skill = by_name[args["name"]]
         next skill.body if skill

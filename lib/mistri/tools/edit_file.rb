@@ -19,7 +19,7 @@ module Mistri
                   "read_file output including whitespace, without line-number prefixes. " \
                   "It must match exactly one place; add surrounding lines to make it " \
                   "unique, or set replace_all to change every occurrence.",
-                  eager_input_streaming: true,
+                  eager_input_streaming: true, save_result: false,
                   argument_normalizer: Tools.method(:tolerate),
                   schema: lambda {
                     string :path, "Document path", required: true
@@ -27,6 +27,8 @@ module Mistri
                     string :new_string, "Replacement text", required: true
                     boolean :replace_all, "Replace every occurrence instead of exactly one"
                   }) do |args|
+        next read_only(args["path"]) if read_only(args["path"])
+
         result = if atomic
                    replace_atomically(workspace, args)
                  else

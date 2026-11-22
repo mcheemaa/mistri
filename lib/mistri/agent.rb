@@ -51,12 +51,14 @@ module Mistri
     def initialize(provider:, session: nil, system: nil, tools: [], budget: nil,
                    max_concurrency: 4, transform_context: nil, compaction: Compaction.new,
                    retries: RetryPolicy.new, skills: [], before_tool: nil, after_tool: nil,
-                   context: nil, log_label: nil, lease: true, result_limit: ResultLimit.new)
+                   context: nil, log_label: nil, lease: true, result_limit: ResultLimit.new,
+                   scratchpad: nil)
       @provider = provider
       @session = session || Session.new(store: Stores::Memory.new)
       skills = skills.is_a?(String) ? Skills.load(skills) : Array(skills)
       @system = Skills.amend(system, skills)
-      install_tools(skills.empty? ? tools : tools + [Skills.reader(skills)])
+      @scratchpad = scratchpad && Scratchpad.new(scratchpad)
+      install_tools(with_own_tools(tools, skills, scratchpad))
 
       @budget = budget || Budget.new
       @budget.validate_provider!(@provider)
@@ -163,6 +165,15 @@ module Mistri
     end
 
     private
+
+    # The skill reader for an agent with skills, and the document tools for an
+    # agent with a scratchpad whose host gave it none.
+    def with_own_tools(tools, skills, scratchpad)
+      tools += [Skills.reader(skills)] unless skills.empty?
+      return tools unless scratchpad && tools.none? { |tool| tool.name == "read_file" }
+
+      tools + Tools.files(scratchpad)
+    end
 
     def install_tools(tools)
       deferred = tools.select { |tool| tool.respond_to?(:deferred?) && tool.deferred? }
@@ -375,7 +386,7 @@ module Mistri
     def run_turn(signal, output_schema = nil, &emit)
       replayed = @session.messages
       answered = answered?(replayed)
-      history = sending_instructions(listing_deferred_tools(replayed))
+      history = noting_scratchpad(sending_instructions(listing_deferred_tools(replayed)))
       history = @transform_context.reduce(history) do |messages, transform|
         transform.call(messages)
       end
@@ -435,6 +446,15 @@ module Mistri
       return messages if owed.empty?
 
       messages + [@session.append_message(Message.reminder("tool_instructions", *owed))]
+    end
+
+    # The note is owed while the conversation holds none, so a compaction that
+    # summarized it brings it back with what the scratchpad holds by then.
+    def noting_scratchpad(messages)
+      return messages unless @scratchpad
+      return messages if messages.any? { |message| message.reminder == "scratchpad" }
+
+      messages + [@session.append_message(Message.reminder("scratchpad", @scratchpad.note))]
     end
 
     # Each server's instructions that no reminder in the conversation holds
@@ -1104,7 +1124,7 @@ module Mistri
                                          [result, nil, false, nil]
                                        end
       loads = nil if tool_error
-      content, cut = bound(content, turn)
+      content, cut = bound(content, turn, call)
       message = @session.append_message(Message.tool(content: content, tool_call_id: call.id,
                                                      tool_name: call.name, ui: ui,
                                                      tool_error: tool_error, loads: loads,
@@ -1114,12 +1134,34 @@ module Mistri
                            message: message, duration: duration, tool_error: tool_error))
     end
 
-    def bound(content, turn)
+    def bound(content, turn, call)
       return [content, nil] unless @result_limit
 
-      content, cut = @result_limit.bound(content, turn ? turn.limit : @result_limit.bytes)
+      own = own_limit(call)
+      limit = turn ? turn.limit(own) : own
+      content, cut = saved(content, limit, call) ||
+                     @result_limit.bound(content, limit, shared: limit < own)
       turn&.spend(ResultLimit.size(content))
       [content, cut]
+    end
+
+    def own_limit(call)
+      tool = @tools_by_name[call.name]
+      (tool.respond_to?(:result_limit) && tool.result_limit) || @result_limit.bytes
+    end
+
+    # With a scratchpad, the whole of a text over its limit is saved there and
+    # its start is stored. A text the scratchpad cannot take is cut.
+    def saved(content, limit, call)
+      return unless @scratchpad && content.is_a?(String) && content.bytesize > limit
+
+      tool = @tools_by_name[call.name]
+      return if tool.respond_to?(:save_result?) && !tool.save_result?
+
+      @result_limit.shown(content, @scratchpad.save_result(content, call.name))
+    rescue StandardError => e
+      warn "mistri: saving a result of #{call.name} failed (#{e.class}: #{e.message}); it is cut"
+      @result_limit.bound(content, limit, unsaved: true)
     end
 
     def answer_results(calls, results, executed:, signal:, spent: 0, &emit)
@@ -1145,8 +1187,9 @@ module Mistri
     def result_turn(results, spent)
       return nil unless @result_limit
 
-      sizes = results.map do |_call, result, _seconds|
-        ResultLimit.size(result.is_a?(ToolResult) ? result.content : result)
+      sizes = results.map do |call, result, _seconds|
+        size = ResultLimit.size(result.is_a?(ToolResult) ? result.content : result)
+        [size, own_limit(call)].min
       end
       @result_limit.turn(sizes, spent:)
     end

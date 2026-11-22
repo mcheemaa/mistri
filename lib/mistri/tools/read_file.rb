@@ -15,6 +15,7 @@ module Mistri
                   "further. For a very long line, pass unit \"characters\" to read it by " \
                   "character offset. The first line states the document's version, which " \
                   "write_file takes as if_version.",
+                  save_result: false,
                   schema: lambda {
                     string :path, "Document path", required: true
                     integer :offset, "The line to start at, from 1. With unit characters, " \

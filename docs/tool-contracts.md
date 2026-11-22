@@ -294,6 +294,41 @@ agent = Mistri.agent(
 model's window then leaves the session with no way back, because a compaction
 cannot shrink the turn that holds it.
 
+A tool takes `result_limit:` too, the bytes one of its own results keeps in
+place of the agent's number. A host can then lower the agent's limit for
+chatty tools and leave a tool whose result the model needs whole as it is. The
+skill reader keeps 50,000 bytes whatever the agent's limit.
+
+### Saving the whole result
+
+Pass `scratchpad:`, a [workspace](context-and-workspaces.md#workspaces-and-document-tools)
+the host builds and scopes to the session, and nothing is lost:
+
+```ruby
+agent = Mistri.agent("claude-opus-5-5", tools: tools, scratchpad: workspace)
+```
+
+- The whole of a text result over its limit is saved under
+  `scratchpad/tool-results/`, as `.json` when it is JSON and `.txt` otherwise,
+  exactly as the tool returned it.
+- The stored result is its first 2,000 bytes and one line with the true size
+  and the path. `cut` holds the path too.
+- The agent adds the document tools over the scratchpad when the host passed
+  none, so the model reads a saved result in parts or searches it. A host that
+  passes its own document tools binds them to the same workspace.
+- A note tells the model what the scratchpad is for. After a compaction that
+  summarized it, the note is appended again with what the scratchpad holds.
+- `scratchpad/tool-results/` is read-only to the model. It may keep notes of
+  its own elsewhere under `scratchpad/`.
+- A result with an image is cut and not saved. So is a result the scratchpad
+  cannot take: its line says it could not be saved, and Mistri prints a warning.
+- A tool defined with `save_result: false` is cut and never saved. The document
+  tools are, so reading a saved result cannot save another.
+
+With a scratchpad a lower limit costs little, because the model can still reach
+the whole. `Mistri::ResultLimit.new(bytes: 8_000)` keeps results of middle
+size out of every later request.
+
 Non-text tool-result content remains provider-neutral in the Session. Anthropic
 can receive image blocks in a tool result. The current OpenAI and Gemini
 function-result serializers have no such encoding and send an explicit

@@ -6,7 +6,10 @@ module Mistri
 
     def delete_file(workspace)
       Tool.define("delete_file", "Delete a document.",
+                  save_result: false,
                   schema: -> { string :path, "Document path", required: true }) do |args|
+        next read_only(args["path"]) if read_only(args["path"])
+
         with_document(workspace, args) do
           workspace.delete(args["path"])
           "Deleted #{args["path"]}"

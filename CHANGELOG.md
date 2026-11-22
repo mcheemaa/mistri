@@ -5,6 +5,14 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+- An agent takes a scratchpad. With `scratchpad:`, a workspace the host
+  scopes to the session, the whole of a tool result over its limit is saved
+  under `scratchpad/tool-results/` and the stored result is its first 2,000
+  bytes and a line with the size and the path. The agent adds the document
+  tools when the host passed none, and a note tells the model what the
+  scratchpad is for, again after a compaction with what it holds. The folder
+  of saved results is read-only to the model. A tool takes `result_limit:`
+  for a limit of its own and `save_result: false` to be cut and never saved.
 - The document tools read, search and write in parts. `Tools.files` now
   returns `read_file`, `write_file`, `edit_file`, `grep`, `list_files` and
   `delete_file`. `read_file` states the total and the document's version,

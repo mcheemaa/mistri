@@ -36,6 +36,17 @@ module Mistri
       Digest::SHA256.hexdigest(content.b)[0, 12]
     end
 
+    # The folder an agent saves whole tool results in is the model's to read.
+    def read_only(path)
+      return unless path.to_s.start_with?(Scratchpad::RESULTS)
+
+      ToolResult.new(
+        content: "#{Scratchpad::RESULTS} holds saved tool results and is read-only. " \
+                 "Write under scratchpad/ instead.",
+        error: true
+      )
+    end
+
     def missing_document(path)
       ToolResult.new(
         content: "No document at #{path.inspect}. Use list_files to see paths.",

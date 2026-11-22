@@ -14,6 +14,8 @@ module Mistri
     DEFAULT_TURN_BYTES = 200_000
     # What each result of a crowded turn keeps at least.
     FLOOR_BYTES = 2_000
+    # What is shown of a result whose whole is saved.
+    SHOWN_BYTES = 2_000
 
     OWN = "[This result was %<bytes>d bytes in %<lines>d lines. Only its start is above. The " \
           "rest was not kept. If the tool can page or filter its results, call it again for " \
@@ -22,7 +24,13 @@ module Mistri
              "because the results of tool calls made together share one limit. The rest was " \
              "not kept. If the tool can page or filter its results, call it again for the " \
              "part you need, with fewer calls at a time.]"
-    private_constant :OWN, :SHARED
+    UNSAVED = "[This result was %<bytes>d bytes in %<lines>d lines. Only its start is above. " \
+              "It could not be saved, so the rest was not kept. If the tool can page or " \
+              "filter its results, call it again for the part you need.]"
+    SAVED = "[This result is %<bytes>d bytes in %<lines>d lines. Only its start is above. The " \
+            "whole is saved at %<path>s. Read it in parts with read_file, or search it with " \
+            "grep.]"
+    private_constant :OWN, :SHARED, :UNSAVED, :SAVED
 
     # The limit of each result of one assistant message, asked for as the
     # results are stored one after another. left holds the turn to its bytes
@@ -33,9 +41,10 @@ module Mistri
         @left = left
       end
 
-      def limit
+      # own is the limit the result would have by itself.
+      def limit(own)
         left = [@left, FLOOR_BYTES].max
-        [left, @level].min
+        [own, @level || own, left].min
       end
 
       def spend(bytes)
@@ -66,25 +75,38 @@ module Mistri
     end
 
     # sizes are the results of one assistant message as the tools returned
-    # them. Over the turn's bytes, the largest give way first, down to one
-    # level for all of them, so a small result stays whole beside a large
-    # one. spent is what the message's earlier results already hold.
+    # them, each no larger than its own limit. Over the turn's bytes, the
+    # largest give way first, down to one level for all of them, so a small
+    # result stays whole beside a large one. spent is what the message's
+    # earlier results already hold.
     def turn(sizes, spent: 0)
-      capped = sizes.map { |size| [size, bytes].min }
       left = turn_bytes - spent
-      Turn.new(capped.sum <= left ? bytes : level(capped, [left, 0].max), left)
+      Turn.new(sizes.sum <= left ? nil : level(sizes, [left, 0].max), left)
     end
 
     # The content with its text cut to limit bytes, and what was cut: the
     # true bytes and lines, or nil for content that fits. Images stay.
-    def bound(content, limit = bytes)
+    # shared marks a limit that came from the turn, and unsaved a result
+    # that a scratchpad failed to save.
+    def bound(content, limit = bytes, shared: false, unsaved: false)
       texts = self.class.texts(content)
       size = texts.sum(&:bytesize)
       return [content, nil] if size <= limit
 
       cut = { "bytes" => size, "lines" => texts.sum { |text| lines(text) } }
-      notice = format(limit < bytes ? SHARED : OWN, bytes: size, lines: cut["lines"])
+      wording = if unsaved
+                  UNSAVED
+                else
+                  shared ? SHARED : OWN
+                end
+      notice = format(wording, bytes: size, lines: cut["lines"])
       [cut_to(content, [limit - notice.bytesize - 1, 0].max, notice), cut]
+    end
+
+    # The start of a text whose whole is saved at path, and what was cut.
+    def shown(text, path)
+      cut = { "bytes" => text.bytesize, "lines" => lines(text), "path" => path }
+      ["#{start_of(text, SHOWN_BYTES)}\n#{format(SAVED, **cut.transform_keys(&:to_sym))}", cut]
     end
 
     private

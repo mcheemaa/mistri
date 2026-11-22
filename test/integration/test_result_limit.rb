@@ -32,4 +32,25 @@ class TestResultLimitIntegration < Minitest::Test
     assert_includes asked.map(&:downcase), wanted.downcase, "the tool was not asked again"
     assert Integration.carried?(result.text, total), "the answer lost the total"
   end
+
+  Integration.scenario(self, :a_saved_result_is_read_from_the_scratchpad) do |model|
+    wanted = Integration.codename
+    total = Integration.marker
+    rows = Array.new(3_000) { |index| "order of customer-#{index}: total 100" }
+    rows << "order of #{wanted}: total #{total}"
+    orders = Mistri::Tool.define("list_orders", "Lists every order of the shop, one on each " \
+                                                "line.") { rows.join("\n") }
+    workspace = Mistri::Workspace::Memory.new
+    agent = Mistri::Agent.new(provider: Mistri.provider(model), tools: [orders],
+                              scratchpad: workspace)
+
+    result = agent.run("Call list_orders. Then tell me the total of the order of #{wanted}, " \
+                       "exactly as the tool gives it.")
+
+    assert_predicate result, :completed?
+    saved = agent.session.messages.filter_map { |message| message.cut&.fetch("path", nil) }
+
+    assert_equal 1, saved.length, "the listing was not saved once"
+    assert Integration.carried?(result.text, total), "the answer lost the total"
+  end
 end

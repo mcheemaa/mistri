@@ -10,13 +10,15 @@ module Mistri
                   "Create a document, or replace one. To replace a document that exists, " \
                   "pass if_version, the version read_file showed for it. A write without " \
                   "the current version is refused and returns the document as it is now.",
-                  eager_input_streaming: true,
+                  eager_input_streaming: true, save_result: false,
                   schema: lambda {
                     string :path, "Document path", required: true
                     string :content, "The full document content", required: true
                     string :if_version, "The version of the document this replaces"
                   }) do |args|
         path = args["path"]
+        next read_only(path) if read_only(path)
+
         content = args["content"].to_s
         written = if atomic
                     write_atomically(workspace, path, content, args["if_version"])

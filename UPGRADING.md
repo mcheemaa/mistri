@@ -309,6 +309,21 @@ window left the session unusable.
   numbers. `result_limit: false` stores every result whole, as before.
 - A background child takes `result_limit:` on its `Runtime`.
 
+### A scratchpad keeps what a cut would lose
+
+Nothing changes until you pass `scratchpad:` to an agent.
+
+- Pass a workspace scoped to the session. On the Active Record workspace that
+  is the same table with the session in the scope.
+- If you pass your own document tools, bind them to the same workspace, so
+  the path in a stored result is one the model can read. If you pass none,
+  the agent adds them.
+- A path under `scratchpad/` belongs to the agent. `write_file`, `edit_file`
+  and `delete_file` refuse `scratchpad/tool-results/`.
+- A session with a scratchpad holds a system message with `reminder` set to
+  `scratchpad`. Leave it out of a view for a person, as with the others.
+- Saved results are rows the host owns. Delete them with the session.
+
 ### The token estimate after a Claude turn
 
 A tool result that follows a Claude turn is estimated at two characters a
