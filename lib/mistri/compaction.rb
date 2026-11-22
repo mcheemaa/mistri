@@ -21,6 +21,9 @@ module Mistri
     AUTOMATIC_ATTEMPTS = 3
     OUTPUT_SAFETY = 4_096
     IMAGE_CHARS = 4_800
+    CHARS_PER_TOKEN = 4.0
+    # Claude counts the text of a tool result at about two characters a token.
+    RESULT_CHARS_PER_TOKEN = { anthropic: 2.0 }.freeze
 
     SUMMARY_PREFACE = "The earlier part of this conversation was compacted. Another model " \
                       "wrote the handoff summary below from those earlier messages; the " \
@@ -90,11 +93,21 @@ module Mistri
           reported(messages[position])
         end
         base = index ? reported(messages[index]) : 0
-        messages.drop(index ? index + 1 : 0).sum(base) { |message| estimate(message) }
+        reader = reader(messages)
+        messages.drop(index ? index + 1 : 0).sum(base) { |message| estimate(message, reader) }
       end
 
-      def estimate(message)
-        (chars(message) / 4.0).ceil
+      # The provider of the newest assistant turn, which reads what follows it.
+      def reader(messages)
+        messages.reverse_each.find { |message| message.assistant? && message.provider }&.provider
+      end
+
+      def estimate(message, reader = nil)
+        return (chars(message) / CHARS_PER_TOKEN).ceil unless message.tool?
+
+        text = message.content.grep(Content::Text).sum { |block| block.text.length }
+        per_token = RESULT_CHARS_PER_TOKEN.fetch(reader, CHARS_PER_TOKEN)
+        ((text / per_token) + ((chars(message) - text) / CHARS_PER_TOKEN)).ceil
       end
 
       private

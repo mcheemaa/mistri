@@ -289,6 +289,13 @@ window left the session unusable.
   numbers. `result_limit: false` stores every result whole, as before.
 - A background child takes `result_limit:` on its `Runtime`.
 
+### The token estimate after a Claude turn
+
+A tool result that follows a Claude turn is estimated at two characters a
+token. It was four. `Session#context_tokens`, `Agent#context_usage` and the
+compaction trigger read higher for such a session, so it compacts earlier.
+You do not need to change anything.
+
 ### Skills
 
 - `read_skill` now marks an unknown skill name as a failed tool result.

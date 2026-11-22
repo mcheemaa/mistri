@@ -15,6 +15,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   tool message gains `cut`, the true bytes and lines, which no provider is
   sent. `result_limit:` on the agent takes a `Mistri::ResultLimit` with
   other numbers, or false to store every result whole.
+- The token estimate counts a tool result at two characters a token after a
+  Claude turn. Claude counts the text of a tool result at about two
+  characters a token, and the estimate used four for every provider, so a
+  session of large results was compacted later than its window allowed.
 - The cache lock adapter warns when it is given a null cache store. A null
   store, the Rails default in development and test, answers every
   `unless_exist` write with success, so `Locks::RailsCache` granted every
