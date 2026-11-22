@@ -5,6 +5,12 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+- The cache lock adapter warns when it is given a null cache store. A null
+  store, the Rails default in development and test, answers every
+  `unless_exist` write with success, so `Locks::RailsCache` granted every
+  lease and two runs could write one session at once. The session was then
+  refused by every later run. `Locks::RailsCache.new` now prints a warning
+  for such a store.
 - An empty completion after an answer ends the turn. A model that has written
   to the user and then called a tool often adds nothing to the tool's result.
   Mistri took that empty completion for a failed attempt and sent the same

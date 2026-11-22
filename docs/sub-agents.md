@@ -370,7 +370,10 @@ Mistri.locks = Mistri::Locks::RailsCache.new(cache: Rails.cache)
 ```
 
 The cache must implement atomic `unless_exist` writes and be shared by every
-worker process. A local memory cache is not a cross-process adapter.
+worker process. A local memory cache is not a cross-process adapter. A null
+cache store, the Rails default in development and test, grants every lock:
+Mistri prints a warning when it is given one, and two runs can then write one
+session at once.
 
 A configured adapter also guards every top-level `run`, `resume`, `task`, and
 `compact` with the same lease a child's runner holds; see
