@@ -23,7 +23,7 @@ class TestAgentRetry < Minitest::Test
 
     retry_event = events.find { |e| e.type == :retry }
 
-    assert_match(/retrying/, retry_event.content)
+    assert_match(/attempt 1 failed \(.*529\); retrying/, retry_event.content)
     assert_equal 1, retry_event.attempt
     assert_equal 2, retry_event.max_attempts
     assert_kind_of Float, retry_event.delay

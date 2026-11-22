@@ -5,6 +5,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+- A child takes `sandbox:` as an agent option, so a worker can run code over
+  the scratchpad it shares.
+- The `:retry` event's note and the run log name what failed, as in
+  "attempt 1 failed (OverloadedError 529); retrying in 0.9s".
 - A host's documents and the scratchpad are one path space, and workers share
   it. `files:` on the agent takes the host's workspace: the agent binds the
   document tools itself, a path under `scratchpad/` goes to the scratchpad's

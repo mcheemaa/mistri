@@ -6,7 +6,7 @@ module Mistri
   module ChildAgentOptions
     ALLOWED = %i[
       budget max_concurrency transform_context compaction retries skills
-      before_tool after_tool context result_limit files scratchpad
+      before_tool after_tool context result_limit files scratchpad sandbox
     ].freeze
     private_constant :ALLOWED
 

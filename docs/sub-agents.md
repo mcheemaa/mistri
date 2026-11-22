@@ -140,10 +140,12 @@ request. The factory constructs what one background child may actually use.
 `Mistri::SubAgent::Runtime` holds the provider, system prompt, exact tools, an
 optional `cleanup:` callable, and safe Agent options for one execution:
 `budget`, `max_concurrency`, `transform_context`, `compaction`, `retries`,
-`result_limit`, `files`, `scratchpad`, `before_tool`, `after_tool`, and
-application `context`. A background Runtime with `files:` or `scratchpad:`
+`result_limit`, `files`, `scratchpad`, `sandbox`, `before_tool`, `after_tool`,
+and application `context`. A background Runtime with `files:` or `scratchpad:`
 must be granted the document tools by name, for the same reason: the agent
-would otherwise add them outside the durable grant. `skills:` is refused in
+would otherwise add them outside the durable grant. `sandbox:` adds
+`run_code` to any child. Code reaches only the tools and the documents the
+child was granted, so it widens nothing. `skills:` is refused in
 a background Runtime because Agent would add a `read_skill` tool outside the
 durable grant. Lifecycle keywords such as `session`, `task`, `signal`, and
 `emit` are never Agent options; the child boundary owns them. The same option
@@ -279,6 +281,9 @@ agent = Mistri.agent("claude-opus-5-5", tools: [spawn], scratchpad: workspace)
   was read, and `edit_file` changes one place.
 - Say in the worker's own prompt what to write and how to report. The gem
   tells it where.
+- Pass `sandbox:` as well and the worker takes what it needs out of a large
+  saved result with [code](tool-contracts.md#code-the-model-writes), in place
+  of reading it back in parts.
 
 ## Reports and control
 

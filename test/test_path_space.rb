@@ -77,6 +77,31 @@ class TestPathSpace < Minitest::Test
                  note.text)
   end
 
+  def test_a_worker_with_a_sandbox_runs_code_over_the_shared_scratchpad
+    @scratch.write("scratchpad/tool-results/saved.txt", ROWS)
+    sandbox = Class.new do
+      def run(_code, host:)
+        text = host.call("read", { "path" => "scratchpad/tool-results/saved.txt" })
+        Mistri::Sandbox::Outcome.new(value: text.lines.length)
+      end
+    end.new
+    worker_turns = [{ tool_calls: [{ name: "run_code", arguments: { code: "count" } }] },
+                    { text: "10000 lines." }]
+    worker = Mistri::SubAgent.new(name: "research", description: "Researches.",
+                                  provider: Mistri::Providers::Fake.new(turns: worker_turns),
+                                  scratchpad: @scratch, sandbox:)
+    calls = [{ name: "research", arguments: { task: "Count the lines." } }]
+    provider = Mistri::Providers::Fake.new(turns: [{ tool_calls: calls }, { text: "done" }])
+    store = Mistri::Stores::Memory.new
+    agent = Mistri::Agent.new(provider:, tools: [worker.tool], session: Mistri::Session.new(store:))
+
+    agent.run("go")
+    child = Mistri::Session.new(store:, id: agent.session.children.first.session_id)
+
+    assert_equal "10000", child.messages.find(&:tool?).text
+    assert_equal "10000 lines.", agent.session.messages.find(&:tool?).text
+  end
+
   def test_a_background_worker_with_a_scratchpad_needs_the_document_tools_granted
     dispatched = nil
     spawn = Mistri::SubAgent.spawner(provider: Mistri::Providers::Fake.new(turns: []),

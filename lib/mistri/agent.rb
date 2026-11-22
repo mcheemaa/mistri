@@ -646,8 +646,9 @@ module Mistri
       entry = { "attempt" => attempt, "error" => error, "delay" => pause.round(2) }
       entry["usage"] = (message.usage || Usage.new).to_h
       @session.append("retry", entry)
-      note = format("attempt %<attempt>d failed; retrying in %<pause>.1fs",
-                    attempt: attempt, pause: pause)
+      reason = [error["type"], error["status"]].compact.join(" ")
+      note = format("attempt %<attempt>d failed (%<reason>s); retrying in %<pause>.1fs",
+                    attempt: attempt, reason: reason, pause: pause)
       emit&.call(Event.new(type: :retry, content: note, attempt: attempt,
                            max_attempts: @retries.attempts, delay: pause.round(2),
                            message: message))
