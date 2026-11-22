@@ -70,6 +70,25 @@ jobs:
       - run: bundle exec ruby -Itest test/database/test_workspace_mysql.rb
       - run: bundle exec ruby -Itest test/database/test_session_store_mysql.rb
 
+  sandbox:
+    runs-on: ubuntu-latest
+    env:
+      BUNDLE_WITH: sandbox_test
+      BUNDLE_WITHOUT: lint:mysql_test:postgres_test
+      MISTRI_QUICKJS_WASM: tmp/quickjs.wasm
+    steps:
+      - uses: actions/checkout@v7.0.1
+      - uses: ruby/setup-ruby@v1
+        with:
+          ruby-version: "3.4"
+          bundler-cache: true
+      # The adapter checks the file's SHA-256 before it loads it.
+      - run: |
+          mkdir -p tmp
+          curl -fsSL https://registry.npmjs.org/quickjs-wasi/-/quickjs-wasi-3.7.0.tgz |
+            tar -xz -C tmp --strip-components=1 package/quickjs.wasm
+      - run: bundle exec ruby -Itest test/test_sandbox_quickjs.rb
+
   postgresql:
     runs-on: ubuntu-latest
     services:

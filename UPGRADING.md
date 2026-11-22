@@ -324,6 +324,25 @@ Nothing changes until you pass `scratchpad:` to an agent.
   `scratchpad`. Leave it out of a view for a person, as with the others.
 - Saved results are rows the host owns. Delete them with the session.
 
+### Code the model writes
+
+Nothing changes until you pass `sandbox:` to an agent.
+
+- Add the `wasmtime` gem, require `mistri/sandbox/quickjs`, and keep the file
+  `quickjs.wasm` of the npm package `quickjs-wasi` 3.7.0 with your
+  application. Build one adapter for the process.
+- An event subscriber sees `:tool_started` and `:tool_result` for calls the
+  code makes. Their call ids begin with `code_`, and their `message` is not
+  among the session's messages.
+- A session holds entries of type `code_call`. Code that reads
+  `Session#entries` by type leaves them out of a transcript for a person, or
+  shows them under the `run_code` call they belong to.
+- `before_tool` is asked about every call from code, by the name of the tool:
+  `read_file`, `write_file`, `list_files` and `delete_file` for the four file
+  operations.
+- A run holds the interpreter lock while it computes. On a process that also
+  serves requests, set a short `timeout:`.
+
 ### The token estimate after a Claude turn
 
 A tool result that follows a Claude turn is estimated at two characters a

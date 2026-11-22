@@ -357,6 +357,62 @@ before raising or timing out. Mistri never mechanically replays the same call
 because it is marked failed, but the model may issue another call. The host
 still owns idempotency and reconciliation.
 
+## Code the model writes
+
+Some work is arithmetic over more data than a model should read: a sum over a
+saved result, a join of two documents, a count of every link on a page. With a
+sandbox the agent gains `run_code`, and the model writes JavaScript that does
+the work and returns only the answer.
+
+```ruby
+# Gemfile: gem "wasmtime"
+require "mistri/sandbox/quickjs"
+
+SANDBOX = Mistri::Sandbox::QuickJS.new(wasm: "vendor/quickjs.wasm")
+
+agent = Mistri.agent("claude-opus-5-5", tools: tools, scratchpad: workspace,
+                     sandbox: SANDBOX)
+```
+
+`Mistri::Sandbox::QuickJS` runs the code in QuickJS compiled to WebAssembly,
+inside the host's process, on the `wasmtime` gem. Nothing else is installed
+and no other process or machine is involved. The wasm file is `quickjs.wasm`
+from the npm package `quickjs-wasi`, version 3.7.0. The adapter checks its
+SHA-256 and refuses another build unless you pass `sha256:`. Build one adapter
+for the process: the module is compiled once, and each run gets a new instance
+with its own memory.
+
+What the code has:
+
+- `files.read(path)`, `files.write(path, text)`, `files.list(prefix)` and
+  `files.delete(path)` over the scratchpad's workspace. A read returns the
+  whole document. Each needs the document tool of the same kind among the
+  agent's tools. A write over a document that exists needs a read of it in the
+  same run, and `scratchpad/tool-results/` stays read-only.
+- `await tools.NAME(arguments)` for every other tool of the agent. It returns
+  the result's text, and a failed result is thrown as an error.
+- `console.log`, and the standard JavaScript objects. There is no network, no
+  file system, no clock of the host, no timers and no `URL` class.
+
+A call from code is a tool call. It passes the tool's argument contract,
+`before_tool` and `after_tool`, and emits `:tool_started` and `:tool_result`
+with a call id that begins with `code_`. A tool that needs approval for the
+call is refused in the code with a message to call it directly. The call is
+stored as a `code_call` entry beside the messages, not as a message: the model
+reads the result in its code, so it is not sent again with later requests.
+
+Limits: ten seconds and 64 MB a run, set with `timeout:` and `memory:`. A run
+that passes either is stopped and the model is told. The result of `run_code`
+keeps 10,000 bytes, and with a scratchpad the whole is saved.
+
+While code computes it holds Ruby's interpreter lock, so the other threads of
+the process wait until it calls out or is stopped. Keep the timeout short on a
+process that serves requests.
+
+A sandbox of your own is any object that answers `run(code, host:)` and
+returns a `Mistri::Sandbox::Outcome`. `host` is a callable given an operation
+name and a Hash, and is the only way out of the sandbox.
+
 ## Tools on demand
 
 A tool definition costs input tokens on every model round, and a host that

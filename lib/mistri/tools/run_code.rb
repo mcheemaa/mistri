@@ -11,7 +11,7 @@ module Mistri
                "a folder; files.delete(path) deletes one. await tools.NAME(arguments) calls " \
                "one of your other tools with the arguments it takes and returns its result as " \
                "a string. Standard JavaScript is there (JSON, RegExp, Math, Date, Map, Set). " \
-               "There is no network, no Node.js, no require and no timers."
+               "There is no network, no Node.js, no require, no timers and no URL class."
     MAX_CODE_RESULT_BYTES = 10_000
     private_constant :RUN_CODE
 

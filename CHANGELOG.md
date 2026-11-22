@@ -5,6 +5,16 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+- An agent can run code the model writes. With `sandbox:` the agent adds
+  `run_code`: JavaScript that reads and writes the agent's documents, calls
+  its other tools, and returns only its answer, so a sum or a join over a
+  large result costs a few hundred tokens. `Mistri::Sandbox::QuickJS` runs it
+  in QuickJS compiled to WebAssembly inside the host's process, on the
+  optional `wasmtime` gem, with no shell and no second machine. A call from
+  code passes the tool's contract, `before_tool`, the approval rule and
+  `after_tool`, emits its events, and is stored as a `code_call` entry. A
+  tool that needs approval is refused in the code. The gem keeps zero runtime
+  dependencies: a host that passes no sandbox loads nothing new.
 - An agent takes a scratchpad. With `scratchpad:`, a workspace the host
   scopes to the session, the whole of a tool result over its limit is saved
   under `scratchpad/tool-results/` and the stored result is its first 2,000
