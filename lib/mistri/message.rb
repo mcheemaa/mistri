@@ -17,15 +17,16 @@ module Mistri
   # deferred tools a tool result made available. reminder marks a system
   # message that the harness wrote into the conversation for the model, and
   # holds the kind of note. Its content is the note's text alone: each
-  # provider gives it the wire form the model reads.
+  # provider gives it the wire form the model reads. cut holds the true bytes
+  # and lines of a tool result that was stored cut, for the host alone.
   class Message < Data.define(:role, :content, :tool_call_id, :tool_name,
                               :model, :provider, :usage, :stop_reason, :error_message, :ui,
-                              :error, :tool_error, :loads, :reminder)
+                              :error, :tool_error, :loads, :reminder, :cut)
     ROLES = %i[system user assistant tool].freeze
 
     def initialize(role:, content: nil, tool_call_id: nil, tool_name: nil, model: nil,
                    provider: nil, usage: nil, stop_reason: nil, error_message: nil, ui: nil,
-                   error: nil, tool_error: nil, loads: nil, reminder: nil)
+                   error: nil, tool_error: nil, loads: nil, reminder: nil, cut: nil)
       role = role.to_sym
       raise ArgumentError, "unknown role #{role.inspect}" unless ROLES.include?(role)
       if stop_reason && !StopReason.valid?(stop_reason)
@@ -42,10 +43,11 @@ module Mistri
       if reminder && role != :system
         raise ArgumentError, "reminder is only valid on system messages"
       end
+      raise ArgumentError, "cut is only valid on tool messages" if cut && role != :tool
 
       super(role:, content: Content.wrap(content).freeze, tool_call_id:, tool_name:,
             model:, provider:, usage:, stop_reason:, error_message:, ui:, error:, tool_error:,
-            loads:, reminder:)
+            loads:, reminder:, cut:)
     end
 
     # Tool names a session can store: strings of plain ASCII or valid UTF-8.
@@ -79,8 +81,9 @@ module Mistri
       new(role: :assistant, content: [*Content.wrap(content), *tool_calls], **meta)
     end
 
-    def self.tool(content:, tool_call_id:, tool_name: nil, ui: nil, tool_error: false, loads: nil)
-      new(role: :tool, content:, tool_call_id:, tool_name:, ui:, tool_error:, loads:)
+    def self.tool(content:, tool_call_id:, tool_name: nil, ui: nil, tool_error: false, loads: nil,
+                  cut: nil)
+      new(role: :tool, content:, tool_call_id:, tool_name:, ui:, tool_error:, loads:, cut:)
     end
 
     def self.from_h(hash)
@@ -92,7 +95,7 @@ module Mistri
           usage: h["usage"] && Usage.from_h(h["usage"]),
           stop_reason: h["stop_reason"]&.to_sym, error_message: h["error_message"],
           ui: h["ui"], error: h["error"], tool_error: h["tool_error"], loads: h["loads"],
-          reminder: h["reminder"])
+          reminder: h["reminder"], cut: h["cut"])
     end
 
     def system? = role == :system
@@ -117,7 +120,7 @@ module Mistri
     def to_h
       { role:, content: content.map(&:to_h), tool_call_id:, tool_name:, model:,
         provider:, usage: usage&.to_h, stop_reason:, error_message:, ui:, error:,
-        tool_error:, loads:, reminder: }.compact
+        tool_error:, loads:, reminder:, cut: }.compact
     end
 
     private

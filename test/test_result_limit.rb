@@ -1,0 +1,110 @@
+# frozen_string_literal: true
+
+require_relative "test_helper"
+
+# A tool result is bounded where it is stored, and the results that answer one
+# assistant message share a limit, so one turn always fits in the window.
+class TestResultLimit < Minitest::Test
+  ROW = "order 1001 shipped to a customer\n"
+  ROWS = ROW * 10_000
+
+  def test_a_large_result_is_stored_as_its_start_with_its_true_size
+    seen = nil
+    events = []
+    agent = agent_for([{ name: "export" }], after_tool: lambda { |_call, result, _context|
+      seen = result.bytesize
+      nil
+    })
+
+    agent.run("go") { |event| events << event }
+    stored = agent.session.messages.find(&:tool?)
+
+    assert_equal ROWS.bytesize, seen, "the hook reads the whole result"
+    assert_operator stored.text.bytesize, :<=, Mistri::ResultLimit::DEFAULT_BYTES
+    assert(stored.text.lines[0..-2].all?(ROW), "the start is whole lines")
+    assert_match(/was 330000 bytes in 10000 lines.*not kept.*call it again/, stored.text.lines.last)
+    assert_equal({ "bytes" => 330_000, "lines" => 10_000 }, stored.cut)
+    assert_equal stored.cut, Mistri::Message.from_h(stored.to_h).cut
+    assert_equal stored.text, events.find { |event| event.type == :tool_result }.content
+  end
+
+  def test_the_results_of_one_turn_share_its_bytes
+    calls = Array.new(20) { |page| { name: "export", arguments: { "page" => page } } }
+    agent = agent_for(calls + [{ name: "count" }])
+
+    agent.run("go")
+    results = agent.session.messages.select(&:tool?)
+
+    assert_operator results.sum { |result| result.text.bytesize }, :<=,
+                    Mistri::ResultLimit::DEFAULT_TURN_BYTES
+    assert_equal "10000 rows", results.last.text, "a small result stays whole"
+    assert_nil results.last.cut
+    assert_equal 1, results.first(20).map { |result| result.text.bytesize }.uniq.length
+    assert_match(/share one limit.*fewer calls at a time/, results.first.text.lines.last)
+  end
+
+  def test_a_result_answered_after_an_approval_counts_what_the_turn_holds
+    calls = Array.new(4) { |page| { name: "export", arguments: { "page" => page } } }
+    agent = agent_for(calls + [{ name: "export_all" }])
+    pending = agent.run("go").pending.first
+    agent.session.approve(pending.id)
+
+    agent.resume
+    approved = agent.session.messages.select(&:tool?).last
+
+    assert_equal "export_all", approved.tool_name
+    assert_operator approved.text.bytesize, :<=, Mistri::ResultLimit::FLOOR_BYTES
+    assert_equal 330_000, approved.cut["bytes"]
+  end
+
+  def test_a_hook_cannot_take_the_turn_over_its_bytes
+    calls = Array.new(6) { { name: "count" } }
+    agent = agent_for(calls, after_tool: ->(_call, _result, _context) { ROWS })
+
+    agent.run("go")
+    stored = agent.session.messages.select(&:tool?).sum { |result| result.text.bytesize }
+
+    assert_operator stored, :<=,
+                    Mistri::ResultLimit::DEFAULT_TURN_BYTES + (2 * Mistri::ResultLimit::FLOOR_BYTES)
+  end
+
+  def test_false_stores_a_result_whole
+    agent = agent_for([{ name: "export" }], result_limit: false)
+
+    agent.run("go")
+    stored = agent.session.messages.find(&:tool?)
+
+    assert_equal ROWS, stored.text
+    assert_nil stored.cut
+  end
+
+  def test_an_image_stays_and_no_character_is_split
+    image = Mistri::Content::Image.from_bytes("png", mime_type: "image/png")
+    shot = Mistri::Tool.define("shot", "Takes a picture.") do
+      Mistri::ToolResult.new(content: [Mistri::Content::Text.new(text: "é" * 40_000), image])
+    end
+    provider = Mistri::Providers::Fake.new(turns: [{ tool_calls: [{ name: "shot" }] },
+                                                   { text: "done" }])
+    agent = Mistri::Agent.new(provider:, tools: [shot])
+
+    agent.run("go")
+    stored = agent.session.messages.find(&:tool?)
+
+    assert_includes stored.content, image
+    assert_predicate stored.text, :valid_encoding?
+    assert_operator stored.text.bytesize, :<=, Mistri::ResultLimit::DEFAULT_BYTES
+    assert_equal 80_000, stored.cut["bytes"]
+  end
+
+  private
+
+  def agent_for(calls, **)
+    export = Mistri::Tool.define("export", "Exports rows.",
+                                 schema: -> { integer :page, "Page" }) { ROWS }
+    export_all = Mistri::Tool.define("export_all", "Exports every row.",
+                                     needs_approval: true) { ROWS }
+    count = Mistri::Tool.define("count", "Counts rows.") { "10000 rows" }
+    provider = Mistri::Providers::Fake.new(turns: [{ tool_calls: calls }, { text: "done" }])
+    Mistri::Agent.new(provider:, tools: [export, export_all, count], **)
+  end
+end

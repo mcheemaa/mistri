@@ -5,6 +5,16 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+- A tool result is bounded where it is stored. One result larger than the
+  model's window left a session over the window for good, because a
+  compaction keeps a turn whole. A result now keeps its start, 50,000 bytes
+  at most, and a last line that states its true size, that the rest was not
+  kept, and that the tool can be called again for a narrower part. The
+  results that answer one assistant message share 200,000 bytes, and the
+  largest give way first. `after_tool` still receives the whole result. The
+  tool message gains `cut`, the true bytes and lines, which no provider is
+  sent. `result_limit:` on the agent takes a `Mistri::ResultLimit` with
+  other numbers, or false to store every result whole.
 - The cache lock adapter warns when it is given a null cache store. A null
   store, the Rails default in development and test, answers every
   `unless_exist` write with success, so `Locks::RailsCache` granted every

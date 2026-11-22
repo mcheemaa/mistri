@@ -50,8 +50,8 @@ A completed model call moves through these phases in order:
 5. `before_tool` evaluates current application policy.
 6. `needs_approval` decides whether the prepared call must park.
 7. A free call emits `:tool_started` and invokes the handler.
-8. `after_tool` may rewrite the result, which then persists and emits
-   `:tool_result`.
+8. `after_tool` may rewrite the result.
+9. The result is [bounded](#large-results), persists and emits `:tool_result`.
 
 Malformed or invalid calls do not reach policy or execution. The model receives
 a bounded error result it can correct, while valid sibling calls in the same
@@ -260,6 +260,39 @@ end
 
 `ui` persists on the tool message and appears on the `:tool_result` event, but
 is never sent to a provider.
+
+## Large results
+
+A stored result is sent to the model with every later request, so Mistri bounds
+it where it is stored. `after_tool` still receives the whole result.
+
+- One result keeps its start, 50,000 bytes at most, on whole lines where it has
+  them. Its last line states the true size, that the rest was not kept, and
+  that the tool can be called again for a narrower part.
+- The results that answer one assistant message share 200,000 bytes. Over
+  that, the largest give way first, down to one size for all of them, and each
+  keeps at least 2,000 bytes. A compaction never makes one turn smaller, so
+  this is what keeps a turn inside the model's window.
+- An image is not counted and is never cut.
+- `cut` on the tool message holds the true size, as in
+  `{ "bytes" => 2062500, "lines" => 62500 }`. It is nil on a result stored
+  whole and is never sent to a provider. The `:tool_result` event carries the
+  stored text.
+
+Give a tool that can return a lot a way to ask for less: a page, a filter or a
+count. The model reads the last line and calls the tool again.
+
+```ruby
+agent = Mistri.agent(
+  "claude-opus-5-5",
+  tools: tools,
+  result_limit: Mistri::ResultLimit.new(bytes: 20_000, turn_bytes: 100_000),
+)
+```
+
+`result_limit: false` stores every result whole. One result larger than the
+model's window then leaves the session with no way back, because a compaction
+cannot shrink the turn that holds it.
 
 Non-text tool-result content remains provider-neutral in the Session. Anthropic
 can receive image blocks in a tool result. The current OpenAI and Gemini
@@ -522,7 +555,8 @@ same structural preflight before its argument object is canonicalized.
 
 These are safety boundaries, not business validation. Keep tool schemas narrow,
 validate domain rules explicitly, and return references rather than embedding
-unbounded data in a tool call.
+unbounded data in a tool call. A tool result is bounded as
+[Large results](#large-results) describes.
 
 ## Related guides
 

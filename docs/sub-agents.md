@@ -140,7 +140,7 @@ request. The factory constructs what one background child may actually use.
 `Mistri::SubAgent::Runtime` holds the provider, system prompt, exact tools, an
 optional `cleanup:` callable, and safe Agent options for one execution:
 `budget`, `max_concurrency`, `transform_context`, `compaction`, `retries`,
-`before_tool`, `after_tool`, and application `context`. `skills:` is refused in
+`result_limit`, `before_tool`, `after_tool`, and application `context`. `skills:` is refused in
 a background Runtime because Agent would add a `read_skill` tool outside the
 durable grant. Lifecycle keywords such as `session`, `task`, `signal`, and
 `emit` are never Agent options; the child boundary owns them. The same option

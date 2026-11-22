@@ -271,6 +271,24 @@ your text unchanged.
 
 - Remove the same sentence from your own descriptions.
 
+### A large tool result is cut
+
+A result over 50,000 bytes is stored as its start and one line that states its
+true size, and the results that answer one assistant message share 200,000
+bytes. Before, every result was stored whole, and one larger than the model's
+window left the session unusable.
+
+- The rest of a cut result is not kept anywhere. Give a tool that can return
+  more than the limit a way to ask for less, such as a page or a filter. The
+  line the model reads asks it to call the tool again for the part it needs.
+- `after_tool` still receives the whole result. A host that keeps large
+  results itself does it there.
+- A tool message may hold `cut`, the true bytes and lines. Code that reads
+  session messages can show it. No provider is sent it.
+- Pass `result_limit: Mistri::ResultLimit.new(bytes:, turn_bytes:)` for other
+  numbers. `result_limit: false` stores every result whole, as before.
+- A background child takes `result_limit:` on its `Runtime`.
+
 ### Skills
 
 - `read_skill` now marks an unknown skill name as a failed tool result.

@@ -51,7 +51,7 @@ module Mistri
     def initialize(provider:, session: nil, system: nil, tools: [], budget: nil,
                    max_concurrency: 4, transform_context: nil, compaction: Compaction.new,
                    retries: RetryPolicy.new, skills: [], before_tool: nil, after_tool: nil,
-                   context: nil, log_label: nil, lease: true)
+                   context: nil, log_label: nil, lease: true, result_limit: ResultLimit.new)
       @provider = provider
       @session = session || Session.new(store: Stores::Memory.new)
       skills = skills.is_a?(String) ? Skills.load(skills) : Array(skills)
@@ -70,6 +70,7 @@ module Mistri
       @context = context
       @log_label = log_label
       @lease = lease
+      @result_limit = result_limit || nil
     end
 
     attr_reader :session
@@ -657,7 +658,7 @@ module Mistri
                   [*invalid, *blocked, *executed, *denials]
                 end
       answer_results(open.map { |approval| approval[:call] },
-                     results, executed:, signal:, &)
+                     results, executed:, signal:, spent: stored_for_turn, &)
       executed.map(&:first)
     end
 
@@ -1096,22 +1097,32 @@ module Mistri
 
     # The tool message carries both channels; the :tool_result event exposes
     # it whole so hosts read event.message.ui for their side of the result.
-    def answer(call, result, duration: nil, &emit)
+    def answer(call, result, duration: nil, turn: nil, &emit)
       content, ui, tool_error, loads = if result.is_a?(ToolResult)
                                          [result.content, result.ui, result.error?, result.loads]
                                        else
                                          [result, nil, false, nil]
                                        end
       loads = nil if tool_error
+      content, cut = bound(content, turn)
       message = @session.append_message(Message.tool(content: content, tool_call_id: call.id,
                                                      tool_name: call.name, ui: ui,
-                                                     tool_error: tool_error, loads: loads))
+                                                     tool_error: tool_error, loads: loads,
+                                                     cut: cut))
       text = content.is_a?(String) ? content : "[content]"
       emit&.call(Event.new(type: :tool_result, tool_call: call, content: text,
                            message: message, duration: duration, tool_error: tool_error))
     end
 
-    def answer_results(calls, results, executed:, signal:, &emit)
+    def bound(content, turn)
+      return [content, nil] unless @result_limit
+
+      content, cut = @result_limit.bound(content, turn ? turn.limit : @result_limit.bytes)
+      turn&.spend(ResultLimit.size(content))
+      [content, cut]
+    end
+
+    def answer_results(calls, results, executed:, signal:, spent: 0, &emit)
       executed_results = if @after_tool
                            {}.compare_by_identity.tap do |index|
                              executed.each { |result| index[result] = true if result[3] }
@@ -1120,14 +1131,33 @@ module Mistri
       by_call = {}.compare_by_identity
       results.each { |result| (by_call[result[0]] ||= []) << result }
       context = hook_context(signal, emit) if @after_tool
+      turn = result_turn(results, spent)
       calls.each do |call|
         queued = by_call[call]
         next unless queued && (entry = queued.shift)
 
         _call, result, seconds = entry
         result = rewrite(call, result, context) if executed_results&.key?(entry)
-        answer(call, result, duration: seconds, &emit)
+        answer(call, result, duration: seconds, turn:, &emit)
       end
+    end
+
+    def result_turn(results, spent)
+      return nil unless @result_limit
+
+      sizes = results.map do |_call, result, _seconds|
+        ResultLimit.size(result.is_a?(ToolResult) ? result.content : result)
+      end
+      @result_limit.turn(sizes, spent:)
+    end
+
+    # What the newest assistant message's results hold already, when the rest
+    # of them are answered after an approval.
+    def stored_for_turn
+      return 0 unless @result_limit
+
+      @session.messages.reverse_each.take_while(&:tool?)
+              .sum { |message| ResultLimit.size(message.content) }
     end
 
     def gated?(call)
