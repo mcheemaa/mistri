@@ -37,6 +37,9 @@ module Mistri
       content
     end
 
+    # A workspace that cannot make the check and the write one step where it
+    # is called, as the Active Record one inside a transaction the host
+    # opened, gets them as two.
     def write_atomically(workspace, path, content, if_version)
       snapshot = workspace.snapshot(path)
       if snapshot && version(snapshot.content) != if_version
@@ -46,6 +49,8 @@ module Mistri
       workspace.compare_and_write(path, content, expected_revision: snapshot&.revision).content
     rescue WorkspaceConflictError
       stale_write(path, workspace.read(path).to_s, if_version)
+    rescue ConfigurationError
+      write_legacy(workspace, path, content, if_version)
     end
 
     def stale_write(path, current, if_version)

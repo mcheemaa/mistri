@@ -221,6 +221,9 @@ A write to an existing document without `if_version`, or with a version the
 document is no longer at, is refused, and the result holds the document as it
 is now with its version. On a workspace without conditional writes the check
 and the write are two steps, so another process can still write between them.
+The same holds where a workspace cannot take one step, as the Active Record
+workspace inside a transaction the host opened, which is how a Rails test
+usually runs.
 
 For a single replacement, `edit_file` tries an exact match first, then tolerates
 indentation and trailing space differences across whole lines. In that fallback,

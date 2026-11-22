@@ -135,6 +135,20 @@ class TestFileTools < Minitest::Test
     assert_equal "new", @workspace.read("hero.html")
   end
 
+  def test_write_file_takes_two_steps_where_the_workspace_cannot_take_one
+    in_transaction = Class.new(Mistri::Workspace::Memory) do
+      def snapshot(_path) = raise(Mistri::ConfigurationError, "cannot join an open transaction")
+    end.new
+    write = Mistri::Tools.write_file(in_transaction)
+
+    created = write.call({ "path" => "a.txt", "content" => "one" })
+    blind = write.call({ "path" => "a.txt", "content" => "two" })
+
+    assert_match(/\AWrote a\.txt/, created)
+    assert_predicate blind, :error?
+    assert_equal "one", in_transaction.read("a.txt")
+  end
+
   def test_delete_file_removes_a_document
     reply = @tools["delete_file"].call({ "path" => "hero.html" })
     again = @tools["delete_file"].call({ "path" => "hero.html" })
