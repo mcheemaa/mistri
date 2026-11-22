@@ -6,6 +6,8 @@ require "tmpdir"
 # Fire-and-forget approval across real files and processes-worth of
 # separation, and mid-run steering.
 class TestControlSurfacesIntegration < Minitest::Test
+  parallelize_me!
+
   Integration.scenario(self, :approval_suspends_then_resumes) do |model|
     Dir.mktmpdir do |dir|
       store = Mistri::Stores::JSONL.new(dir)

@@ -14,9 +14,15 @@ The live suites need provider keys in a gitignored `.env.development.local`
 (`ANTHROPIC_API_KEY`, `OPENAI_API_KEY`, `GEMINI_API_KEY`):
 
 ```console
-$ MISTRI_LIVE=1 bundle exec rake test      # gated live tests
-$ bundle exec rake integration             # critical end-to-end scenarios, per model
+$ bundle exec rake live                # gated live tests
+$ bundle exec rake live:compaction     # the compaction eval cell and the thinking replay
+$ bundle exec rake integration         # critical end-to-end scenarios, per model
 ```
+
+These tests wait on the network, so they run on threads, and `rake integration`
+starts one process for each model. `rake live` leaves out the two files of
+`rake live:compaction`, which are most of a live run's cost: run that task when a
+change touches the compactor or how thinking is replayed.
 
 Missing keys skip their provider. Read the output before treating a live run as
 three-provider coverage. Each live run ends with a report per model: calls,

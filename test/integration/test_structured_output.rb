@@ -5,6 +5,8 @@ require_relative "../support/integration"
 # Task mode end to end: validated output with and without tools, on every
 # provider including the Gemini validate-and-fix fallback.
 class TestStructuredOutputIntegration < Minitest::Test
+  parallelize_me!
+
   SCHEMA = { type: "object",
              properties: { "project" => { type: "string" },
                            "launch_year" => { type: "integer" } },

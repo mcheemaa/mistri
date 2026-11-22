@@ -5,6 +5,8 @@ require_relative "../support/integration"
 # Sub-agents end to end: facts must flow parent -> child -> tool -> child ->
 # parent, with the child's transcript persisted and linked.
 class TestDelegationIntegration < Minitest::Test
+  parallelize_me!
+
   Integration.scenario(self, :named_specialist_delegates_and_links) do |model|
     year = rand(1890..1990)
     company = Integration.codename

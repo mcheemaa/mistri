@@ -5,6 +5,8 @@ require_relative "../support/integration"
 # The loop end to end: generated facts must travel through tool results into
 # the answer, and the ui side-channel must reach the host and never the model.
 class TestCoreLoopIntegration < Minitest::Test
+  parallelize_me!
+
   Integration.scenario(self, :tools_carry_generated_facts) do |model|
     founder = Integration.marker
     city = Integration.marker

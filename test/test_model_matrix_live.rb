@@ -7,6 +7,8 @@ require_relative "test_helper"
 # catalog entry is real, its default thinking mode is accepted, and its wire
 # path works end to end. Run with MISTRI_LIVE=1.
 class TestModelMatrixLive < Minitest::Test
+  parallelize_me!
+
   PROVIDERS = {
     anthropic: { klass: Mistri::Providers::Anthropic, key: "ANTHROPIC_API_KEY",
                  options: { service_tier: "standard_only" } },

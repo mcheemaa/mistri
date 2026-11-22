@@ -3,30 +3,30 @@
 require "securerandom"
 require_relative "../test_helper"
 require_relative "live_report"
+require_relative "integration_models"
 
 Mistri::Test::LiveReport.install
+# One lock backend for the process, set once as a host sets it at boot: the
+# scenarios run on threads, and background workers need leases.
+Mistri.locks = Mistri::Locks::Memory.new
 
 # The live integration harness runs the full loop against real provider APIs,
-# once per model in the matrix. Scenarios pair generated values with structural
-# assertions. Opaque markers prove exact data flow; pronounceable synthetic
-# names keep entity prompts natural without relying on a real company or person.
+# once per model in the matrix. The rake task starts one process for each model,
+# and each process runs its scenarios on threads. Scenarios pair generated values
+# with structural assertions. Opaque markers prove exact data flow; pronounceable
+# synthetic names keep entity prompts natural without relying on a real company
+# or person.
 #
 #   bundle exec rake integration
 #   MISTRI_INTEGRATION_STRICT=1 bundle exec rake integration
 #   MISTRI_INTEGRATION_MODELS=claude-opus-5-5 bundle exec rake integration
 #   bundle exec rake integration N=/compaction/
 module Integration
-  DEFAULT_MODELS = "claude-haiku-5-5,gpt-6.1-terra,gemini-3.8-flash"
-
   STARTS = %w[Spec Wraith Phan Umbra Shade Geist Vesper Haunt Grim Sable Mora Ecto].freeze
   MIDDLES = %w[a o e u ora ile ar in].freeze
   ENDS = %w[moor wyn vane gale mire veil whisp mist fell dusk holt shade].freeze
 
   module_function
-
-  def models
-    ENV.fetch("MISTRI_INTEGRATION_MODELS", DEFAULT_MODELS).split(",").map(&:strip)
-  end
 
   # A pronounceable name for fictional entities supplied in the prompt.
   def codename

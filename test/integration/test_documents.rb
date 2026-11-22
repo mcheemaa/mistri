@@ -6,6 +6,8 @@ require "monitor"
 # The landing-page shape end to end: one DB-column-style document behind
 # Workspace::Single, edited in place through the document tools.
 class TestDocumentsIntegration < Minitest::Test
+  parallelize_me!
+
   Integration.scenario(self, :edits_a_single_document_headline) do |model|
     headline = Integration.marker
     document = +<<~HTML

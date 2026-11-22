@@ -309,7 +309,7 @@ $ bundle exec rubocop
 Live tests read provider keys from the gitignored `.env.development.local`:
 
 ```console
-$ MISTRI_LIVE=1 bundle exec rake test
+$ bundle exec rake live
 $ bundle exec rake integration
 ```
 

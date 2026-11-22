@@ -7,6 +7,8 @@ require_relative "../support/integration"
 # search, finds the tool it needs among the deferred ones, calls it, and a
 # later run on the same session calls it again with no new search.
 class TestDeferredToolsIntegration < Minitest::Test
+  parallelize_me!
+
   # Remembers the tool names of every request the agent makes.
   class Recorded < SimpleDelegator
     def offered = @offered ||= []

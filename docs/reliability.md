@@ -497,14 +497,17 @@ $ bundle exec rake test
 $ bundle exec rubocop
 ```
 
-Gated live tests exercise exact provider regressions when keys are present:
+Gated live tests exercise exact provider regressions when keys are present.
+The second task holds one cell of the compaction eval and the replay of thinking
+on every model that binds it, which are most of a live run's cost:
 
 ```console
-$ MISTRI_LIVE=1 bundle exec rake test
+$ bundle exec rake live
+$ bundle exec rake live:compaction
 ```
 
 The integration harness runs critical end-to-end scenarios across an Anthropic,
-OpenAI, and Gemini model by default:
+OpenAI, and Gemini model by default, in one process for each model:
 
 ```console
 $ bundle exec rake integration

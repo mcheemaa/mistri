@@ -6,12 +6,9 @@ require_relative "../support/integration"
 # acknowledge the receipt without waiting, then collect its report through
 # the console.
 class TestBackgroundIntegration < Minitest::Test
-  def teardown
-    Mistri.locks = nil
-  end
+  parallelize_me!
 
   Integration.scenario(self, :model_backgrounds_a_worker_and_collects_its_report) do |model|
-    Mistri.locks = Mistri::Locks::Memory.new
     part = Integration.marker
     release = Queue.new
     released = false
@@ -80,7 +77,6 @@ class TestBackgroundIntegration < Minitest::Test
   # finishes, its report folds into the parent's context, and the model
   # answers from it.
   Integration.scenario(self, :a_workers_report_arrives_without_being_asked_for) do |model|
-    Mistri.locks = Mistri::Locks::Memory.new
     part = Integration.marker
     release = Queue.new
     released = false

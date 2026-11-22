@@ -35,7 +35,8 @@ Four rings:
 1. Hermetic (default, CI): Minitest, the fake provider, recorded wire fixtures.
 2. Differential: where behavior must match truffle-rb (schema emission, partial JSON,
    SSE framing), assert both against the same inputs.
-3. Live (`MISTRI_LIVE=1 bundle exec rake test`): real provider calls. Keys load from
+3. Live (`bundle exec rake live`, and `bundle exec rake live:compaction` when the compactor
+   or the replay of thinking changes): real provider calls. Keys load from
    `.env.development.local`, which is gitignored and never committed.
 4. End to end: a demo application drives the full loop in a real browser before a release.
 

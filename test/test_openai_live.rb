@@ -5,6 +5,8 @@ require_relative "test_helper"
 
 # Real API calls, opt-in: MISTRI_LIVE=1 bundle exec rake test
 class TestOpenAILive < Minitest::Test
+  parallelize_me!
+
   def setup
     skip "set MISTRI_LIVE=1 for live tests" unless ENV["MISTRI_LIVE"] == "1"
     skip "no OPENAI_API_KEY" if ENV["OPENAI_API_KEY"].to_s.empty?

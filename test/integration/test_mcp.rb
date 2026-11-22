@@ -6,6 +6,8 @@ require_relative "../support/integration"
 # protocol and the agent answers through a bridged tool. Uses DeepWiki, an
 # open Streamable HTTP server; skips gracefully if it is unreachable.
 class TestMcpIntegration < Minitest::Test
+  parallelize_me!
+
   Integration.scenario(self, :agent_answers_through_a_live_mcp_server) do |model|
     client = Mistri::MCP::Client.new(url: "https://mcp.deepwiki.com/mcp")
     begin
