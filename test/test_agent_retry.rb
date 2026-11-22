@@ -140,6 +140,39 @@ class TestAgentRetry < Minitest::Test
     assert_equal 1, events.count(&:terminal?), "only the accepted attempt's :done surfaces"
   end
 
+  # A model that has answered and then called a tool often adds nothing to the
+  # tool's result. The same request gives the same empty answer.
+  def test_an_empty_completion_after_an_answer_ends_the_turn
+    shown = Mistri::Tool.define("show_buttons", "Show buttons.") { "shown" }
+    provider = Mistri::Providers::Fake.new(turns: [
+                                             { text: "Here is my pick.",
+                                               tool_calls: [{ name: "show_buttons" }] },
+                                             { text: "" }
+                                           ])
+    agent = Mistri::Agent.new(provider:, tools: [shown], retries: FAST)
+
+    result = agent.run("go")
+
+    assert_predicate result, :completed?
+    assert_equal 2, provider.requests.length
+    refute(agent.session.entries.any? { |e| e["type"] == "retry" })
+  end
+
+  def test_an_empty_completion_after_a_silent_tool_call_still_retries
+    looked = Mistri::Tool.define("look_up", "Look up.") { "found" }
+    provider = Mistri::Providers::Fake.new(turns: [
+                                             { tool_calls: [{ name: "look_up" }] },
+                                             { text: "" },
+                                             { text: "It is found." }
+                                           ])
+    agent = Mistri::Agent.new(provider:, tools: [looked], retries: FAST)
+
+    result = agent.run("go")
+
+    assert_equal "It is found.", result.text
+    assert_equal 3, provider.requests.length
+  end
+
   def test_a_permanent_failure_fails_fast
     provider = Mistri::Providers::Fake.new(turns: [{ error: "bad request", status: 400 }])
     agent = Mistri::Agent.new(provider:, retries: FAST)

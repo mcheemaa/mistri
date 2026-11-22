@@ -5,6 +5,12 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+- An empty completion after an answer ends the turn. A model that has written
+  to the user and then called a tool often adds nothing to the tool's result.
+  Mistri took that empty completion for a failed attempt and sent the same
+  request up to three more times, and each answer was empty again. An empty
+  completion is now retried only while the model has written no text since
+  the user's last message.
 - The instructions of an MCP server reach the model. `MCP.tools` sets them on
   each bridged tool as `Tool#instructions`. An agent appends the instructions
   of every server to the conversation with its first request, as one reminder

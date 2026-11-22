@@ -372,7 +372,9 @@ module Mistri
     # model and a recovered retry never shows the subscriber an error it
     # walks back. Only the accepted attempt persists and terminates.
     def run_turn(signal, output_schema = nil, &emit)
-      history = sending_instructions(listing_deferred_tools(@session.messages))
+      replayed = @session.messages
+      answered = answered?(replayed)
+      history = sending_instructions(listing_deferred_tools(replayed))
       history = @transform_context.reduce(history) do |messages, transform|
         transform.call(messages)
       end
@@ -391,7 +393,7 @@ module Mistri
         validate_usage!(attempt_usage, message:, kind: "turn", &emit)
         usage += attempt_usage
         attempt += 1
-        error = @retries&.error_for(message)
+        error = attempt_error(message, answered)
         if retry_turn?(error, attempt, signal)
           pause = @retries.delay(attempt, error["retry_after"])
           record_retry(message, error, attempt, pause, &emit)
@@ -500,6 +502,21 @@ module Mistri
       return output_schema.schema unless @provider.respond_to?(:native_output_schema)
 
       @provider.native_output_schema(output_schema.schema)
+    end
+
+    # Once the model has written to the user in this exchange, an empty
+    # completion is its end of turn: the same request answers the same way.
+    def attempt_error(message, answered)
+      error = @retries&.error_for(message)
+      error unless answered && error.equal?(RetryPolicy::EMPTY_COMPLETION)
+    end
+
+    def answered?(messages)
+      messages.reverse_each do |message|
+        return false if message.user?
+        return true if message.assistant? && !message.text.to_s.strip.empty?
+      end
+      false
     end
 
     def retry_turn?(error, attempt, signal)

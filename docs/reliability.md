@@ -109,6 +109,11 @@ streams, and empty completions are retryable. Authentication errors, invalid
 requests, content-policy refusals, unsafe configuration, and host bugs fail
 fast. A provider `Retry-After` value is honored within `max_delay`.
 
+An empty completion is retried only while the model has written no text since
+the user's last message. Once it has, an empty completion ends the turn. A
+model that answers and then calls a tool often adds nothing to the tool's
+result, and the same request gives the same empty answer.
+
 Each retry sends unchanged durable history. Failed attempts are not appended as
 conversation messages, but their usage and retry record remain available for
 accounting.
