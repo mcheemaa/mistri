@@ -34,7 +34,8 @@ module Mistri
                  end
         next result if result.is_a?(ToolResult)
 
-        "Replaced #{result.count} occurrence(s) in #{args["path"]}"
+        "Replaced #{result.count} occurrence(s) in #{args["path"]}, " \
+          "version #{version(result.content)}"
       rescue EditError, WorkspaceConflictError => e
         ToolResult.new(content: "edit_file failed: #{e.message}", error: true)
       end

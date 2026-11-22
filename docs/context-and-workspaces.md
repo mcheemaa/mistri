@@ -179,6 +179,10 @@ delete(path)
 list(prefix = nil)     # sorted path Strings
 ```
 
+A backend may also answer `sizes(prefix = nil)`, a Hash of path to bytes in path
+order. `list_files` then shows each document's size without reading it. The
+built-in workspaces answer it, the Active Record one in a single query.
+
 A backend may additionally claim atomic conditional writes:
 
 ```ruby
@@ -206,10 +210,17 @@ committed and must read the document again. Custom four-method workspaces keep
 their existing behavior unless they explicitly return true from
 `atomic_writes?` and implement both methods.
 
-The conditional protocol is used by `edit_file`. `write_file` remains an
-intentional blind whole-document replacement, and deletion has no conditional
-form. When concurrent writers must preserve unrelated changes, use an anchored
-edit or provide a host tool with a stronger domain contract.
+The conditional protocol is used by `edit_file` and `write_file`. Deletion has
+no conditional form. When concurrent writers must preserve unrelated changes,
+use an anchored edit or provide a host tool with a stronger domain contract.
+
+`write_file` creates a document freely and replaces one only at the version the
+model read. `read_file`, `write_file` and `edit_file` each state the document's
+version, twelve characters that are the same for the same bytes in any process.
+A write to an existing document without `if_version`, or with a version the
+document is no longer at, is refused, and the result holds the document as it
+is now with its version. On a workspace without conditional writes the check
+and the write are two steps, so another process can still write between them.
 
 For a single replacement, `edit_file` tries an exact match first, then tolerates
 indentation and trailing space differences across whole lines. In that fallback,
@@ -217,7 +228,21 @@ the final line separator is replaced only when `old_string` includes it;
 otherwise it stays untouched. Trailing blank lines are part of the anchor.
 Replacement indentation is not adjusted automatically.
 
-Bind one to the built-in read, write, edit, find, and list tools:
+The document tools:
+
+| Tool | What the model gets |
+| --- | --- |
+| `read_file` | Numbered lines with the total and the version, 20,000 characters a call. A line over 2,000 characters is shown cut, and `unit: "characters"` reads into it by character offset |
+| `write_file` | Creates a document, or replaces one at `if_version` |
+| `edit_file` | Replaces an exact snippet, as described above |
+| `grep` | A regular expression over one document or every document under a folder, with context lines or a count. A match on a long line comes with the 150 characters on each side and its column |
+| `list_files` | Paths under a prefix with their sizes, 200 at most |
+| `delete_file` | Deletes one document |
+
+A pattern is 500 characters at most and runs with a one second timeout. One
+`grep` call reads 5 MB at most and says so when it stops there.
+
+Bind a workspace to them:
 
 ```ruby
 workspace = Mistri::Workspace::Memory.new

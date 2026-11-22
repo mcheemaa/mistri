@@ -18,7 +18,19 @@ class TestFileTools < Minitest::Test
 
     assert_includes window, "2:   <h1>Welcome</h1>"
     refute_includes window, "3:"
-    assert_includes window, "[showing lines 2-2 of 4]"
+    assert_match(/\Ahero\.html, version \h{12}, lines 2-2 of 4:/, window)
+    assert_includes window, "[2 more lines. Continue with offset 3.]"
+  end
+
+  def test_read_file_enters_a_long_line_by_characters
+    @workspace.write("rows.json", "[#{"{\"id\":1}," * 1_000}{\"id\":\"last\"}]")
+    lines = @tools["read_file"].call({ "path" => "rows.json" })
+    tail = @tools["read_file"].call({ "path" => "rows.json", "unit" => "characters",
+                                      "offset" => 9_000, "limit" => 100 })
+
+    assert_includes lines, "[line cut: 7015 more characters, read them with unit characters]"
+    assert_match(/characters 9000-9015 of 9015:/, tail)
+    assert_includes tail, "{\"id\":\"last\"}]"
   end
 
   def test_edit_file_rewrites_through_the_workspace
@@ -26,7 +38,7 @@ class TestFileTools < Minitest::Test
                                        "old_string" => "<h1>Welcome</h1>",
                                        "new_string" => "<h1>Hello</h1>" })
 
-    assert_equal "Replaced 1 occurrence(s) in hero.html", reply
+    assert_match(/\AReplaced 1 occurrence\(s\) in hero\.html, version \h{12}\z/, reply)
     assert_includes @workspace.read("hero.html"), "<h1>Hello</h1>"
   end
 
@@ -35,7 +47,7 @@ class TestFileTools < Minitest::Test
                                        "old_string" => "<h1>Welcome</h1>\n<p>Hi</p>",
                                        "new_string" => "  <h1>Hello</h1>\n  <p>Updated</p>" })
 
-    assert_equal "Replaced 1 occurrence(s) in hero.html", reply
+    assert_match(/\AReplaced 1 occurrence\(s\) in hero\.html, version \h{12}\z/, reply)
     assert_equal "<div>\n  <h1>Hello</h1>\n  <p>Updated</p>\n</div>\n",
                  @workspace.read("hero.html")
   end
@@ -45,7 +57,7 @@ class TestFileTools < Minitest::Test
     reply = @tools["edit_file"].call({ "file" => "x.txt", "oldText" => "a",
                                        "newText" => "b", "replaceAll" => "true" })
 
-    assert_equal "Replaced 2 occurrence(s) in x.txt", reply
+    assert_match(/\AReplaced 2 occurrence\(s\) in x\.txt, version \h{12}\z/, reply)
     assert_equal "b\nb\n", @workspace.read("x.txt")
   end
 
@@ -68,21 +80,75 @@ class TestFileTools < Minitest::Test
     assert_match(/Closest region/, reply.content)
   end
 
-  def test_find_in_file_returns_numbered_matches_with_context
-    reply = @tools["find_in_file"].call({ "path" => "hero.html", "query" => "Welcome",
-                                          "context" => 1 })
+  def test_grep_takes_a_pattern_across_a_folder_with_context_or_a_count
+    @workspace.write("notes/a.md", "alpha\nrefund 12\nomega\n")
+    @workspace.write("notes/b.md", "refund 7\n")
+    @workspace.write("notes-old/c.md", "refund 99\n")
 
-    assert_includes reply, "1: <div>"
-    assert_includes reply, "2:   <h1>Welcome</h1>"
-    assert_includes reply, "3:   <p>Hi</p>"
+    found = @tools["grep"].call({ "pattern" => "refund \\d+", "path" => "notes", "context" => 1 })
+    count = @tools["grep"].call({ "pattern" => "refund", "output_mode" => "count" })
+
+    assert_equal "notes/a.md:1: alpha\nnotes/a.md:2: refund 12\nnotes/a.md:3: omega\n--\n" \
+                 "notes/b.md:1: refund 7", found
+    assert_equal "3 matches in 3 lines", count
   end
 
-  def test_write_and_list_round_trip
-    @tools["write_file"].call({ "path" => "notes/a.txt", "content" => "hello" })
+  def test_grep_shows_a_match_on_a_long_line_with_what_is_around_it
+    @workspace.write("rows.json", "[#{"{\"id\":1}," * 1_000}{\"id\":\"last\"}]")
+
+    found = @tools["grep"].call({ "pattern" => "last" })
+
+    assert_match(/\Arows\.json:1:9008: \.\.\./, found)
+    assert_operator found.length, :<, 400
+  end
+
+  def test_grep_answers_a_pattern_it_cannot_use_as_an_error
+    reply = @tools["grep"].call({ "pattern" => "(" })
+
+    assert_predicate reply, :error?
+    assert_match(/The pattern could not be used/, reply.content)
+  end
+
+  def test_write_file_creates_and_lists_with_sizes
+    reply = @tools["write_file"].call({ "path" => "notes/a.txt", "content" => "hello" })
     listing = @tools["list_files"].call({ "prefix" => "notes/" })
 
-    assert_equal "notes/a.txt", listing
-    assert_equal "hello", @workspace.read("notes/a.txt")
+    assert_match(%r{\AWrote notes/a\.txt \(5 chars\), version \h{12}\z}, reply)
+    assert_equal "notes/a.txt (5 bytes)", listing
+  end
+
+  def test_write_file_replaces_a_document_only_at_the_version_that_was_read
+    version = @tools["read_file"].call({ "path" => "hero.html" })[/version (\h{12})/, 1]
+    blind = @tools["write_file"].call({ "path" => "hero.html", "content" => "gone" })
+    @workspace.write("hero.html", "<p>changed by another writer</p>\n")
+    stale = @tools["write_file"].call({ "path" => "hero.html", "content" => "gone",
+                                        "if_version" => version })
+    current = stale.content.scan(/version (\h{12})/).last.first
+    written = @tools["write_file"].call({ "path" => "hero.html", "content" => "new",
+                                          "if_version" => current })
+
+    assert_predicate blind, :error?
+    assert_match(/holds a document already.*Nothing was written/, blind.content)
+    assert_predicate stale, :error?
+    assert_includes stale.content, "1: <p>changed by another writer</p>"
+    assert_match(/\AWrote hero\.html/, written)
+    assert_equal "new", @workspace.read("hero.html")
+  end
+
+  def test_delete_file_removes_a_document
+    reply = @tools["delete_file"].call({ "path" => "hero.html" })
+    again = @tools["delete_file"].call({ "path" => "hero.html" })
+
+    assert_equal "Deleted hero.html", reply
+    assert_nil @workspace.read("hero.html")
+    assert_predicate again, :error?
+  end
+
+  def test_find_in_file_is_still_built_for_a_host_that_names_it
+    reply = Mistri::Tools.find_in_file(@workspace).call({ "path" => "hero.html",
+                                                          "query" => "Welcome" })
+
+    assert_includes reply, "2:   <h1>Welcome</h1>"
   end
 
   def test_a_missing_document_is_an_actionable_error
@@ -93,10 +159,10 @@ class TestFileTools < Minitest::Test
   end
 
   def test_a_search_for_a_missing_document_is_an_actionable_error
-    reply = @tools["find_in_file"].call({ "path" => "nope.html", "query" => "title" })
+    reply = @tools["grep"].call({ "path" => "nope.html", "pattern" => "title" })
 
     assert_predicate reply, :error?
-    assert_match(/No document at "nope.html"/, reply.content)
+    assert_match(/No document at or under "nope.html"/, reply.content)
   end
 
   def test_an_edit_to_a_missing_document_is_an_actionable_error

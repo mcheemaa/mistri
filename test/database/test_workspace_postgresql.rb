@@ -87,6 +87,15 @@ class TestWorkspacePostgresql < Minitest::Test
     PostgresqlAtomicDocument.delete_all
   end
 
+  def test_sizes_are_the_bytes_of_each_document_in_scope
+    workspace = build_workspace("tenant-a", "é" * 10)
+    workspace.write("notes/b.md", "four")
+    build_workspace("tenant-b", "other")
+
+    assert_equal({ "notes/b.md" => 4, "page.html" => 20 }, workspace.sizes)
+    assert_equal({ "notes/b.md" => 4 }, workspace.sizes("notes/"))
+  end
+
   def test_expression_index_does_not_mask_the_valid_identity_index
     workspace = build_workspace("tenant-a", page)
     expression = ActiveRecord::Base.connection.indexes(

@@ -5,16 +5,61 @@ module Mistri
     module_function
 
     def write_file(workspace)
+      atomic = atomic_workspace?(workspace)
       Tool.define("write_file",
-                  "Create or fully overwrite a document with the given content.",
+                  "Create a document, or replace one. To replace a document that exists, " \
+                  "pass if_version, the version read_file showed for it. A write without " \
+                  "the current version is refused and returns the document as it is now.",
                   eager_input_streaming: true,
                   schema: lambda {
                     string :path, "Document path", required: true
                     string :content, "The full document content", required: true
+                    string :if_version, "The version of the document this replaces"
                   }) do |args|
-        workspace.write(args["path"], args["content"])
-        "Wrote #{args["path"]} (#{args["content"].to_s.length} chars)"
+        path = args["path"]
+        content = args["content"].to_s
+        written = if atomic
+                    write_atomically(workspace, path, content, args["if_version"])
+                  else
+                    write_legacy(workspace, path, content, args["if_version"])
+                  end
+        next written if written.is_a?(ToolResult)
+
+        "Wrote #{path} (#{written.length} chars), version #{version(written)}"
       end
+    end
+
+    def write_legacy(workspace, path, content, if_version)
+      current = workspace.read(path)
+      return stale_write(path, current, if_version) if current && version(current) != if_version
+
+      workspace.write(path, content)
+      content
+    end
+
+    def write_atomically(workspace, path, content, if_version)
+      snapshot = workspace.snapshot(path)
+      if snapshot && version(snapshot.content) != if_version
+        return stale_write(path, snapshot.content, if_version)
+      end
+
+      workspace.compare_and_write(path, content, expected_revision: snapshot&.revision).content
+    rescue WorkspaceConflictError
+      stale_write(path, workspace.read(path).to_s, if_version)
+    end
+
+    def stale_write(path, current, if_version)
+      reason = if if_version
+                 "#{path} is not at version #{if_version} any more"
+               else
+                 "#{path} holds a document already"
+               end
+      ToolResult.new(
+        content: "write_file refused: #{reason}. Nothing was written. To replace it, pass " \
+                 "its version as if_version. To change part of it, use edit_file. The " \
+                 "document now:\n#{window(path, current)}",
+        error: true
+      )
     end
   end
 end

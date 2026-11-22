@@ -271,6 +271,26 @@ your text unchanged.
 
 - Remove the same sentence from your own descriptions.
 
+### The document tools changed
+
+`Mistri::Tools.files` returns `read_file`, `write_file`, `edit_file`, `grep`,
+`list_files` and `delete_file`.
+
+- `find_in_file` is not among them. A host that names its tools one by one,
+  in a definition or a list, names `grep` instead. `Mistri::Tools.find_in_file`
+  still builds the old tool for a host that adds it itself.
+- `delete_file` is new. Leave it out of the tools you pass when the model
+  must not delete.
+- `write_file` no longer replaces a document blindly. To replace one that
+  exists the model passes `if_version`, which `read_file`, `write_file` and
+  `edit_file` state in their results. A prompt that tells the model to
+  overwrite a document should say to read it first, or to edit it.
+- The text of the results changed. `read_file` begins with the path, the
+  version and the range, `list_files` adds each size, and `edit_file` ends
+  with the new version. Code that reads these texts follows.
+- A custom workspace needs no change. Add `sizes(prefix = nil)`, a Hash of
+  path to bytes, to have `list_files` show sizes.
+
 ### A large tool result is cut
 
 A result over 50,000 bytes is stored as its start and one line that states its

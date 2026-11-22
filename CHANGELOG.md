@@ -5,6 +5,17 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+- The document tools read, search and write in parts. `Tools.files` now
+  returns `read_file`, `write_file`, `edit_file`, `grep`, `list_files` and
+  `delete_file`. `read_file` states the total and the document's version,
+  cuts a line over 2,000 characters and reads into it with
+  `unit: "characters"`. `grep` takes a regular expression over one document
+  or a folder, with context lines or a count, and shows a match on a long
+  line with the characters around it. `list_files` shows sizes from the new
+  optional workspace method `sizes`. `write_file` takes `if_version`: it
+  replaces an existing document only at the version that was read, and a
+  refusal returns the document as it is. `delete_file` is new.
+  `find_in_file` is no longer among `Tools.files`.
 - A tool result is bounded where it is stored. One result larger than the
   model's window left a session over the window for good, because a
   compaction keeps a turn whole. A result now keeps its start, 50,000 bytes

@@ -47,6 +47,10 @@ module Mistri
         prefix ? paths.select { |p| p.start_with?(prefix.to_s) } : paths
       end
 
+      def sizes(prefix = nil)
+        list(prefix).to_h { |path| [path, File.size(File.join(@root, path))] }
+      end
+
       private
 
       def resolve(path)

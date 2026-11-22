@@ -368,6 +368,15 @@ class TestWorkspaceMysql < Minitest::Test
     ActiveRecord::Base.connection.execute("DROP TRIGGER IF EXISTS move_mistri_document")
   end
 
+  def test_sizes_are_the_bytes_of_each_document_in_scope
+    workspace = build_workspace("tenant-a", "é" * 10)
+    workspace.write("notes/b.md", "four")
+    build_workspace("tenant-b", "other")
+
+    assert_equal({ "notes/b.md" => 4, "page.html" => 20 }, workspace.sizes)
+    assert_equal({ "notes/b.md" => 4 }, workspace.sizes("notes/"))
+  end
+
   def test_identical_paths_are_isolated_by_scope
     first = build_workspace("tenant-a", "a")
     second = build_workspace("tenant-b", "b")

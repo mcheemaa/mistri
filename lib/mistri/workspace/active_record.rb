@@ -99,6 +99,14 @@ module Mistri
         prefix ? paths.select { |p| p.start_with?(prefix.to_s) } : paths
       end
 
+      # One query, and no document's content leaves the database.
+      def sizes(prefix = nil)
+        bytes = Arel::Nodes::NamedFunction.new("OCTET_LENGTH", [@model.arel_table[:content]])
+        rows = @model.uncached { @model.where(**@scope).pluck(:path, bytes) }.sort
+        rows = rows.select { |path, _bytes| path.start_with?(prefix.to_s) } if prefix
+        rows.to_h
+      end
+
       private
 
       def verify_atomic_context!

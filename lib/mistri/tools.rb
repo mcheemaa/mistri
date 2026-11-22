@@ -16,7 +16,7 @@ module Mistri
 
     def files(workspace)
       [read_file(workspace), write_file(workspace), edit_file(workspace),
-       find_in_file(workspace), list_files(workspace)]
+       grep(workspace), list_files(workspace), delete_file(workspace)]
     end
 
     def memory(store)
@@ -28,6 +28,12 @@ module Mistri
       return missing_document(args["path"]) if content.nil?
 
       yield content
+    end
+
+    # What read_file shows for a document and write_file takes back as
+    # if_version: the same for the same bytes, in any process.
+    def version(content)
+      Digest::SHA256.hexdigest(content.b)[0, 12]
     end
 
     def missing_document(path)
@@ -82,6 +88,8 @@ require_relative "tools/read_file"
 require_relative "tools/write_file"
 require_relative "tools/edit_file"
 require_relative "tools/find_in_file"
+require_relative "tools/grep"
 require_relative "tools/list_files"
+require_relative "tools/delete_file"
 require_relative "tools/read_memory"
 require_relative "tools/update_memory"

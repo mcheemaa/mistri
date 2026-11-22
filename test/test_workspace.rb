@@ -161,7 +161,7 @@ class TestWorkspace < Minitest::Test
 
     reply = edit.call({ "path" => "page.html", "old_string" => "Old", "new_string" => "New" })
 
-    assert_equal "Replaced 1 occurrence(s) in page.html", reply
+    assert_match(/\AReplaced 1 occurrence\(s\) in page\.html, version \h{12}\z/, reply)
     assert_equal "<h1>New</h1>", record[:html]
     assert_equal ["page.html"], workspace.list
     assert_nil workspace.read("other.html")
@@ -294,6 +294,25 @@ class TestWorkspace < Minitest::Test
         refute_path_exists missing
       end
     end
+  end
+
+  def test_every_built_in_workspace_answers_sizes_in_bytes
+    memory = Mistri::Workspace::Memory.new
+    single = Mistri::Workspace::Single.new(path: "page.html", read: -> { "é" * 10 },
+                                           write: ->(_content) {})
+    Dir.mktmpdir do |root|
+      directory = Mistri::Workspace::Directory.new(root)
+      [memory, directory].each do |workspace|
+        workspace.write("page.html", "é" * 10)
+        workspace.write("notes/b.md", "four")
+
+        assert_equal({ "notes/b.md" => 4, "page.html" => 20 }, workspace.sizes)
+        assert_equal({ "notes/b.md" => 4 }, workspace.sizes("notes/"))
+      end
+    end
+
+    assert_equal({ "page.html" => 20 }, single.sizes)
+    assert_empty single.sizes("notes/")
   end
 
   def test_the_directory_backend_omits_safe_directory_symlinks

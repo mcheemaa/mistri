@@ -3,36 +3,71 @@
 module Mistri
   module Tools
     MAX_READ_CHARS = 20_000
+    # A line longer than this is shown cut, and read on by characters.
+    LONG_LINE_CHARS = 2_000
 
     module_function
 
     def read_file(workspace)
       Tool.define("read_file",
-                  "Read a document with line numbers. Use offset and limit for a window " \
-                  "into a long document.",
+                  "Read a document. Lines come back with their numbers, at most " \
+                  "#{MAX_READ_CHARS} characters a call: pass offset and limit to read " \
+                  "further. For a very long line, pass unit \"characters\" to read it by " \
+                  "character offset. The first line states the document's version, which " \
+                  "write_file takes as if_version.",
                   schema: lambda {
                     string :path, "Document path", required: true
-                    integer :offset, "First line to read (1-based)"
-                    integer :limit, "How many lines to read"
+                    integer :offset, "The line to start at, from 1. With unit characters, " \
+                                     "the character, from 0"
+                    integer :limit, "How many lines, or characters, to read"
+                    string :unit, "lines (the default) or characters", enum: %w[lines characters]
                   }) do |args|
         with_document(workspace, args) do |content|
-          Tools.numbered_window(content, args["offset"], args["limit"])
+          Tools.window(args["path"], content, args["offset"], args["limit"], args["unit"])
         end
       end
     end
 
-    def numbered_window(content, offset, limit)
-      lines = content.lines
-      from = [(offset || 1).to_i, 1].max
-      to = limit ? [from + limit.to_i - 1, lines.length].min : lines.length
-      numbered = (from..to).map { |n| "#{n}: #{lines[n - 1]}" }.join
-      windowed = to < lines.length || from > 1
-      suffix = windowed ? "\n[showing lines #{from}-#{to} of #{lines.length}]" : ""
-      return "#{numbered}#{suffix}" if numbered.length <= MAX_READ_CHARS
+    def window(path, content, offset = nil, limit = nil, unit = nil)
+      title = "#{path}, version #{version(content)}"
+      return "#{title}, empty." if content.empty?
+      return character_window(title, content, offset.to_i, limit.to_i) if unit == "characters"
 
-      cut = numbered[0, MAX_READ_CHARS]
-      cut = cut[0..(cut.rindex("\n") || -1)]
-      "#{cut}\n[truncated at #{MAX_READ_CHARS} chars; use offset/limit to read more]"
+      line_window(title, content.lines, [offset.to_i, 1].max, limit.to_i)
+    end
+
+    def line_window(title, lines, from, limit)
+      return "#{title}, #{lines.length} lines. Line #{from} is past the end." if from > lines.length
+
+      shown = shown_lines(lines, from, limit.positive? ? limit : lines.length)
+      last = from + shown.length - 1
+      more = lines.length - last
+      rest = more.positive? ? "\n[#{more} more lines. Continue with offset #{last + 1}.]" : ""
+      "#{title}, lines #{from}-#{last} of #{lines.length}:\n#{shown.join("\n")}#{rest}"
+    end
+
+    def shown_lines(lines, from, limit)
+      size = 0
+      lines[from - 1, limit].each_with_index.with_object([]) do |(line, index), shown|
+        line = line.chomp
+        if line.length > LONG_LINE_CHARS
+          line = "#{line[0, LONG_LINE_CHARS]} [line cut: #{line.length - LONG_LINE_CHARS} more " \
+                 "characters, read them with unit characters]"
+        end
+        break shown if size + line.length > MAX_READ_CHARS && shown.any?
+
+        shown << "#{from + index}: #{line}"
+        size += line.length
+      end
+    end
+
+    def character_window(title, content, from, limit)
+      from = from.clamp(0, content.length)
+      part = content[from, limit.positive? ? [limit, MAX_READ_CHARS].min : MAX_READ_CHARS]
+      last = from + part.length
+      more = content.length - last
+      rest = more.positive? ? "\n[#{more} more characters. Continue with offset #{last}.]" : ""
+      "#{title}, characters #{from}-#{last} of #{content.length}:\n#{part}#{rest}"
     end
   end
 end

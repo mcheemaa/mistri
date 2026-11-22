@@ -138,7 +138,7 @@ class TestAtomicFileEdits < Minitest::Test
 
     result = tool(workspace).call(headline_edit("Agent"))
 
-    assert_equal "Replaced 1 occurrence(s) in page.html", result
+    assert_match(/\AReplaced 1 occurrence\(s\) in page\.html, version \h{12}\z/, result)
     assert_includes workspace.content, "<h1>Agent</h1>"
     assert_includes workspace.content, "<aside>Human</aside>"
     assert_equal 2, workspace.snapshots
@@ -154,7 +154,7 @@ class TestAtomicFileEdits < Minitest::Test
 
     result = tool(workspace).call(fuzzy_body_edit)
 
-    assert_equal "Replaced 1 occurrence(s) in page.html", result
+    assert_match(/\AReplaced 1 occurrence\(s\) in page\.html, version \h{12}\z/, result)
     assert_equal "<main>\n  <h1>Agent</h1>\n  <p>Updated</p>\n  <aside>Human</aside>\n</main>\n",
                  workspace.content
     assert_equal 2, workspace.snapshots
@@ -248,7 +248,7 @@ class TestAtomicFileEdits < Minitest::Test
       headline_edit("Agent").merge("old_string" => "<h1>Café</h1>")
     )
 
-    assert_equal "Replaced 1 occurrence(s) in page.html", result
+    assert_match(/\AReplaced 1 occurrence\(s\) in page\.html, version \h{12}\z/, result)
     assert_equal Encoding::BINARY, workspace.content.encoding
   end
 
@@ -325,7 +325,7 @@ class TestAtomicFileEdits < Minitest::Test
 
     result = tool(workspace).call(headline_edit("Agent"))
 
-    assert_equal "Replaced 1 occurrence(s) in page.html", result
+    assert_match(/\AReplaced 1 occurrence\(s\) in page\.html, version \h{12}\z/, result)
     assert_equal 1, workspace.reads
     assert_equal 1, workspace.writes
   end
@@ -335,7 +335,7 @@ class TestAtomicFileEdits < Minitest::Test
 
     result = tool(workspace).call(fuzzy_body_edit)
 
-    assert_equal "Replaced 1 occurrence(s) in page.html", result
+    assert_match(/\AReplaced 1 occurrence\(s\) in page\.html, version \h{12}\z/, result)
     assert_equal 1, workspace.reads
     assert_equal 1, workspace.writes
     assert_equal "<main>\n  <h1>Agent</h1>\n  <p>Updated</p>\n</main>\n",
