@@ -403,7 +403,8 @@ reads the result in its code, so it is not sent again with later requests.
 
 Limits: ten seconds and 64 MB a run, set with `timeout:` and `memory:`. A run
 that passes either is stopped and the model is told. The result of `run_code`
-keeps 10,000 bytes, and with a scratchpad the whole is saved.
+keeps 10,000 bytes, and with a scratchpad the whole is saved. The tool's
+description states the limit, so the model sizes what its code returns.
 
 While code computes it holds Ruby's interpreter lock, so the other threads of
 the process wait until it calls out or is stopped. Keep the timeout short on a

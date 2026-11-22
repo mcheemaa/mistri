@@ -5,6 +5,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+- The description of `run_code` states its result limit, so the model sizes
+  what its code returns.
 - A child takes `sandbox:` as an agent option, so a worker can run code over
   the scratchpad it shares.
 - The `:retry` event's note and the run log name what failed, as in

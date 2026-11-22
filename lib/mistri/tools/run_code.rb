@@ -2,6 +2,7 @@
 
 module Mistri
   module Tools
+    MAX_CODE_RESULT_BYTES = 10_000
     RUN_CODE = "Run JavaScript on your documents and tools. The code is the body of an async " \
                "function, so await and return work. Only what the code returns, and what it " \
                "prints with console.log, comes back to you. Use it to search, count, sort, add " \
@@ -11,8 +12,8 @@ module Mistri
                "a folder; files.delete(path) deletes one. await tools.NAME(arguments) calls " \
                "one of your other tools with the arguments it takes and returns its result as " \
                "a string. Standard JavaScript is there (JSON, RegExp, Math, Date, Map, Set). " \
-               "There is no network, no Node.js, no require, no timers and no URL class."
-    MAX_CODE_RESULT_BYTES = 10_000
+               "There is no network, no Node.js, no require, no timers and no URL class. Return " \
+               "only what you need: a result over #{MAX_CODE_RESULT_BYTES} bytes is cut.".freeze
     private_constant :RUN_CODE
 
     module_function
