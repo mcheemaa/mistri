@@ -17,7 +17,8 @@ module Mistri
                     string :if_version, "The version of the document this replaces"
                   }) do |args|
         path = args["path"]
-        next read_only(path) if read_only(path)
+        refusal = unusable_path(path) || read_only(path)
+        next refusal if refusal
 
         content = args["content"].to_s
         written = if atomic

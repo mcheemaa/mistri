@@ -5,6 +5,14 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+- A host's documents and the scratchpad are one path space, and workers share
+  it. `files:` on the agent takes the host's workspace: the agent binds the
+  document tools itself, a path under `scratchpad/` goes to the scratchpad's
+  workspace and every other path to the host's. A child takes `files:` and
+  `scratchpad:` as agent options. A worker with a scratchpad is told a
+  folder of its own, `scratchpad/agents/<name>-<id>/`, to write what it finds
+  in as it goes. A path from the model is now checked before any workspace is
+  asked: relative, no empty part, `.` or `..`, no backslash.
 - An agent can run code the model writes. With `sandbox:` the agent adds
   `run_code`: JavaScript that reads and writes the agent's documents, calls
   its other tools, and returns only its answer, so a sum or a join over a

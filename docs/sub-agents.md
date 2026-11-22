@@ -140,7 +140,10 @@ request. The factory constructs what one background child may actually use.
 `Mistri::SubAgent::Runtime` holds the provider, system prompt, exact tools, an
 optional `cleanup:` callable, and safe Agent options for one execution:
 `budget`, `max_concurrency`, `transform_context`, `compaction`, `retries`,
-`result_limit`, `before_tool`, `after_tool`, and application `context`. `skills:` is refused in
+`result_limit`, `files`, `scratchpad`, `before_tool`, `after_tool`, and
+application `context`. A background Runtime with `files:` or `scratchpad:`
+must be granted the document tools by name, for the same reason: the agent
+would otherwise add them outside the durable grant. `skills:` is refused in
 a background Runtime because Agent would add a `read_skill` tool outside the
 durable grant. Lifecycle keywords such as `session`, `task`, `signal`, and
 `emit` are never Agent options; the child boundary owns them. The same option
@@ -243,6 +246,39 @@ The factory boundary applies to dispatched children. Inline spawns and fixed
 specialists continue to use the provider and Tool objects supplied by the host;
 parallel inline calls may therefore share whatever those objects close over.
 That is deliberate host policy, not an isolation guarantee.
+
+## Workers that write what they find
+
+Give a worker the scratchpad of the agent that starts it, and its findings
+land in documents the parent reads when it needs them, in place of one long
+report:
+
+```ruby
+spawn = Mistri::SubAgent.spawner(
+  provider: provider,
+  tools: [*research_tools, *Mistri::Tools.files(workspace)],
+  types: { "researcher" => researcher },
+  dispatcher: dispatcher,
+  runtime_factory: lambda do |spec|
+    Mistri::SubAgent::Runtime.new(provider: provider_for(spec), tools: tools_for(spec),
+                                  scratchpad: workspace)
+  end,
+  scratchpad: workspace,
+)
+agent = Mistri.agent("claude-opus-5-5", tools: [spawn], scratchpad: workspace)
+```
+
+- The worker's large tool results are saved under `scratchpad/tool-results/`
+  like the parent's, so raw pages stay out of its context too.
+- Its note names a folder of its own, `scratchpad/agents/<name>-<id>/`, and
+  asks it to write there as it goes and to name the documents in its report.
+  What it wrote is still there when the worker is stopped or runs out of
+  budget.
+- Nothing enforces who writes where. The folder of saved results is read-only
+  to every model, a write over an existing document needs the version that
+  was read, and `edit_file` changes one place.
+- Say in the worker's own prompt what to write and how to report. The gem
+  tells it where.
 
 ## Reports and control
 

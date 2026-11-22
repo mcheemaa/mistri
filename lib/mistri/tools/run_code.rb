@@ -49,7 +49,10 @@ module Mistri
     # line stored for it. A write replaces a document only when this run read
     # it and it has not changed since.
     def file_from_code(workspace, operation, payload, seen)
-      path = payload["path"].to_s
+      path = (operation == "list" ? payload["prefix"] : payload["path"]).to_s
+      unusable = unusable_path(path, prefix: operation == "list") unless path.empty?
+      raise Error, unusable.content if unusable
+
       case operation
       when "read" then read_from_code(workspace, path, seen)
       when "list"

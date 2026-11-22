@@ -53,13 +53,15 @@ module Mistri
                    max_concurrency: 4, transform_context: nil, compaction: Compaction.new,
                    retries: RetryPolicy.new, skills: [], before_tool: nil, after_tool: nil,
                    context: nil, log_label: nil, lease: true, result_limit: ResultLimit.new,
-                   scratchpad: nil, sandbox: nil)
+                   scratchpad: nil, sandbox: nil, files: nil)
       @provider = provider
       @session = session || Session.new(store: Stores::Memory.new)
       skills = skills.is_a?(String) ? Skills.load(skills) : Array(skills)
       @system = Skills.amend(system, skills)
-      @scratchpad = scratchpad && Scratchpad.new(scratchpad)
-      install_tools(with_own_tools(tools, skills, scratchpad, sandbox))
+      scratchpad = Scratchpad.new(scratchpad) if scratchpad && !scratchpad.is_a?(Scratchpad)
+      @scratchpad = scratchpad
+      @documents = documents(files, scratchpad&.workspace)
+      install_tools(with_own_tools(tools, skills, sandbox))
 
       @budget = budget || Budget.new
       @budget.validate_provider!(@provider)
@@ -167,13 +169,21 @@ module Mistri
 
     private
 
+    # The host's documents and the scratchpad in one path space: a path under
+    # scratchpad/ is the scratchpad's and every other path the host's.
+    def documents(files, scratchpad)
+      return files || scratchpad if files.nil? || scratchpad.nil? || files.equal?(scratchpad)
+
+      Workspace::PathSpace.new(files:, scratchpad:)
+    end
+
     # The skill reader for an agent with skills, the document tools for an
-    # agent with a scratchpad whose host gave it none, and run_code for an
-    # agent with a sandbox.
-    def with_own_tools(tools, skills, scratchpad, sandbox)
+    # agent with documents whose host gave it none, and run_code for an agent
+    # with a sandbox.
+    def with_own_tools(tools, skills, sandbox)
       tools += [Skills.reader(skills)] unless skills.empty?
-      own_files = scratchpad && tools.none? { |tool| tool.name == "read_file" }
-      tools += Tools.files(scratchpad) if own_files
+      own_files = @documents && tools.none? { |tool| tool.name == "read_file" }
+      tools += Tools.files(@documents) if own_files
       sandbox ? tools + [Tools.run_code(sandbox, &method(:from_code))] : tools
     end
 
@@ -190,7 +200,7 @@ module Mistri
 
       name = FILES_FROM_CODE[operation]
       raise Error, "the code asked for #{operation}, which does not exist" unless name
-      raise Error, "this agent has no documents" unless @scratchpad
+      raise Error, "this agent has no documents" unless @documents
       raise Error, "you do not have the #{name} tool" unless @tools_by_name.key?(name)
 
       arguments = payload.slice("path", "prefix").compact
@@ -198,7 +208,7 @@ module Mistri
       arguments["content"] = "[#{bytes} bytes]" if bytes
       call = ToolCall.new(id: "code_#{SecureRandom.hex(8)}", name:, arguments:)
       settle_from_code(call, context) do
-        Tools.file_from_code(@scratchpad.workspace, operation, payload, run)
+        Tools.file_from_code(@documents, operation, payload, run)
       end
     end
 

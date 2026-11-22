@@ -27,7 +27,8 @@ module Mistri
                     string :new_string, "Replacement text", required: true
                     boolean :replace_all, "Replace every occurrence instead of exactly one"
                   }) do |args|
-        next read_only(args["path"]) if read_only(args["path"])
+        refusal = unusable_path(args["path"]) || read_only(args["path"])
+        next refusal if refusal
 
         result = if atomic
                    replace_atomically(workspace, args)

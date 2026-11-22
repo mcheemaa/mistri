@@ -49,6 +49,9 @@ module Mistri
           return failure("The pattern is longer than #{MAX_PATTERN_CHARS} characters.")
         end
 
+        unusable = @path && Tools.unusable_path(@path, prefix: true)
+        return unusable if unusable
+
         regexp = Regexp.new(@pattern, timeout: 1.0)
         paths = documents
         if paths.empty?

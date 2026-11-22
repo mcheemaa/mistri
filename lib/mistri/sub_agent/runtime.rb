@@ -6,7 +6,7 @@ module Mistri
   module ChildAgentOptions
     ALLOWED = %i[
       budget max_concurrency transform_context compaction retries skills
-      before_tool after_tool context result_limit
+      before_tool after_tool context result_limit files scratchpad
     ].freeze
     private_constant :ALLOWED
 
@@ -136,6 +136,7 @@ module Mistri
           validate_provider!(provider, spec["model"])
           validate_agent_options!(options)
           ordered = validate_tools!(tools, spec.fetch("tool_names"))
+          validate_documents!(options, spec.fetch("tool_names"))
           Resolved.new(provider: provider, system: system, tools: ordered,
                        schema: schema, agent_options: options)
         end
@@ -259,6 +260,16 @@ module Mistri
 
           raise ConfigurationError,
                 "background runtime skills would add tools outside the durable grant"
+        end
+
+        # An agent with documents adds the document tools when it has none.
+        def validate_documents!(options, names)
+          return unless options.key?(:files) || options.key?(:scratchpad)
+          return if names.include?("read_file")
+
+          raise ConfigurationError,
+                "background runtime files or scratchpad would add tools outside the durable " \
+                "grant; grant the document tools the worker may use"
         end
 
         def validate_tools!(tools, expected)

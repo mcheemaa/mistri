@@ -11,7 +11,10 @@ module Mistri
                   "List documents with their sizes, optionally under a prefix.",
                   save_result: false,
                   schema: -> { string :prefix, "Only paths starting with this" }) do |args|
-        listing(workspace, args["prefix"])
+        prefix = args["prefix"].to_s
+        next listing(workspace, nil) if prefix.empty?
+
+        unusable_path(prefix, prefix: true) || listing(workspace, prefix)
       end
     end
 

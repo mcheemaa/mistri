@@ -309,6 +309,17 @@ window left the session unusable.
   numbers. `result_limit: false` stores every result whole, as before.
 - A background child takes `result_limit:` on its `Runtime`.
 
+### A path from the model is checked
+
+The document tools refuse a path that is not plain and relative before any
+workspace is asked: one that starts with `/`, holds an empty part, `.` or
+`..`, a backslash or a control character, or is longer than 512 bytes.
+
+- A document stored under such a path, as `/index.html` could be on the
+  memory and Active Record workspaces, is no longer reachable through the
+  tools. Rename it.
+- The model reads why a path was refused and sends a relative one.
+
 ### A scratchpad keeps what a cut would lose
 
 Nothing changes until you pass `scratchpad:` to an agent.

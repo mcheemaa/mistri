@@ -245,7 +245,25 @@ The document tools:
 A pattern is 500 characters at most and runs with a one second timeout. One
 `grep` call reads 5 MB at most and says so when it stops there.
 
-Bind a workspace to them:
+A path from the model is checked before any workspace is asked: relative,
+parts joined by `/`, no part that is empty, `.` or `..`, no backslash or
+control character, 512 bytes at most. Any other path is refused with a line
+that says why, on every backend alike.
+
+Pass the workspace as `files:` and the agent binds the tools itself:
+
+```ruby
+agent = Mistri.agent("claude-opus-5-5", files: workspace, scratchpad: scratch)
+```
+
+With `files:` and a [scratchpad](tool-contracts.md#saving-the-whole-result) the
+model sees one path space. A path under `scratchpad/` belongs to the
+scratchpad's workspace, and every other path to the host's. Paths are stored
+as they are, so both may be the same workspace: one table and one scope then
+hold the host's documents beside the agent's. Conditional writes hold where
+both workspaces make them.
+
+Or bind a workspace to the tools yourself and pass them in `tools:`:
 
 ```ruby
 workspace = Mistri::Workspace::Memory.new

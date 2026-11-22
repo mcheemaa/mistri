@@ -17,13 +17,24 @@ module Mistri
            "scratchpad/tool-results/, and only its start is shown to you. Read such a " \
            "document in parts with read_file, or search it with grep, instead of calling " \
            "the tool again. You may keep notes of your own under scratchpad/."
-    private_constant :MAX_NAMES, :MAX_LISTING_BYTES, :NOTE
+    SHARED = "Other agents share this scratchpad. Write what you find under %<folder>s as " \
+             "you go, in documents with plain names, and name them in your report: the " \
+             "agent that started you reads them there."
+    private_constant :MAX_NAMES, :MAX_LISTING_BYTES, :NOTE, :SHARED
 
     attr_reader :workspace
 
-    def initialize(workspace)
+    # folder is the part of the scratchpad a worker is told to write in.
+    def initialize(workspace, folder: nil)
       @workspace = workspace
+      @folder = folder
       @atomic = Tools.atomic_workspace?(workspace)
+    end
+
+    # The same scratchpad for a worker, with a folder of its own.
+    def for_worker(name)
+      part = name.to_s.downcase.gsub(/[^a-z0-9]+/, "-").delete_prefix("-").delete_suffix("-")
+      self.class.new(@workspace, folder: "#{ROOT}agents/#{part}/")
     end
 
     # Saves the whole text of one result and returns its path. A name that is
@@ -43,8 +54,9 @@ module Mistri
     # earlier note is gone from the conversation, so this one also lists what
     # the scratchpad holds.
     def note
+      text = @folder ? "#{NOTE} #{format(SHARED, folder: @folder)}" : NOTE
       held = listing
-      held.empty? ? NOTE : "#{NOTE}\n\nIt holds:\n#{held}"
+      held.empty? ? text : "#{text}\n\nIt holds:\n#{held}"
     end
 
     private

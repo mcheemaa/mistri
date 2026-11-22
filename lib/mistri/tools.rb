@@ -8,6 +8,7 @@ module Mistri
   module Tools
     ATOMIC_WORKSPACE_METHODS = %i[snapshot compare_and_write].freeze
     private_constant :ATOMIC_WORKSPACE_METHODS
+    MAX_PATH_BYTES = 512
     ALIASES = { "oldText" => "old_string", "old" => "old_string", "search" => "old_string",
                 "newText" => "new_string", "new" => "new_string", "replace" => "new_string",
                 "replaceAll" => "replace_all", "file" => "path", "filename" => "path" }.freeze
@@ -24,6 +25,9 @@ module Mistri
     end
 
     def with_document(workspace, args)
+      unusable = unusable_path(args["path"])
+      return unusable if unusable
+
       content = workspace.read(args["path"])
       return missing_document(args["path"]) if content.nil?
 
@@ -34,6 +38,33 @@ module Mistri
     # if_version: the same for the same bytes, in any process.
     def version(content)
       Digest::SHA256.hexdigest(content.b)[0, 12]
+    end
+
+    # A path from the model is checked before any workspace is asked, so the
+    # same rules hold on every backend: relative, parts joined by /, and no
+    # part that is empty, . or ..
+    def unusable_path(path, prefix: false)
+      path = path.to_s
+      path = path.delete_suffix("/") if prefix
+      problem = path_problem(path)
+      return unless problem
+
+      ToolResult.new(
+        content: "#{path.inspect} is not a path here: #{problem}. Use a relative path such " \
+                 "as notes/plan.md.",
+        error: true
+      )
+    end
+
+    def path_problem(path)
+      return "it is empty" if path.empty?
+      return "it is longer than #{MAX_PATH_BYTES} bytes" if path.bytesize > MAX_PATH_BYTES
+      return "it is not valid UTF-8" unless path.valid_encoding?
+      return "it holds a control character or a backslash" if path.match?(/[\x00-\x1f\x7f\\]/)
+      return "it starts with /" if path.start_with?("/")
+
+      parts = path.split("/", -1)
+      "it holds an empty part, . or .." if parts.intersect?(["", ".", ".."])
     end
 
     # The folder an agent saves whole tool results in is the model's to read.
