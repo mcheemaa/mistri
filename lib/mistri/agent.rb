@@ -196,6 +196,7 @@ module Mistri
     # and after_tool, with its events. It is stored as an entry beside the
     # messages, because the model reads its result in the code.
     def from_code(operation, payload, context, run)
+      raise Error, "the run was stopped" if context.signal&.aborted?
       return tool_from_code(payload, context) if operation == "tool"
 
       name = FILES_FROM_CODE[operation]

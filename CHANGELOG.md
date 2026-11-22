@@ -5,6 +5,12 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+- The time limit of `Mistri::Sandbox::QuickJS` counts the code's own
+  computing. It counted the time a tool took to answer as well, so a call to
+  a slow tool from code ended the run with "wasm trap: interrupt" after the
+  tool had run, and its result was lost. A call from code after the agent's
+  run is stopped is now refused, so a stop still ends a script at its next
+  call.
 - The description of `run_code` states its result limit, so the model sizes
   what its code returns.
 - A child takes `sandbox:` as an agent option, so a worker can run code over

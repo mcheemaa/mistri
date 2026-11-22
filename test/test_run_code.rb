@@ -69,6 +69,32 @@ class TestRunCode < Minitest::Test
     assert_match(/No document/, answers[2])
   end
 
+  def test_code_makes_no_call_after_the_run_is_stopped
+    signal = Mistri::AbortSignal.new
+    searched = []
+    halt = Mistri::Tool.define("halt", "Stops the run.") do
+      signal.abort!
+      "stopping"
+    end
+    search = Mistri::Tool.define("search", "Searches orders.") do
+      searched << true
+      "3 open orders"
+    end
+    script = [["tool", { "name" => "halt", "arguments" => {} }],
+              ["tool", { "name" => "search", "arguments" => {} }],
+              ["read", { "path" => "scratchpad/notes.md" }]]
+    calls = [{ name: "run_code", arguments: { code: JSON.generate(script) } }]
+    provider = Mistri::Providers::Fake.new(turns: [{ tool_calls: calls }, { text: "done" }])
+    agent = Mistri::Agent.new(provider:, tools: [halt, search], scratchpad: @workspace,
+                              sandbox: ScriptedSandbox.new)
+
+    agent.run("go", signal:)
+    stored = agent.session.entries.select { |entry| entry["type"] == "code_call" }
+
+    assert_empty searched
+    assert_equal(["halt"], stored.map { |entry| entry.dig("call", "name") })
+  end
+
   def test_an_agent_without_a_sandbox_has_no_run_code
     provider = Mistri::Providers::Fake.new(turns: [{ text: "done" }])
     Mistri::Agent.new(provider:, scratchpad: @workspace).run("go")

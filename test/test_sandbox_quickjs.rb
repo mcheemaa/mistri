@@ -62,6 +62,21 @@ class TestSandboxQuickJS < Minitest::Test
     assert_operator Process.clock_gettime(Process::CLOCK_MONOTONIC) - started, :<, 5
   end
 
+  def test_the_time_the_host_takes_to_answer_does_not_count_against_the_limit
+    host = lambda do |_operation, _payload|
+      sleep 1.3
+      "late"
+    end
+
+    outcome = @sandbox.run("return await tools.slow({})", host:)
+    loop_error = assert_raises(Mistri::Sandbox::Stopped) do
+      @sandbox.run("await tools.slow({}); while (true) {}", host:)
+    end
+
+    assert_equal "late", outcome.value
+    assert_match(/ran for 1 seconds/, loop_error.message)
+  end
+
   def test_another_build_of_the_module_is_refused
     assert_raises(Mistri::ConfigurationError) do
       Mistri::Sandbox::QuickJS.new(wasm: __FILE__)

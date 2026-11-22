@@ -20,6 +20,7 @@ module Mistri
     #
     # A run holds the interpreter lock while the code computes: other threads
     # of the process wait until the code calls out or reaches its deadline.
+    # The deadline counts that computing, not the time the host takes to answer.
     class QuickJS
       SHA256 = "c0bd8f296e18cf074969f6401b9ecb72609a1323818ec2b9bf7a8f8d740d1363"
       WASI = "wasi_snapshot_preview1"
@@ -192,11 +193,21 @@ module Mistri
             @returned = true
             @value = request["value"]
           when "throw" then @thrown = request["message"].to_s
-          else return { "value" => @host.call(operation, request) }
+          else return { "value" => unclocked { @host.call(operation, request) } }
           end
           { "value" => nil }
         rescue StandardError => e
           { "error" => e.message }
+        end
+
+        # The limit is on the code's own computing: the time the host takes
+        # to answer is given back.
+        def unclocked
+          started = now
+          yield
+        ensure
+          @deadline += now - started
+          @store.set_epoch_deadline(([@deadline - now, 0].max * 20).ceil + 4)
         end
 
         def evaluate(source, filename)
