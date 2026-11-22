@@ -230,6 +230,18 @@ Only when `Mistri.locks` is set:
   its lease. A sub-agent still fails with a report, as before.
 - A session has one lease. Pass `lease: false` to `Agent.new` when your own
   code already holds a lock for the session.
+- `Locks::RailsCache` on a null cache store, the Rails default in development
+  and test, grants every lease, so two runs can write one session. Mistri now
+  warns when it is given one. Give the adapter a real store there too.
+
+### The retry note names the failure
+
+The `:retry` event's `content` and the run log now read "attempt 1 failed
+(OverloadedError 529); retrying in 0.9s". Before, they read "attempt 1 failed;
+retrying in 0.9s".
+
+- Code that matches the old text follows. `attempt`, `max_attempts` and
+  `delay` on the event are unchanged.
 
 ### OpenAI tools are no longer strict
 
@@ -332,7 +344,11 @@ Nothing changes until you pass `scratchpad:` to an agent.
 - A path under `scratchpad/` belongs to the agent. `write_file`, `edit_file`
   and `delete_file` refuse `scratchpad/tool-results/`.
 - A session with a scratchpad holds a system message with `reminder` set to
-  `scratchpad`. Leave it out of a view for a person, as with the others.
+  `scratchpad`. Leave it out of a view for a person, as with the others. It
+  follows the user's first message, so a test that expects the user's message
+  last in the first request reads the last user message instead.
+- A result over its limit is stored as its first 2,000 bytes and the path of
+  the whole, where an agent with no scratchpad keeps 50,000 bytes.
 - Saved results are rows the host owns. Delete them with the session.
 
 ### Code the model writes
@@ -353,6 +369,10 @@ Nothing changes until you pass `sandbox:` to an agent.
   operations.
 - A run holds the interpreter lock while it computes. On a process that also
   serves requests, set a short `timeout:`.
+- The result of `run_code` keeps 10,000 bytes, and the tool's description
+  states it.
+- A child takes `sandbox:` as an agent option, on a `Runtime` too. Its code
+  reaches only the tools and the documents the child was granted.
 
 ### The token estimate after a Claude turn
 
