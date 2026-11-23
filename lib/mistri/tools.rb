@@ -78,15 +78,23 @@ module Mistri
       "it holds an empty part, . or .." if parts.intersect?(["", ".", ".."])
     end
 
-    # Compared without case, because a store may match paths that way.
+    # A store may match a path to the folder without case or accents, or by
+    # Unicode's folding, so the first two parts are compared as plain letters.
     def read_only(path)
-      return unless path.to_s.downcase.start_with?(Scratchpad::RESULTS)
+      folder = plain_letters(path.to_s).split("/", 3).first(2).join("/")
+      return unless "#{folder}/" == Scratchpad::RESULTS
 
       ToolResult.new(
         content: "#{Scratchpad::RESULTS} holds saved tool results and is read-only. " \
                  "Write under scratchpad/ instead.",
         error: true
       )
+    end
+
+    def plain_letters(path)
+      return path.downcase if path.ascii_only?
+
+      path.unicode_normalize(:nfkd).downcase(:fold).gsub(/[^[:ascii:]]/, "")
     end
 
     def missing_document(path)

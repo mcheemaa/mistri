@@ -8,7 +8,8 @@ module Mistri
       tool = Tool.define("delete_file", "Delete a document.",
                          save_result: false,
                          schema: -> { string :path, "Document path", required: true }) do |args|
-        next read_only(args["path"]) if read_only(args["path"])
+        refusal = unusable_path(args["path"]) || read_only(args["path"])
+        next refusal if refusal
 
         with_document(workspace, args) do
           workspace.delete(args["path"])

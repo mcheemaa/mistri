@@ -199,12 +199,25 @@ class TestScratchpad < Minitest::Test
                tools["edit_file"].call(edit), tools["delete_file"].call({ "path" => path })]
     note = tools["write_file"].call({ "path" => "scratchpad/notes.md", "content" => "mine" })
 
-    capitals = tools["delete_file"].call({ "path" => "Scratchpad/Tool-Results/saved.txt" })
-
     assert(replies.all? { |reply| reply.error? && reply.content.include?("read-only") })
-    assert_includes capitals.content, "read-only"
     assert_equal "kept", @workspace.read(path)
     assert_match(%r{\AWrote scratchpad/notes\.md}, note)
+  end
+
+  def test_a_path_that_a_store_may_match_to_the_folder_of_saved_results_is_read_only_too
+    tools = Mistri::Tools.files(@workspace).to_h { |tool| [tool.name, tool] }
+    paths = ["Scratchpad/Tool-Results/saved.txt", "scratchpad/tool-r\u00E9sults/saved.txt",
+             "scratchpad/tool-re\u017Fults/saved.txt", "scr\u00E0tchpad/tool-results/saved.txt",
+             "scratchpad/tool-results"]
+
+    replies = paths.flat_map do |path|
+      [tools["write_file"].call({ "path" => path, "content" => "x" }),
+       tools["delete_file"].call({ "path" => path })]
+    end
+    beside = tools["write_file"].call({ "path" => "scratchpad/tool-results.md", "content" => "x" })
+
+    assert(replies.all? { |reply| reply.error? && reply.content.include?("read-only") })
+    assert_match(%r{\AWrote scratchpad/tool-results\.md}, beside)
   end
 
   def test_a_tools_own_limit_stands_in_for_the_agents

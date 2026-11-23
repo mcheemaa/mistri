@@ -329,7 +329,10 @@ agent = Mistri.agent("claude-opus-5-5", tools: tools, scratchpad: workspace)
 - A note tells the model what the scratchpad is for. After a compaction that
   summarized it, the note is appended again with what the scratchpad holds.
 - `scratchpad/tool-results/` is read-only to the model. It may keep notes of
-  its own elsewhere under `scratchpad/`.
+  its own elsewhere under `scratchpad/`. The folder's own path is refused as
+  well, and so is a path that differs from it by capitals, accents or another
+  form of its letters, since a store may match such a path to the folder. A
+  store that matches paths by rules beyond those is the host's to guard.
 - A result with an image is cut and not saved. So is a result the scratchpad
   cannot take: its line says it could not be saved, and Mistri prints a warning.
 - A tool defined with `save_result: false` is cut and never saved. The document
