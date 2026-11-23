@@ -131,10 +131,7 @@ module Mistri
           start
           evaluate(PRELUDE, "prelude.js")
           evaluate("__run(#{JSON.generate(code)})", "code.js")
-          loop do
-            break if @call[:qjs_is_job_pending].call.zero?
-            break if @call[:qjs_execute_pending_job].call.negative?
-          end
+          run_jobs
           raise Stopped, unfinished unless @returned || @thrown
 
           Outcome.new(value: @value, output: printed, error: @thrown)
@@ -143,6 +140,17 @@ module Mistri
         private
 
         def now = Process.clock_gettime(Process::CLOCK_MONOTONIC)
+
+        # A job that throws outside a promise, as a callback of queueMicrotask
+        # does, leaves the job that reports the return value unrun.
+        def run_jobs
+          until @call[:qjs_is_job_pending].call.zero?
+            next unless @call[:qjs_execute_pending_job].call.negative?
+            raise Stopped, unfinished if now > @deadline
+
+            return @thrown ||= read(@call[:qjs_get_exception].call)
+          end
+        end
 
         def unfinished
           now > @deadline ? "it ran for #{@timeout} seconds" : "it ended without returning"

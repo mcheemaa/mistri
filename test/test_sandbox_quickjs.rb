@@ -209,6 +209,14 @@ class TestSandboxQuickJS < Minitest::Test
     assert_equal %w[2 Mistri::ConfigurationError], output.lines.last(2).map(&:strip)
   end
 
+  def test_an_error_thrown_in_a_queued_job_is_the_codes_error
+    code = 'queueMicrotask(() => { throw new Error("late") }); return 5'
+
+    outcome = @sandbox.run(code, host: ->(_operation, _payload) {})
+
+    assert_equal "Error: late", outcome.error
+  end
+
   def test_the_module_that_runs_is_the_one_that_was_checked
     Dir.mktmpdir do |dir|
       path = File.join(dir, "quickjs.wasm")
