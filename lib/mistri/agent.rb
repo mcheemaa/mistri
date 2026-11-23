@@ -1331,11 +1331,8 @@ module Mistri
     end
 
     def saved_in_scratchpad(content, limit, call)
-      text = content.is_a?(String) ? content : text_of_blocks(content)
-      return unless @scratchpad && text && text.bytesize > limit
-
-      tool = @tools_by_name[call.name]
-      return if tool.respond_to?(:save_result?) && !tool.save_result?
+      text = saveable_text(content, call)
+      return unless text && text.bytesize > limit
 
       @result_limit.shown(text, @scratchpad.save_result(text, call.name))
     rescue StandardError => e
@@ -1343,7 +1340,11 @@ module Mistri
       @result_limit.bound(content, limit, unsaved: true)
     end
 
-    def text_of_blocks(content)
+    def saveable_text(content, call)
+      tool = @tools_by_name[call.name]
+      return unless @scratchpad && !(tool.respond_to?(:save_result?) && !tool.save_result?)
+      return content if content.is_a?(String)
+
       blocks = Array(content)
       blocks.map(&:text).join("\n") if blocks.any? && blocks.all?(Content::Text)
     end
@@ -1372,10 +1373,19 @@ module Mistri
       return nil unless @result_limit
 
       sizes = results.map do |call, result, _seconds|
-        size = ResultLimit.size(result.is_a?(ToolResult) ? result.content : result)
-        [size, own_limit(call)].min
+        kept(call, result.is_a?(ToolResult) ? result.content : result)
       end
       @result_limit.turn(sizes, spent:)
+    end
+
+    # What a result holds when it has the turn to itself. One the scratchpad
+    # takes holds its start, not its limit.
+    def kept(call, content)
+      size = ResultLimit.size(content)
+      own = own_limit(call)
+      return size if size <= own
+
+      saveable_text(content, call) ? ResultLimit::SHOWN_BYTES : own
     end
 
     # After an approval the rest of a turn's results are answered in a later

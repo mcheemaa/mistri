@@ -57,6 +57,21 @@ class TestScratchpad < Minitest::Test
     assert_equal ["scratchpad/tool-results/saved.txt"], @workspace.list
   end
 
+  def test_a_result_that_fits_stays_whole_beside_results_that_are_saved
+    summary = Mistri::Tool.define("summary", "A summary.") { ROW * 1_300 }
+    calls = Array.new(4) { { name: "export" } } + [{ name: "summary" }]
+    provider = Mistri::Providers::Fake.new(turns: [{ tool_calls: calls }, { text: "done" }])
+    export = Mistri::Tool.define("export", "Exports rows.") { ROWS }
+    agent = Mistri::Agent.new(provider:, tools: [export, summary], scratchpad: @workspace)
+
+    agent.run("go")
+    results = agent.session.messages.select(&:tool?)
+
+    assert(results.first(4).all? { |result| result.cut["path"] })
+    assert_nil results.last.cut
+    assert_equal ROW * 1_300, results.last.text
+  end
+
   def test_a_tool_that_is_never_saved_is_cut
     feed = Mistri::Tool.define("feed", "The feed.", save_result: false) { ROWS }
     provider = Mistri::Providers::Fake.new(turns: [{ tool_calls: [{ name: "feed" }] },
