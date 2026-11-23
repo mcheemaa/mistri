@@ -1336,7 +1336,7 @@ module Mistri
       text = content.is_a?(String) ? content : Array(content).map(&:text).join("\n")
       return unless text.bytesize > limit
 
-      @result_limit.shown(text, @scratchpad.save_result(text, call.name))
+      @result_limit.shown(text, @scratchpad.save_result(text, call.name), limit)
     rescue StandardError => e
       warn "mistri: saving a result of #{call.name} failed (#{e.class}: #{e.message}); it is cut"
       @result_limit.bound(content, limit, unsaved: true)

@@ -99,9 +99,11 @@ module Mistri
       [cut_to(content, [limit - notice.bytesize - 1, 0].max, notice), cut]
     end
 
-    def shown(text, path)
+    def shown(text, path, limit = bytes)
       cut = { "bytes" => text.bytesize, "lines" => lines(text), "path" => path }
-      ["#{start_of(text, SHOWN_BYTES)}\n#{format(SAVED, **cut.transform_keys(&:to_sym))}", cut]
+      notice = format(SAVED, **cut.transform_keys(&:to_sym))
+      start = start_of(text, (limit - notice.bytesize - 1).clamp(0, SHOWN_BYTES))
+      [[start, notice].reject(&:empty?).join("\n"), cut]
     end
 
     private

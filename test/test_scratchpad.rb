@@ -89,6 +89,21 @@ class TestScratchpad < Minitest::Test
     assert_operator pages.sum { |result| result.text.bytesize }, :<=, 200_000
   end
 
+  def test_a_saved_result_keeps_to_a_limit_under_two_thousand_bytes
+    brief = Mistri::Tool.define("brief", "A brief.") { ROW * 50 }
+    provider = Mistri::Providers::Fake.new(turns: [{ tool_calls: [{ name: "brief" }] },
+                                                   { text: "done" }])
+    agent = Mistri::Agent.new(provider:, tools: [brief], scratchpad: @workspace,
+                              result_limit: Mistri::ResultLimit.new(bytes: 1_000))
+
+    agent.run("go")
+    stored = agent.session.messages.find(&:tool?)
+
+    assert_operator stored.text.bytesize, :<=, 1_000
+    assert_operator stored.text.scan(ROW).length, :<, 50
+    assert_equal ROW * 50, @workspace.read(stored.cut["path"])
+  end
+
   def test_a_tool_that_is_never_saved_is_cut
     feed = Mistri::Tool.define("feed", "The feed.", save_result: false) { ROWS }
     provider = Mistri::Providers::Fake.new(turns: [{ tool_calls: [{ name: "feed" }] },
