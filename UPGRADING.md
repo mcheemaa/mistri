@@ -317,6 +317,9 @@ window left the session unusable.
   results itself does it there.
 - A tool message may hold `cut`, the true bytes and lines. Code that reads
   session messages can show it. No provider is sent it.
+- The `:tool_result` event and its message carry the stored text. A host that
+  shows or saves tool output from the event gets the cut result. A view of its
+  own can travel in `ui`, which is never cut.
 - Pass `result_limit: Mistri::ResultLimit.new(bytes:, turn_bytes:)` for other
   numbers. `result_limit: false` stores every result whole, as before.
 - A background child takes `result_limit:` on its `Runtime`.
