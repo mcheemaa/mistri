@@ -68,6 +68,35 @@ class TestResultLimit < Minitest::Test
                     Mistri::ResultLimit::DEFAULT_TURN_BYTES + (2 * Mistri::ResultLimit::SHARED_FLOOR_BYTES)
   end
 
+  def test_a_limit_takes_positive_whole_numbers_and_only_a_tool_message_is_cut
+    assert_raises(ArgumentError) { Mistri::ResultLimit.new(bytes: 0) }
+    assert_raises(ArgumentError) { Mistri::ResultLimit.new(turn_bytes: 1.5) }
+    assert_raises(ArgumentError) { Mistri::Message.new(role: :user, content: "x", cut: {}) }
+  end
+
+  def test_a_result_of_text_blocks_keeps_its_first_blocks
+    blocks = %w[a b c].map { |letter| Mistri::Content::Text.new(text: letter * 3_000) }
+    limit = Mistri::ResultLimit.new(bytes: 4_500)
+
+    kept, cut = limit.bound(blocks)
+
+    assert_equal 9_000, cut["bytes"]
+    assert_equal "a" * 3_000, kept[0].text
+    assert_match(/\Ab+\z/, kept[1].text)
+    assert_match(/\A\[This result was 9000 bytes/, kept[2].text)
+    assert_equal 3, kept.length
+  end
+
+  def test_a_result_approved_where_no_limit_is_in_force_is_stored_whole
+    agent = agent_for([{ name: "export_all" }], result_limit: false)
+    pending = agent.run("go").pending.first
+    agent.session.approve(pending.id)
+
+    agent.resume
+
+    assert_equal 330_000, agent.session.messages.select(&:tool?).last.text.bytesize
+  end
+
   def test_false_stores_a_result_whole
     agent = agent_for([{ name: "export" }], result_limit: false)
 

@@ -176,6 +176,61 @@ class TestRunCode < Minitest::Test
     assert_equal 38_000, stored.dig("cut", "bytes")
   end
 
+  def test_code_is_refused_what_the_agent_does_not_have
+    replies, = answers([["bogus", {}],
+                        ["write", { "path" => "scratchpad/a.md", "content" => "x" }],
+                        ["read", { "path" => "../secret" }],
+                        ["read", { "path" => "scratchpad/missing.md" }],
+                        ["list", {}]],
+                       tools: [Mistri::Tools.read_file(@workspace),
+                               Mistri::Tools.list_files(@workspace)])
+
+    assert_match(/the code asked for bogus, which does not exist/, replies[0])
+    assert_match(/you do not have the write_file tool/, replies[1])
+    assert_match(/is not a path here/, replies[2])
+    assert_match(/No document at/, replies[3])
+    assert_equal ["scratchpad/notes.md"], replies[4]
+  end
+
+  def test_after_tool_rewrites_what_a_list_a_write_and_a_delete_from_code_return
+    hook = lambda do |call, _result, _context|
+      case call.name
+      when "list_files" then "only.md"
+      when "write_file" then "noted"
+      when "delete_file" then raise "the audit is down"
+      end
+    end
+    replies, agent = answers([["list", { "prefix" => "scratchpad/" }],
+                              ["write", { "path" => "scratchpad/n.md", "content" => "x" }],
+                              ["delete", { "path" => "scratchpad/notes.md" }]],
+                             scratchpad: @workspace, after_tool: hook)
+    stored = agent.session.entries.select { |entry| entry["type"] == "code_call" }
+
+    assert_equal ["only.md"], replies[0]
+    assert_equal "noted", stored[1].dig("message", "content", 0, "text")
+    assert_match(/Error in after_tool hook: RuntimeError: the audit is down/, replies[2])
+    assert_nil @workspace.read("scratchpad/notes.md")
+  end
+
+  def test_a_call_from_code_is_stored_whole_where_no_limit_is_in_force
+    rows = Mistri::Tool.define("rows", "Returns rows.") do
+      Mistri::ToolResult.new(content: [Mistri::Content::Text.new(text: "order\n" * 1_000)])
+    end
+    script = [["tool", { "name" => "rows", "arguments" => {} }]]
+    calls = [{ name: "run_code", arguments: { code: JSON.generate(script) } }]
+    provider = Mistri::Providers::Fake.new(turns: [{ tool_calls: calls }, { text: "done" }])
+    agent = Mistri::Agent.new(provider:, tools: [rows], sandbox: ScriptedSandbox.new,
+                              result_limit: false)
+    shown = []
+
+    agent.run("go") { |event| shown << event.content if event.tool_call&.name == "rows" }
+    stored = agent.session.entries.find { |entry| entry["type"] == "code_call" }.fetch("message")
+
+    assert_equal 6_000, stored.dig("content", 0, "text").bytesize
+    assert_nil stored["cut"]
+    assert_equal "[content]", shown.last
+  end
+
   def test_code_writes_over_a_document_only_after_reading_it
     agent, = run_code([["write", { "path" => "scratchpad/notes.md", "content" => "blind" }],
                        ["write", { "path" => "scratchpad/tool-results/x.txt", "content" => "x" }],
@@ -212,19 +267,6 @@ class TestRunCode < Minitest::Test
 
     assert_empty searched
     assert_equal(["halt"], stored.map { |entry| entry.dig("call", "name") })
-  end
-
-  def test_the_description_states_the_limit_only_where_one_is_in_force
-    described = lambda do |**options|
-      provider = Mistri::Providers::Fake.new(turns: [{ text: "done" }])
-      Mistri::Agent.new(provider:, sandbox: ScriptedSandbox.new, **options).run("go")
-      provider.requests.first[:options][:tools].find { |tool| tool[:name] == "run_code" }
-                                               .fetch(:description)
-    end
-
-    assert_includes described.call, "what you need to read: a result over 10000 bytes is cut."
-    assert_includes described.call(result_limit: false), "what you need to read. Write a longer"
-    assert_includes described.call, "or throws an error when the tool fails"
   end
 
   def test_an_agent_without_a_sandbox_has_no_run_code

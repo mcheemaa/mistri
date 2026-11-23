@@ -1,6 +1,7 @@
 # frozen_string_literal: true
 
 require_relative "test_helper"
+require_relative "support/plain_workspace"
 
 # With a scratchpad the whole of a result over its limit is saved, and the
 # model is shown its start and where the rest is.
@@ -100,6 +101,46 @@ class TestScratchpad < Minitest::Test
     stored = agent.session.messages.find(&:tool?)
 
     assert_equal "#{ROWS}\nthe end", @workspace.read(stored.cut["path"])
+  end
+
+  def test_a_workspace_with_no_conditional_write_saves_in_two_steps
+    plain = Mistri::Test::PlainWorkspace.new
+    refusing = Mistri::Workspace::Memory.new
+    refusing.define_singleton_method(:compare_and_write) do |*, **|
+      raise Mistri::ConfigurationError, "inside a transaction the host opened"
+    end
+    pad = Mistri.const_get(:Scratchpad, false)
+
+    paths = Array.new(12) { pad.new(plain).save_result(ROW, "fetch") }
+    refused = pad.new(refusing).save_result("{not json", "search")
+
+    assert_equal paths.uniq.sort, plain.list
+    assert_match(%r{It holds:\n(scratchpad/tool-results/\S+-fetch(-\d+)?\.txt\n?){12}\z},
+                 pad.new(plain).note)
+    assert_equal "{not json", refusing.read(refused)
+    assert refused.end_with?("-search.txt")
+  end
+
+  def test_a_result_with_no_free_name_is_not_saved
+    taken = Mistri::Workspace::Memory.new
+    taken.define_singleton_method(:compare_and_write) do |*, **|
+      raise Mistri::WorkspaceConflictError, "taken"
+    end
+
+    error = assert_raises(Mistri::Error) do
+      Mistri.const_get(:Scratchpad, false).new(taken).save_result(ROW, "fetch")
+    end
+
+    assert_match(/no free name for a saved result/, error.message)
+  end
+
+  def test_the_note_lists_as_many_documents_as_fit
+    300.times { |number| @workspace.write("scratchpad/notes/#{"n" * 40}-#{number}.md", "x") }
+
+    note = Mistri.const_get(:Scratchpad, false).new(@workspace).note
+
+    assert_operator note.bytesize, :<, 5_000
+    assert_match(/\[\d+ more\. Use list_files\.\]\z/, note)
   end
 
   def test_the_folder_of_saved_results_is_read_only_to_the_model

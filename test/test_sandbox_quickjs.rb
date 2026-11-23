@@ -106,6 +106,33 @@ class TestSandboxQuickJS < Minitest::Test
     assert_equal "RangeError", deep.value
   end
 
+  def test_a_run_that_never_returns_or_never_stops_printing_is_stopped
+    host = ->(_operation, _payload) {}
+
+    hung = assert_raises(Mistri::Sandbox::Stopped) do
+      @sandbox.run("await new Promise(() => {})", host:)
+    end
+    flood = assert_raises(Mistri::Sandbox::Stopped) do
+      @sandbox.run('const line = "x".repeat(1e6); while (true) console.log(line);', host:)
+    end
+
+    assert_equal "it ended without returning", hung.message
+    assert_match(/stopped|ran for 1 seconds/, flood.message)
+    assert_equal 1, @sandbox.run("Promise.reject(new Error('lost')); return 1", host:).value
+  end
+
+  def test_an_answer_larger_than_the_memory_stops_the_run_and_not_the_sandbox
+    sandbox = Mistri::Sandbox::QuickJS.new(wasm: @wasm, timeout: 1, memory: 8 * 1024 * 1024)
+    large = ->(_operation, _payload) { "x" * 30_000_000 }
+
+    error = assert_raises(Mistri::Sandbox::Stopped) do
+      sandbox.run('return files.read("a").length', host: large)
+    end
+
+    assert_equal "the code ran out of memory", error.message
+    assert_equal 2, sandbox.run("return 1 + 1", host: large).value
+  end
+
   def test_what_the_code_prints_is_kept_up_to_a_bound
     outcome = @sandbox.run(<<~JS, host: ->(_operation, _payload) {})
       const line = "x".repeat(10000);

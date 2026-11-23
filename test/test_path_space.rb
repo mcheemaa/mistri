@@ -1,6 +1,7 @@
 # frozen_string_literal: true
 
 require_relative "test_helper"
+require_relative "support/plain_workspace"
 
 # The host's documents and the scratchpad in one path space, and a worker
 # that shares the scratchpad with the agent that started it.
@@ -100,6 +101,46 @@ class TestPathSpace < Minitest::Test
 
     assert_equal "10000", child.messages.find(&:tool?).text
     assert_equal "10000 lines.", agent.session.messages.find(&:tool?).text
+  end
+
+  def test_two_workspaces_with_no_sizes_are_listed_as_one
+    files = Mistri::Test::PlainWorkspace.new
+    scratch = Mistri::Test::PlainWorkspace.new
+    space = Mistri::Workspace::PathSpace.new(files:, scratchpad: scratch)
+
+    space.write("index.html", "<h1>Hi</h1>")
+    space.write("scratchpad/notes.md", "mine")
+
+    refute_respond_to space, :sizes
+    assert_equal %w[index.html scratchpad/notes.md], space.list
+    assert_equal ["scratchpad/notes.md"], scratch.list
+    assert_equal "index.html\nscratchpad/notes.md", Mistri::Tools.list_files(space).call({})
+  end
+
+  def test_a_background_worker_granted_the_document_tools_shares_the_scratchpad
+    dispatched = nil
+    pool = Mistri::Tools.files(@scratch)
+    spawn = Mistri::SubAgent.spawner(provider: Mistri::Providers::Fake.new(turns: []), tools: pool,
+                                     dispatcher: ->(spec, _runner) { dispatched = spec },
+                                     runtime_factory: ->(_spec) { raise "not run here" })
+    arguments = { "name" => "Basset", "task" => "work", "instructions" => "Do the work.",
+                  "mode" => "background", "tools" => %w[read_file write_file] }
+    provider = Mistri::Providers::Fake.new(
+      turns: [{ tool_calls: [{ name: "spawn_agent", arguments: }] }, { text: "done" }]
+    )
+    store = Mistri::Stores::Memory.new
+    Mistri::Agent.new(provider:, tools: [spawn], session: Mistri::Session.new(store:)).run("go")
+    write = { name: "write_file",
+              arguments: { path: "scratchpad/agents/basset/found.md", content: "blue" } }
+    factory = lambda do |spec|
+      worker = Mistri::Providers::Fake.new(turns: [{ tool_calls: [write] }, { text: "done" }])
+      granted = pool.select { |tool| spec.fetch("tool_names").include?(tool.name) }
+      Mistri::SubAgent::Runtime.new(provider: worker, tools: granted, scratchpad: @scratch)
+    end
+
+    Mistri::SubAgent.run_dispatched(dispatched, store:, runtime_factory: factory)
+
+    assert_equal "blue", @scratch.read("scratchpad/agents/basset/found.md")
   end
 
   def test_a_background_worker_with_a_scratchpad_needs_the_document_tools_granted

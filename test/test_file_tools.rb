@@ -1,6 +1,7 @@
 # frozen_string_literal: true
 
 require_relative "test_helper"
+require_relative "support/plain_workspace"
 
 class TestFileTools < Minitest::Test
   def setup
@@ -138,11 +139,96 @@ class TestFileTools < Minitest::Test
     assert_match(/\ANo matches\.\n\[The search stopped after 0\.01 seconds/, result)
   end
 
+  def test_grep_refuses_what_it_cannot_search_and_says_what_it_left_out
+    @workspace.write("refunds.md", (1..300).map { |n| "refund #{n} #{"x" * 90}\n" }.join)
+    grep = @tools["grep"]
+
+    long = grep.call({ "pattern" => "a" * 501 })
+    outside = grep.call({ "pattern" => "refund", "path" => "../notes" })
+    few = grep.call({ "pattern" => "refund", "head_limit" => 5 })
+    many = grep.call({ "pattern" => "refund", "head_limit" => 200 })
+
+    assert_match(/The pattern is longer than 500 characters/, long.content)
+    assert_match(/is not a path here/, outside.content)
+    assert_match(/\[300 matches in all, 5 shown\. Narrow the pattern or raise head_limit\.\]\z/,
+                 few)
+    assert_match(/\[300 matches in all, \d+ shown\. Narrow the pattern or pass a path\.\]\z/, many)
+    assert_operator many.bytesize, :<, 20_500
+  end
+
+  def test_grep_cuts_a_block_too_large_to_show_and_stops_after_its_bytes
+    @workspace.write("a-wide.md", "#{"w" * 1_900} mark\n" * 30)
+    @workspace.write("b-large.md", "#{"x" * 100_000}\n" * 51)
+    @workspace.write("c-last.md", "needle\n")
+    grep = @tools["grep"]
+
+    wide = grep.call({ "pattern" => "mark", "path" => "a-wide.md", "context" => 10 })
+    stopped = grep.call({ "pattern" => "needle" })
+
+    assert_match(/\n\[cut at 20000 bytes\]/, wide)
+    assert_equal "No matches.\n[The search stopped after 5000000 bytes. Pass a path to search " \
+                 "the rest.]", stopped
+  end
+
   def test_grep_answers_a_pattern_it_cannot_use_as_an_error
     reply = @tools["grep"].call({ "pattern" => "(" })
 
     assert_predicate reply, :error?
     assert_match(/The pattern could not be used/, reply.content)
+  end
+
+  def test_read_file_answers_an_empty_document_a_line_past_the_end_and_a_part_by_characters
+    @workspace.write("empty.md", "")
+    @workspace.write("kanji.md", "漢字のテキスト" * 5_000)
+    read = @tools["read_file"]
+
+    part = read.call({ "path" => "kanji.md", "unit" => "characters" })
+
+    assert_match(/\Aempty\.md, version \h{12}, empty\.\z/, read.call({ "path" => "empty.md" }))
+    assert_match(/4 lines\. Line 9 is past the end\.\z/,
+                 read.call({ "path" => "hero.html", "offset" => 9 }))
+    assert_match(/characters 0-6666 of 35000:/, part)
+    assert_match(/\[28334 more characters\. Continue with offset 6666\.\]\z/, part)
+  end
+
+  def test_a_path_too_long_or_not_text_is_refused
+    replies = ["a" * 513, "caf\xE9.md".dup.force_encoding("UTF-8")].map do |path|
+      @tools["read_file"].call({ "path" => path })
+    end
+
+    assert_match(/it is longer than 512 bytes/, replies[0].content)
+    assert_match(/it is not valid UTF-8/, replies[1].content)
+  end
+
+  def test_a_workspace_with_four_methods_is_listed_and_written_in_two_steps
+    plain = Mistri::Test::PlainWorkspace.new
+    250.times { |number| plain.write("notes/#{number}.md", "x") }
+    tools = Mistri::Tools.files(plain).to_h { |tool| [tool.name, tool] }
+
+    listing = tools["list_files"].call({})
+    written = tools["write_file"].call({ "path" => "new.md", "content" => "new" })
+    blind = tools["write_file"].call({ "path" => "new.md", "content" => "again" })
+
+    assert_match(%r{\Anotes/0\.md\n.*\n\[50 more not shown\. Pass a prefix to narrow\.\]\z}m,
+                 listing)
+    assert_match(/\AWrote new\.md/, written)
+    assert_match(/holds a document already/, blind.content)
+    assert_equal "new", plain.read("new.md")
+  end
+
+  def test_a_write_that_loses_to_another_writer_is_refused_with_the_document
+    version = @tools["read_file"].call({ "path" => "hero.html" })[/version (\h{12})/, 1]
+    @workspace.define_singleton_method(:compare_and_write) do |*, **|
+      raise Mistri::WorkspaceConflictError, "another writer got there first"
+    end
+
+    refused = Mistri::Tools.write_file(@workspace).call(
+      { "path" => "hero.html", "content" => "mine", "if_version" => version }
+    )
+
+    assert_match(/write_file refused: hero\.html is not at version #{version} any more/,
+                 refused.content)
+    assert_includes refused.content, "2:   <h1>Welcome</h1>"
   end
 
   def test_write_file_creates_and_lists_with_sizes

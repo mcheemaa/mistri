@@ -72,8 +72,7 @@ module Mistri
         shared = agent_options[:scratchpad]
         return agent_options unless shared
 
-        shared = Scratchpad.new(shared) unless shared.is_a?(Scratchpad)
-        agent_options.merge(scratchpad: shared.for_worker(origin))
+        agent_options.merge(scratchpad: Scratchpad.new(shared).for_worker(origin))
       end
 
       def forward(event, origin, emit)
