@@ -94,5 +94,8 @@ module Mistri
       refusal = read_only(path)
       raise Error, refusal.content if refusal
     end
+
+    private_class_method :code_result, :read_from_code, :write_from_code, :delete_from_code,
+                         :refuse_read_only
   end
 end

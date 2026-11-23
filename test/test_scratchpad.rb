@@ -39,7 +39,7 @@ class TestScratchpad < Minitest::Test
     assert_equal 1, notes.length
     refute_includes notes.first.text, "It holds"
     assert_match(%r{It holds:\nscratchpad/tool-results/.*-export\.txt \(330000 bytes\)},
-                 Mistri::Scratchpad.new(@workspace).note)
+                 Mistri.const_get(:Scratchpad, false).new(@workspace).note)
   end
 
   def test_a_document_tool_reads_a_saved_result_without_saving_another
@@ -79,7 +79,7 @@ class TestScratchpad < Minitest::Test
   end
 
   def test_every_result_of_a_crowded_second_gets_a_document
-    pad = Mistri::Scratchpad.new(@workspace)
+    pad = Mistri.const_get(:Scratchpad, false).new(@workspace)
 
     paths = Array.new(12) { pad.save_result(ROW, "fetch") }
 

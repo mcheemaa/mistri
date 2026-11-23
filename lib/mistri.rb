@@ -64,7 +64,7 @@ require_relative "mistri/providers/gemini"
 
 # Mistri (مستری): the fixer. An agent harness for Ruby applications.
 module Mistri
-  private_constant :ToolArguments
+  private_constant :ToolArguments, :Scratchpad
 
   PROVIDERS = { anthropic: Providers::Anthropic, openai: Providers::OpenAI,
                 gemini: Providers::Gemini }.freeze

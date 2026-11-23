@@ -43,6 +43,7 @@ module Mistri
         @left -= bytes
       end
     end
+    private_constant :Turn
 
     attr_reader :bytes, :turn_bytes
 

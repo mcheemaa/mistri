@@ -26,6 +26,7 @@ module Mistri
       BOUND_WORKSPACES[tool] = workspace
       tool
     end
+    private_class_method :bind
 
     def files(workspace)
       [read_file(workspace), write_file(workspace), edit_file(workspace),
