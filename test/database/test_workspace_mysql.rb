@@ -207,7 +207,8 @@ class TestWorkspaceMysql < Minitest::Test
     result = Mistri::Tools.edit_file(workspace).call(headline_edit("Agent"))
     final = workspace.read("page.html")
 
-    assert_equal "Replaced 1 occurrence(s) in page.html", result
+    assert_equal "Replaced 1 occurrence(s) in page.html, version #{Mistri::Tools.version(final)}",
+                 result
     assert_equal 2, workspace.comparisons
     assert_includes final, "<h1>Agent</h1>"
     assert_includes final, "<aside>Human</aside>"

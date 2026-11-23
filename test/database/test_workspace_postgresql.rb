@@ -90,7 +90,7 @@ class TestWorkspacePostgresql < Minitest::Test
   def test_sizes_are_the_bytes_of_each_document_in_scope
     workspace = build_workspace("tenant-a", "é" * 10)
     workspace.write("notes/b.md", "four")
-    build_workspace("tenant-b", "other")
+    PostgresqlAtomicDocument.create!(tenant_id: "tenant-b", path: "other.html", content: "other")
 
     assert_equal({ "notes/b.md" => 4, "page.html" => 20 }, workspace.sizes)
     assert_equal({ "notes/b.md" => 4 }, workspace.sizes("notes/"))
