@@ -293,6 +293,9 @@ your text unchanged.
   still builds the old tool for a host that adds it itself.
 - `delete_file` is new. Leave it out of the tools you pass when the model
   must not delete.
+- An agent refuses two tools of one name when it is built. A tool of your own
+  named `grep` or `delete_file`, passed beside `Tools.files`, now raises
+  "duplicate tool names: grep". Rename yours, or leave the built-in one out.
 - `write_file` no longer replaces a document blindly. To replace one that
   exists the model passes `if_version`, which `read_file`, `write_file` and
   `edit_file` state in their results. A prompt that tells the model to
@@ -364,7 +367,9 @@ Nothing changes until you pass `sandbox:` to an agent.
   workers, build it before the fork and run code only in the workers.
 - An event subscriber sees `:tool_started` and `:tool_result` for calls the
   code makes. Their call ids begin with `code_`, and their `message` is not
-  among the session's messages.
+  among the session's messages. The `:tool_result` event carries the short
+  copy that is stored, the first 2,000 bytes, with the true size in the
+  message's `cut`: the whole result went to the code.
 - A session holds entries of type `code_call`. Code that reads
   `Session#entries` by type leaves them out of a transcript for a person, or
   shows them under the `run_code` call they belong to. An entry keeps the

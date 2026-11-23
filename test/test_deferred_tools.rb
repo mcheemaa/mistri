@@ -163,7 +163,7 @@ class TestDeferredTools < Minitest::Test
       agent([], tools: [*tools, tool("tool_search", deferred: false)])
     end
 
-    assert_match(/duplicate tool names/, error.message)
+    assert_equal "duplicate tool names: tool_search", error.message
   end
 
   def test_a_deferred_tool_called_before_it_was_loaded_does_not_run

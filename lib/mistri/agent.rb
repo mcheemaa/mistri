@@ -319,14 +319,20 @@ module Mistri
       @loaded = []
       search = ToolSearch.tool(deferred, loaded: -> { @loaded }) unless deferred.empty?
       @tools = search ? tools + [search] : tools
-      @tools_by_name = @tools.to_h { |tool| [tool.name, tool] }
-      raise ConfigurationError, "duplicate tool names" if @tools_by_name.length != @tools.length
+      @tools_by_name = by_name(@tools)
 
       specs, @external_tool_validators = compile_tool_contracts
       names = deferred.to_h { |tool| [tool.name, true] }
       later, @eager_specs = specs.partition { |spec| names.key?(spec[:name]) }.map(&:freeze)
       @deferred_specs = later.to_h { |spec| [spec[:name], spec] }.freeze
       @defers_tools = @provider.respond_to?(:defers_tools?) && @provider.defers_tools?
+    end
+
+    def by_name(tools)
+      repeated = tools.map(&:name).tally.select { |_name, count| count > 1 }.keys
+      raise ConfigurationError, "duplicate tool names: #{repeated.join(", ")}" if repeated.any?
+
+      tools.to_h { |tool| [tool.name, tool] }
     end
 
     # run's body outside the lease; task's fix passes share task's lease.
