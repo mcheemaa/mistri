@@ -61,6 +61,7 @@ module Mistri
       scratchpad = Scratchpad.new(scratchpad) if scratchpad && !scratchpad.is_a?(Scratchpad)
       @scratchpad = scratchpad
       @documents = documents(files, scratchpad&.workspace)
+      @result_limit = result_limit || nil
       install_tools(with_own_tools(tools, skills, sandbox))
 
       @budget = budget || Budget.new
@@ -75,7 +76,6 @@ module Mistri
       @context = context
       @log_label = log_label
       @lease = lease
-      @result_limit = result_limit || nil
     end
 
     attr_reader :session
@@ -179,7 +179,9 @@ module Mistri
       tools += [Skills.reader(skills)] unless skills.empty?
       own_files = @documents && tools.none? { |tool| tool.name == "read_file" }
       tools += Tools.files(@documents) if own_files
-      sandbox ? tools + [Tools.run_code(sandbox, &method(:from_code))] : tools
+      return tools unless sandbox
+
+      tools + [Tools.run_code(sandbox, limited: !@result_limit.nil?, &method(:from_code))]
     end
 
     FILES_FROM_CODE = { "read" => "read_file", "write" => "write_file", "list" => "list_files",

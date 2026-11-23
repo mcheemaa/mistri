@@ -214,6 +214,19 @@ class TestRunCode < Minitest::Test
     assert_equal(["halt"], stored.map { |entry| entry.dig("call", "name") })
   end
 
+  def test_the_description_states_the_limit_only_where_one_is_in_force
+    described = lambda do |**options|
+      provider = Mistri::Providers::Fake.new(turns: [{ text: "done" }])
+      Mistri::Agent.new(provider:, sandbox: ScriptedSandbox.new, **options).run("go")
+      provider.requests.first[:options][:tools].find { |tool| tool[:name] == "run_code" }
+                                               .fetch(:description)
+    end
+
+    assert_includes described.call, "what you need to read: a result over 10000 bytes is cut."
+    assert_includes described.call(result_limit: false), "what you need to read. Write a longer"
+    assert_includes described.call, "or throws an error when the tool fails"
+  end
+
   def test_an_agent_without_a_sandbox_has_no_run_code
     provider = Mistri::Providers::Fake.new(turns: [{ text: "done" }])
     Mistri::Agent.new(provider:, scratchpad: @workspace).run("go")

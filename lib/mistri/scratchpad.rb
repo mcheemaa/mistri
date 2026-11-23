@@ -8,8 +8,8 @@ module Mistri
     RESULTS = "scratchpad/tool-results/"
     MAX_NAMES = 5
     MAX_LISTING_BYTES = 4_000
-    NOTE = "You have a scratchpad: documents under scratchpad/ that only you read and " \
-           "write. A tool result that is too large to show is saved whole under " \
+    NOTE = "You have a scratchpad: documents under scratchpad/ for your own work. A " \
+           "tool result that is too large to show is saved whole under " \
            "scratchpad/tool-results/, and only its start is shown to you. Read such a " \
            "document in parts with read_file, or search it with grep, instead of calling " \
            "the tool again. You may keep notes of your own under scratchpad/."

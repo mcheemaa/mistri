@@ -11,17 +11,18 @@ module Mistri
                "files.write(path, text) writes one; files.list(prefix) returns the paths under " \
                "a folder; files.delete(path) deletes one. await tools.NAME(arguments) calls " \
                "one of your other tools with the arguments it takes and returns its result as " \
-               "a string. Standard JavaScript is there (JSON, RegExp, Math, Date, Map, Set). " \
-               "There is no network, no Node.js, no require, no timers and no URL class. Return " \
-               "only what you need to read: a result over #{MAX_CODE_RESULT_BYTES} bytes is " \
-               "cut. Write a longer output to a document with files.write and return its " \
-               "path.".freeze
+               "a string, or throws an error when the tool fails. Standard JavaScript is there " \
+               "(JSON, RegExp, Math, Date, Map, Set). There is no network, no Node.js, no " \
+               "require, no timers and no URL class. Return only what you need to " \
+               "read%<limit>s. Write a longer output to a document with files.write and return " \
+               "its path."
     private_constant :RUN_CODE
 
     module_function
 
-    def run_code(sandbox, &host)
-      Tool.define("run_code", RUN_CODE,
+    def run_code(sandbox, limited: true, &host)
+      limit = ": a result over #{MAX_CODE_RESULT_BYTES} bytes is cut" if limited
+      Tool.define("run_code", format(RUN_CODE, limit:),
                   result_limit: MAX_CODE_RESULT_BYTES,
                   schema: lambda {
                     string :code, "JavaScript, the body of an async function", required: true
