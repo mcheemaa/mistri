@@ -75,38 +75,42 @@ module Mistri
             end
 
             key = msg.tool_error? ? "error" : "result"
-            response = { name: msg.tool_name, response: { key => result_text(msg) } }
+            response = { name: msg.tool_name, response: { key => msg.text.to_s } }
             wire_id = result_metadata.dig(msg, :provider_call_id)
             response[:id] = wire_id if wire_id
+            images = image_parts(msg)
+            response[:parts] = images if images.any?
             { functionResponse: response }
           end }
         end
 
         def foreign_tool_turn(group)
-          { role: "user", parts: group.map do |msg|
+          { role: "user", parts: group.flat_map do |msg|
             raise SchemaError, "Gemini tool results need tool_name" unless msg.tool_name
 
             label = msg.tool_error? ? "error" : "result"
             text = "Tool #{JSON.generate(msg.tool_name)} #{label} " \
-                   "(call #{JSON.generate(msg.tool_call_id)}): #{result_text(msg)}"
-            { text: text }
+                   "(call #{JSON.generate(msg.tool_call_id)}): #{msg.text}"
+            [{ text: text }, *image_parts(msg)]
           end }
         end
 
-        # Non-text blocks in a tool result have no functionResponse encoding;
-        # note the omission rather than dropping it silently.
-        def result_text(msg)
-          omitted = msg.content.count { |block| !block.is_a?(Content::Text) }
-          text = msg.text.to_s
-          omitted.positive? ? "#{text}\n[#{omitted} non-text block(s) omitted]".strip : text
+        # A functionResponse takes an image as a part of its own, beside the
+        # response object, on Gemini 3 and later. A turn of text takes one as
+        # any user turn does.
+        def image_parts(msg)
+          msg.content.grep(Content::Image).map { |image| inline_data(image) }
+        end
+
+        def inline_data(image)
+          { inlineData: { mimeType: image.mime_type, data: image.data } }
         end
 
         def user_parts(msg)
           msg.content.map do |block|
             case block
             when Content::Text then { text: block.text }
-            when Content::Image
-              { inlineData: { mimeType: block.mime_type, data: block.data } }
+            when Content::Image then inline_data(block)
             else
               raise SchemaError, "cannot serialize #{block.class} for Gemini user input"
             end

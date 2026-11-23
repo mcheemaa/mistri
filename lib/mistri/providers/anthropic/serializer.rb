@@ -115,8 +115,9 @@ module Mistri
           { role: msg.role.to_s, content: blocks } unless msg.user? && blocks.empty?
         end
 
-        # The API takes references alone in a tool_result, so the result's own
-        # content follows the results of the turn.
+        # The API takes references alone in a tool_result, and text alone in a
+        # failed one, so the content it refuses there follows the results of
+        # the turn.
         def tool_results(group, unreferenced = [])
           after = []
           results = group.map do |msg|
@@ -125,6 +126,9 @@ module Mistri
             if references.any?
               after.concat(blocks)
               blocks = references
+            elsif msg.tool_error?
+              blocks, others = blocks.partition { |block| block[:type] == "text" }
+              after.concat(outside(msg, others))
             end
             # The API rejects an empty tool_result; a space stands in for a
             # tool that returned nothing.
@@ -134,6 +138,16 @@ module Mistri
             result
           end
           { role: "user", content: results + after }
+        end
+
+        # Outside its tool_result nothing ties a block to its call, and with
+        # two failed calls in a turn a model mixed their pictures up, so a line
+        # of text names the tool first.
+        def outside(msg, blocks)
+          return blocks if blocks.empty?
+
+          call = msg.tool_name ? "#{msg.tool_name} call" : "tool call"
+          [{ type: "text", text: "The failed #{call} also returned:" }, *blocks]
         end
 
         # A failed result must be text alone. The API adds a tool's definition

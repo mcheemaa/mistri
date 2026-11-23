@@ -63,6 +63,30 @@ class TestOpenAISerializer < Minitest::Test
                  item)
   end
 
+  def test_a_tool_result_with_an_image_is_an_array_of_parts
+    image = Mistri::Content::Image.from_bytes("png!", mime_type: "image/png")
+    result = Mistri::Message.tool(content: ["The page:", image], tool_call_id: "call_1")
+
+    item = SERIALIZER.input_items([result]).first
+
+    assert_equal(
+      { type: "function_call_output", call_id: "call_1",
+        output: [{ type: "input_text", text: "The page:" },
+                 { type: "input_image", image_url: "data:image/png;base64,#{image.data}" }] },
+      item
+    )
+  end
+
+  def test_a_tool_result_of_an_image_alone_is_an_array_of_one_part
+    image = Mistri::Content::Image.from_bytes("png!", mime_type: "image/png")
+    result = Mistri::Message.tool(content: [image], tool_call_id: "call_1")
+
+    output = SERIALIZER.input_items([result]).first[:output]
+
+    assert_equal [{ type: "input_image", image_url: "data:image/png;base64,#{image.data}" }],
+                 output
+  end
+
   def test_invalid_or_non_object_tool_arguments_replay_as_objects
     invalid = Mistri::ToolCall.new(id: "bad", name: "inspect", arguments: nil,
                                    arguments_error: "invalid_json", signature: "fc_bad")

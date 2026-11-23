@@ -63,6 +63,28 @@ class TestAnthropicSerializer < Minitest::Test
     assert blocks.last[:is_error]
   end
 
+  # The API refuses a failed tool_result that holds anything but text.
+  def test_a_failed_result_keeps_its_text_and_its_image_follows_the_results
+    image = Mistri::Content::Image.from_bytes("png!", mime_type: "image/png")
+    history = [Mistri::Message.tool(content: ["The camera failed.", image], tool_call_id: "a",
+                                    tool_name: "camera", tool_error: true),
+               Mistri::Message.tool(content: ["The page:", image], tool_call_id: "b")]
+    picture = { type: "image",
+                source: { type: "base64", media_type: "image/png", data: image.data } }
+
+    blocks = SERIALIZER.messages(history).first[:content]
+
+    assert_equal(
+      [{ type: "tool_result", tool_use_id: "a",
+         content: [{ type: "text", text: "The camera failed." }], is_error: true },
+       { type: "tool_result", tool_use_id: "b",
+         content: [{ type: "text", text: "The page:" }, picture] },
+       { type: "text", text: "The failed camera call also returned:" },
+       picture],
+      blocks
+    )
+  end
+
   def test_invalid_or_non_object_tool_arguments_replay_as_objects
     invalid = Mistri::ToolCall.new(id: "bad", name: "inspect", arguments: nil,
                                    arguments_error: "invalid_json")

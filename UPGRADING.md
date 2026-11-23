@@ -13,6 +13,21 @@ test.
 
 Most hosts need no code change. Read the points that apply to you.
 
+### A tool's image reaches GPT and Gemini models
+
+A tool result that holds an image used to reach an OpenAI or Gemini model as
+its text and the line `[1 non-text block(s) omitted]`. The image is now sent.
+
+- Every request that carries the result costs the image's tokens. A session
+  with many screenshots costs more on these providers than it did.
+- OpenAI refuses an image it does not take, such as a BMP or an SVG, and the
+  refusal ends the request. Convert or drop such an image in `after_tool`.
+- A session stored before the upgrade that already holds such an image in a
+  tool result is refused from its next request. `after_tool` does not reach a
+  stored result. `transform_context:` does: convert or drop the image there.
+- Another origin of the OpenAI provider receives the image the same way, as
+  an array in the output of the function call, and must take one.
+
 ### Gemini 2.5 models are removed
 
 Google retired `gemini-2.5-pro` and `gemini-2.5-flash`. The catalog no longer
