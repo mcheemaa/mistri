@@ -170,6 +170,18 @@ class TestFileTools < Minitest::Test
                  "the rest.]", stopped
   end
 
+  def test_grep_counts_every_match_and_keeps_only_those_it_shows
+    @workspace.write("wide.txt", "x" * 200_000)
+    grep = @tools["grep"]
+
+    count = grep.call({ "pattern" => ".", "path" => "wide.txt", "output_mode" => "count" })
+    shown = grep.call({ "pattern" => "x", "path" => "wide.txt", "head_limit" => 3 })
+
+    assert_equal "200000 matches in 1 lines", count
+    assert_equal 3, shown.scan("[character ").length
+    assert_match(/\[200000 matches in all, 3 shown\./, shown)
+  end
+
   def test_grep_answers_a_pattern_it_cannot_use_as_an_error
     reply = @tools["grep"].call({ "pattern" => "(" })
 

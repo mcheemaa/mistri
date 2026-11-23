@@ -31,6 +31,9 @@ module Mistri
 
     # One grep call: the documents under a path, searched line by line.
     class Search
+      Line = Data.define(:path, :index, :text, :offset)
+      private_constant :Line
+
       def initialize(workspace, args, seconds:, bytes:)
         @workspace = workspace
         @seconds = seconds
@@ -85,28 +88,38 @@ module Mistri
         content = @workspace.read(path).to_s
         lines = content.lines
         offset = 0
-        lines.each_with_index do |line, index|
+        lines.each_with_index do |text, index|
           break @late = true if clock > @deadline
 
-          found = line.enum_for(:scan, regexp).map { Regexp.last_match }
-          unless found.empty?
+          count, found = matches_on(text, regexp)
+          if count.positive?
             @lines += 1
-            @matches += found.length
-            show(path, lines, index, found, offset) unless @count_only
+            @matches += count
+            show(lines, Line.new(path:, index:, text:, offset:), count, found) unless @count_only
           end
-          offset += line.length
+          offset += text.length
         end
         @searched += content.bytesize
       end
 
-      def show(path, lines, index, found, offset)
-        line = lines[index]
-        if line.length > LONG_LINE_CHARS
-          found.first([@limit - @shown, 0].max).each do |match|
-            add(around(path, index, line, match, offset), 1)
-          end
+      # Only the matches that can still be shown are kept, so a pattern that
+      # matches at every character of a large line holds no more than those.
+      def matches_on(line, regexp)
+        count = 0
+        found = []
+        keep = @count_only || line.length <= LONG_LINE_CHARS ? 0 : @limit - @shown
+        line.scan(regexp) do
+          count += 1
+          found << Regexp.last_match if found.length < keep
+        end
+        [count, found]
+      end
+
+      def show(lines, line, count, found)
+        if line.text.length > LONG_LINE_CHARS
+          found.each { |match| add(around(line, match), 1) }
         elsif @shown < @limit
-          add(with_context(path, lines, index), found.length)
+          add(with_context(line.path, lines, line.index), count)
         end
       end
 
@@ -125,11 +138,12 @@ module Mistri
         (from..to).map { |n| "#{path}:#{n + 1}: #{lines[n].chomp[0, LONG_LINE_CHARS]}" }.join("\n")
       end
 
-      def around(path, index, line, match, offset)
+      def around(line, match)
+        text = line.text
         from = [match.begin(0) - MATCH_SIDE_CHARS, 0].max
-        to = [match.end(0) + MATCH_SIDE_CHARS, line.length].min
-        "#{path}:#{index + 1}: [character #{offset + match.begin(0)}] " \
-          "#{"..." if from.positive?}#{line[from...to].chomp}#{"..." if to < line.length}"
+        to = [match.end(0) + MATCH_SIDE_CHARS, text.length].min
+        "#{line.path}:#{line.index + 1}: [character #{line.offset + match.begin(0)}] " \
+          "#{"..." if from.positive?}#{text[from...to].chomp}#{"..." if to < text.length}"
       end
 
       def report
