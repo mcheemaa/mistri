@@ -282,6 +282,7 @@ module Mistri
 
       reason = if gated?(call) then "needs a person's approval for this call"
                elsif ends_turn?(call) then "ends your turn"
+               elsif call.name == ToolSearch::NAME then "loads tools into your own list"
                end
       return unless reason
 

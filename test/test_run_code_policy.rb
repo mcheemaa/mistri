@@ -153,6 +153,16 @@ class TestRunCodePolicy < Minitest::Test
     assert_equal "the socket closed", error.message
   end
 
+  def test_code_cannot_load_a_tool_for_the_model
+    hidden = Mistri::Tool.define("lookup", "Looks up a customer.", deferred: true) { "found" }
+    search = { "name" => "tool_search", "arguments" => { "query" => "select:lookup" } }
+
+    replies, agent = answers([["tool", search]], tools: [hidden])
+
+    assert_match(/tool_search loads tools into your own list, so code cannot make it/, replies[0])
+    assert(agent.session.messages.none?(&:loads))
+  end
+
   def test_an_approval_rule_that_raises_answers_the_code
     risky = Mistri::Tool.define("risky", "Does something.",
                                 needs_approval: lambda { |_arguments|
