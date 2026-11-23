@@ -45,9 +45,18 @@ module Mistri
           globalThis.tools = new Proxy({}, {
             get: (_target, name) => async (args) => call("tool", { name, arguments: args || {} }),
           });
+          const failed = (error) => call("throw", {
+            message: error && error.stack ? String(error) + "\\n" + error.stack : String(error),
+          });
           globalThis.__run = (body) => {
             const AsyncFunction = (async () => {}).constructor;
-            new AsyncFunction(body)().then(
+            let run;
+            try {
+              run = new AsyncFunction(body);
+            } catch (error) {
+              return failed(error);
+            }
+            run().then(
               (value) => {
                 try {
                   call("return", { value: value === undefined ? null : value });
@@ -55,9 +64,7 @@ module Mistri
                   call("throw", { message: "The value the code returned cannot be sent: " + error });
                 }
               },
-              (error) => call("throw", {
-                message: error && error.stack ? String(error) + "\\n" + error.stack : String(error),
-              }),
+              failed,
             );
           };
         })();
@@ -228,12 +235,27 @@ module Mistri
           when "return"
             @returned = true
             @value = request["value"]
-          when "throw" then @thrown = request["message"].to_s
+          when "throw" then @thrown = own_frames(request["message"].to_s)
           else return { "value" => asked(operation, request) }
           end
           { "value" => nil }
         rescue Error => e
           { "error" => e.message }
+        end
+
+        # The code is the body of a function whose source begins two lines
+        # above it, and the frames of the adapter name nothing the code wrote.
+        def own_frames(trace)
+          lines = trace.lines
+          lines.each_with_index.filter_map do |line, index|
+            next line unless line.match?(/\A\s+at /)
+            next if line.match?(/\((prelude|code)\.js:|AsyncFunction \(native\)/)
+
+            parsed = lines[index + 1].to_s.include?("Function (native)")
+            next line unless parsed || line.include?("(<input>:")
+
+            line.sub(/<input>:(\d+)/) { "<input>:#{Regexp.last_match(1).to_i - 2}" }
+          end.join.rstrip
         end
 
         def asked(operation, request)

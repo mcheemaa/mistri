@@ -209,6 +209,19 @@ class TestSandboxQuickJS < Minitest::Test
     assert_equal %w[2 Mistri::ConfigurationError], output.lines.last(2).map(&:strip)
   end
 
+  def test_an_error_names_the_line_of_the_code_and_no_frame_of_the_adapter
+    host = ->(_operation, _payload) {}
+
+    thrown = @sandbox.run("const rows = [1];\nconst n = 1;\nreturn n.missing.length;", host:)
+    malformed = @sandbox.run("const a = 1;\nconst b = 2;\nconst c = ;", host:)
+    parsed = @sandbox.run('return JSON.parse("{bad")', host:)
+
+    assert_match(/\ATypeError: .*\n    at anonymous \(<input>:3:\d+\)\z/, thrown.error)
+    assert_match(/\ASyntaxError: .*\n    at <input>:3:\d+\z/, malformed.error)
+    assert_match(/at <input>:1:2\n    at parse \(native\)\n    at anonymous \(<input>:1:\d+\)\z/,
+                 parsed.error)
+  end
+
   def test_an_error_thrown_in_a_queued_job_is_the_codes_error
     code = 'queueMicrotask(() => { throw new Error("late") }); return 5'
 
