@@ -276,6 +276,10 @@ agent = Mistri.agent("claude-opus-5-5", tools: [spawn], scratchpad: workspace)
   asks it to write there as it goes and to name the documents in its report.
   What it wrote is still there when the worker is stopped or runs out of
   budget.
+- A worker reaches the scratchpad through the document tools it was granted,
+  so keep them in the pool. A worker that was not granted `read_file` runs
+  without the scratchpad and without `files:`: its large results are cut, and
+  no document tool is added to it. A background runtime refuses that shape.
 - Nothing enforces who writes where. The folder of saved results is read-only
   to every model, a write over an existing document needs the version that
   was read, and `edit_file` changes one place.

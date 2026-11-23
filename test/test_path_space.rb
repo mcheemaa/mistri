@@ -143,6 +143,30 @@ class TestPathSpace < Minitest::Test
     assert_equal "blue", @scratch.read("scratchpad/agents/basset/found.md")
   end
 
+  def test_an_inline_worker_gets_no_document_tool_the_spawn_did_not_grant
+    @scratch.write("notes/plan.md", "the plan")
+    lookup = Mistri::Tool.define("lookup", "Looks up a fact.") { ROWS }
+    delete = { name: "delete_file", arguments: { path: "notes/plan.md" } }
+    worker = Mistri::Providers::Fake.new(
+      turns: [{ tool_calls: [{ name: "lookup" }, delete] }, { text: "done" }]
+    )
+    spawn = Mistri::SubAgent.spawner(provider: worker, scratchpad: @scratch,
+                                     tools: [lookup, *Mistri::Tools.files(@scratch)])
+    arguments = { "name" => "Basset", "task" => "Find it.", "instructions" => "Look it up.",
+                  "tools" => ["lookup"] }
+    provider = Mistri::Providers::Fake.new(
+      turns: [{ tool_calls: [{ name: "spawn_agent", arguments: }] }, { text: "done" }]
+    )
+
+    Mistri::Agent.new(provider:, tools: [spawn], scratchpad: @scratch).run("go")
+
+    offered = worker.requests.first[:options][:tools].map { |tool| tool[:name] }
+
+    assert_equal ["lookup"], offered
+    assert_equal "the plan", @scratch.read("notes/plan.md")
+    assert_empty @scratch.list("scratchpad/")
+  end
+
   def test_a_background_worker_with_a_scratchpad_needs_the_document_tools_granted
     dispatched = nil
     spawn = Mistri::SubAgent.spawner(provider: Mistri::Providers::Fake.new(turns: []),
