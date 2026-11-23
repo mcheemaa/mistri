@@ -57,6 +57,25 @@ class TestRunCode < Minitest::Test
     assert_match(/run_code cannot be called from code/, answers[3])
   end
 
+  def test_code_cannot_call_a_tool_that_ends_the_turn
+    asked = []
+    ask = Mistri::Tool.define("ask_user", "Asks the person.", ends_turn: true) do
+      asked << true
+      "asked"
+    end
+    script = [["tool", { "name" => "ask_user", "arguments" => {} }]]
+    calls = [{ name: "run_code", arguments: { code: JSON.generate(script) } }]
+    provider = Mistri::Providers::Fake.new(turns: [{ tool_calls: calls }, { text: "done" }])
+    agent = Mistri::Agent.new(provider:, tools: [ask], sandbox: ScriptedSandbox.new)
+
+    result = agent.run("go")
+
+    assert_empty asked
+    assert_match(/ask_user ends your turn, so code cannot make it/,
+                 agent.session.messages.find(&:tool?).text)
+    refute result.handed_off
+  end
+
   def test_code_writes_over_a_document_only_after_reading_it
     agent, = run_code([["write", { "path" => "scratchpad/notes.md", "content" => "blind" }],
                        ["write", { "path" => "scratchpad/tool-results/x.txt", "content" => "x" }],

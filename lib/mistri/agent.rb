@@ -243,10 +243,14 @@ module Mistri
     def refused_from_code(call, context)
       _cleared, blocked = screen([call], context.signal, &context.emit)
       return blocked.first[1] if blocked.any?
-      return unless gated?(call)
 
-      ToolResult.new(content: "#{call.name} needs a person's approval for this call, so code " \
-                              "cannot make it. Call the tool yourself.", error: true)
+      reason = if gated?(call) then "needs a person's approval for this call"
+               elsif ends_turn?(call) then "ends your turn"
+               end
+      return unless reason
+
+      ToolResult.new(content: "#{call.name} #{reason}, so code cannot make it. Call the tool " \
+                              "yourself.", error: true)
     end
 
     def run_from_code(call, context)
