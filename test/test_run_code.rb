@@ -79,6 +79,17 @@ class TestRunCode < Minitest::Test
     assert_equal ["scratchpad/notes.md"], replies[4]
   end
 
+  def test_an_empty_path_from_code_is_refused_except_to_list_every_document
+    replies, = answers([["read", { "path" => "" }],
+                        ["write", { "path" => "", "content" => "x" }],
+                        ["delete", { "path" => "" }],
+                        ["list", { "prefix" => "" }]], files: @workspace)
+
+    replies.first(3).each { |reply| assert_match(/"" is not a path here: it is empty/, reply) }
+    assert_equal ["scratchpad/notes.md"], replies[3]
+    assert_equal ["scratchpad/notes.md"], @workspace.list
+  end
+
   def test_a_call_from_code_is_stored_whole_where_no_limit_is_in_force
     rows = Mistri::Tool.define("rows", "Returns rows.") do
       Mistri::ToolResult.new(content: [Mistri::Content::Text.new(text: "order\n" * 1_000)])

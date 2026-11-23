@@ -48,7 +48,8 @@ module Mistri
 
     def file_from_code(workspace, operation, payload, seen)
       path = (operation == "list" ? payload["prefix"] : payload["path"]).to_s
-      unusable = unusable_path(path, prefix: operation == "list") unless path.empty?
+      everything = operation == "list" && path.empty?
+      unusable = unusable_path(path, prefix: operation == "list") unless everything
       raise Error, unusable.content if unusable
 
       case operation
