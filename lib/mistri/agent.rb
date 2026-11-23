@@ -1285,15 +1285,21 @@ module Mistri
     end
 
     def saved_in_scratchpad(content, limit, call)
-      return unless @scratchpad && content.is_a?(String) && content.bytesize > limit
+      text = content.is_a?(String) ? content : text_of_blocks(content)
+      return unless @scratchpad && text && text.bytesize > limit
 
       tool = @tools_by_name[call.name]
       return if tool.respond_to?(:save_result?) && !tool.save_result?
 
-      @result_limit.shown(content, @scratchpad.save_result(content, call.name))
+      @result_limit.shown(text, @scratchpad.save_result(text, call.name))
     rescue StandardError => e
       warn "mistri: saving a result of #{call.name} failed (#{e.class}: #{e.message}); it is cut"
       @result_limit.bound(content, limit, unsaved: true)
+    end
+
+    def text_of_blocks(content)
+      blocks = Array(content)
+      blocks.map(&:text).join("\n") if blocks.any? && blocks.all?(Content::Text)
     end
 
     def answer_results(calls, results, executed:, signal:, spent: 0, &emit)

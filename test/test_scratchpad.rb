@@ -86,6 +86,21 @@ class TestScratchpad < Minitest::Test
     assert_equal paths.sort, @workspace.list.sort
   end
 
+  def test_a_result_of_text_blocks_is_saved_as_its_text
+    blocks = Mistri::Tool.define("blocks", "Returns text blocks.") do
+      Mistri::ToolResult.new(content: [Mistri::Content::Text.new(text: ROWS),
+                                       Mistri::Content::Text.new(text: "the end")])
+    end
+    provider = Mistri::Providers::Fake.new(turns: [{ tool_calls: [{ name: "blocks" }] },
+                                                   { text: "done" }])
+    agent = Mistri::Agent.new(provider:, tools: [blocks], scratchpad: @workspace)
+
+    agent.run("go")
+    stored = agent.session.messages.find(&:tool?)
+
+    assert_equal "#{ROWS}\nthe end", @workspace.read(stored.cut["path"])
+  end
+
   def test_the_folder_of_saved_results_is_read_only_to_the_model
     tools = Mistri::Tools.files(@workspace).to_h { |tool| [tool.name, tool] }
     @workspace.write("scratchpad/tool-results/saved.txt", "kept")
