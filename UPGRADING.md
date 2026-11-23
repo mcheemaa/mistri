@@ -346,7 +346,8 @@ Nothing changes until you pass `scratchpad:` to an agent.
   is the same table with the session in the scope.
 - If you pass your own document tools, bind them to the same workspace, so
   the path in a stored result is one the model can read. If you pass none,
-  the agent adds them.
+  the agent adds all six, and they reach every path of that workspace, not
+  only `scratchpad/`.
 - A path under `scratchpad/` belongs to the agent. `write_file`, `edit_file`
   and `delete_file` refuse `scratchpad/tool-results/`.
 - A session with a scratchpad holds a system message with `reminder` set to

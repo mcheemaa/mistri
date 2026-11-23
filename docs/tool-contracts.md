@@ -323,9 +323,13 @@ agent = Mistri.agent("claude-opus-5-5", tools: tools, scratchpad: workspace)
   and the path. `cut` holds the path too.
 - Where the results of one turn are over its 200,000 bytes together, the
   largest are saved first, and the ones that then fit stay whole.
-- The agent adds the document tools over the scratchpad when the host passed
-  none, so the model reads a saved result in parts or searches it. A host that
-  passes its own document tools binds them to the same workspace.
+- The agent adds the six document tools when the host passed none, so the
+  model reads a saved result in parts or searches it. The scratchpad is a
+  folder of the workspace you pass, and the tools reach every path of that
+  workspace, not only `scratchpad/`. Pass one that holds only what the model
+  may read and change. A host that passes its own document tools binds them
+  to the same workspace, and leaves out any the model must not have, such as
+  `delete_file`.
 - A note tells the model what the scratchpad is for. After a compaction that
   summarized it, the note is appended again with what the scratchpad holds.
 - `scratchpad/tool-results/` is read-only to the model. It may keep notes of
