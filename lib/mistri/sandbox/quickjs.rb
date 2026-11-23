@@ -21,14 +21,15 @@ module Mistri
         _initialize qjs_init qjs_eval qjs_new_string qjs_get_string_len qjs_free_cstring
         qjs_free_value qjs_is_exception qjs_get_exception qjs_execute_pending_job
         qjs_is_job_pending qjs_set_memory_limit qjs_set_interrupt_handler qjs_get_global
-        qjs_set_prop_string qjs_new_host_function wasm_malloc wasm_free
+        qjs_set_prop_string qjs_new_host_function qjs_set_max_stack_size wasm_malloc wasm_free
       ].freeze
       PRELUDE = <<~JS
         (() => {
           const host = globalThis.__host;
           delete globalThis.__host;
+          const { stringify, parse } = JSON;
           const call = (op, payload) => {
-            const reply = JSON.parse(host(JSON.stringify(Object.assign({ op }, payload))));
+            const reply = parse(host(stringify({ op, ...payload })));
             if (reply.error !== undefined) throw new Error(reply.error);
             return reply.value;
           };
@@ -38,7 +39,7 @@ module Mistri
             list: (prefix) => call("list", { prefix }),
             delete: (path) => call("delete", { path }),
           });
-          const text = (part) => typeof part === "string" ? part : JSON.stringify(part);
+          const text = (part) => typeof part === "string" ? part : stringify(part);
           const say = (...parts) => call("print", { text: parts.map(text).join(" ") });
           globalThis.console = Object.freeze({ log: say, info: say, warn: say, error: say });
           globalThis.tools = new Proxy({}, {
@@ -47,7 +48,13 @@ module Mistri
           globalThis.__run = (body) => {
             const AsyncFunction = (async () => {}).constructor;
             new AsyncFunction(body)().then(
-              (value) => call("return", { value: value === undefined ? null : value }),
+              (value) => {
+                try {
+                  call("return", { value: value === undefined ? null : value });
+                } catch (error) {
+                  call("throw", { message: "The value the code returned cannot be sent: " + error });
+                }
+              },
               (error) => call("throw", {
                 message: error && error.stack ? String(error) + "\\n" + error.stack : String(error),
               }),
@@ -59,7 +66,10 @@ module Mistri
                "wasmtime does not survive a fork. Run code only in the forked processes, or " \
                "build the sandbox in each of them."
       MAX_PRINTED_BYTES = 100_000
-      private_constant :WASI, :EXPORTS, :PRELUDE, :FORKED, :MAX_PRINTED_BYTES
+      # Below what wasmtime allows a call stack, so deep recursion is an error
+      # the code can catch and not a trap.
+      MAX_STACK_BYTES = 128 * 1024
+      private_constant :WASI, :EXPORTS, :PRELUDE, :FORKED, :MAX_PRINTED_BYTES, :MAX_STACK_BYTES
 
       def initialize(wasm:, timeout: 10, total_timeout: 300, memory: 64 * 1024 * 1024,
                      sha256: SHA256)
@@ -142,6 +152,7 @@ module Mistri
           raise Error, "QuickJS did not start" unless @call[:qjs_init].call.zero?
 
           @call[:qjs_set_memory_limit].call(@memory)
+          @call[:qjs_set_max_stack_size].call(MAX_STACK_BYTES)
           @call[:qjs_set_interrupt_handler].call(1)
           name, length = write("__host")
           function = @call[:qjs_new_host_function].call(name, length, 0)

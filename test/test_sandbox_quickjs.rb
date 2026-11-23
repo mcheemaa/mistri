@@ -89,6 +89,23 @@ class TestSandboxQuickJS < Minitest::Test
     refute_equal first[1], second[1]
   end
 
+  def test_code_cannot_break_the_way_out_and_reads_its_own_mistakes
+    host = ->(_operation, _payload) { "read" }
+
+    replaced = @sandbox.run(<<~JS, host:)
+      JSON.stringify = () => "not json";
+      JSON.parse = () => 1;
+      return files.read("a");
+    JS
+    bigint = @sandbox.run("return 10n", host:)
+    deep = @sandbox.run("const f = () => f() + 1; try { f() } catch (error) { return error.name }",
+                        host:)
+
+    assert_equal "read", replaced.value
+    assert_match(/The value the code returned cannot be sent: TypeError/, bigint.error)
+    assert_equal "RangeError", deep.value
+  end
+
   def test_what_the_code_prints_is_kept_up_to_a_bound
     outcome = @sandbox.run(<<~JS, host: ->(_operation, _payload) {})
       const line = "x".repeat(10000);
