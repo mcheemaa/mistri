@@ -29,7 +29,7 @@ class TestPathSpace < Minitest::Test
     assert_equal "mine", @scratch.read("scratchpad/notes.md")
     assert_match(%r{\Aabout\.html \(3 bytes\)\nindex\.html \(11 bytes\)\nscratchpad/notes\.md},
                  listing)
-    assert_match(%r{scratchpad/tool-results/.*-export\.txt \(330000 bytes\)\z}, listing)
+    assert_match(%r{scratchpad/tool-results/.*-export-\h{8}\.txt \(330000 bytes\)\z}, listing)
   end
 
   def test_files_alone_gives_the_agent_the_document_tools

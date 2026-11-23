@@ -19,13 +19,13 @@ class TestScratchpad < Minitest::Test
     agent.run("go")
     text, json = agent.session.messages.select(&:tool?)
 
-    assert_match(%r{\Ascratchpad/tool-results/\d{8}T\d{6}-export\.txt\z}, text.cut["path"])
+    assert_match(%r{\Ascratchpad/tool-results/\d{8}T\d{6}-export-\h{8}\.txt\z}, text.cut["path"])
     assert_equal ROWS, @workspace.read(text.cut["path"])
     assert_equal 330_000, text.cut["bytes"]
     assert_operator text.text.bytesize, :<, 2_400
     assert_match(/is 330000 bytes in 10000 lines.*saved at #{text.cut["path"]}.*read_file.*grep/,
                  text.text.lines.last)
-    assert json.cut["path"].end_with?("-search.json")
+    assert_match(/-search-\h{8}\.json\z/, json.cut["path"])
     offered = provider.requests.first[:options][:tools].map { |tool| tool[:name] }
 
     assert_includes offered, "read_file"
@@ -39,7 +39,7 @@ class TestScratchpad < Minitest::Test
 
     assert_equal 1, notes.length
     refute_includes notes.first.text, "It holds"
-    assert_match(%r{It holds:\nscratchpad/tool-results/.*-export\.txt \(330000 bytes\)},
+    assert_match(%r{It holds:\nscratchpad/tool-results/.*-export-\h{8}\.txt \(330000 bytes\)},
                  Mistri.const_get(:Scratchpad, false).new(@workspace).note)
   end
 
@@ -161,13 +161,27 @@ class TestScratchpad < Minitest::Test
     refused = pad.new(refusing).save_result("{not json", "search")
 
     assert_equal paths.uniq.sort, plain.list
-    assert_match(%r{It holds:\n(scratchpad/tool-results/\S+-fetch(-\d+)?\.txt\n?){12}\z},
+    assert_match(%r{It holds:\n(scratchpad/tool-results/\S+-fetch-\h{8}\.txt\n?){12}\z},
                  pad.new(plain).note)
     assert_equal "{not json", refusing.read(refused)
-    assert refused.end_with?("-search.txt")
+    assert_match(/-search-\h{8}\.txt\z/, refused)
   end
 
-  def test_a_result_with_no_free_name_is_not_saved
+  def test_agents_that_share_a_scratchpad_with_no_conditional_write_save_under_their_own_names
+    slow = Class.new(Mistri::Test::PlainWorkspace) do
+      def read(path) = super.tap { sleep 0.01 }
+    end.new
+    pad = Mistri.const_get(:Scratchpad, false)
+
+    saved = Array.new(8) do |number|
+      Thread.new { [number, pad.new(slow).save_result("result #{number}", "fetch")] }
+    end.map(&:value)
+
+    assert_equal 8, saved.map(&:last).uniq.length
+    saved.each { |number, path| assert_equal "result #{number}", slow.read(path) }
+  end
+
+  def test_a_result_whose_name_is_taken_is_not_saved
     taken = Mistri::Workspace::Memory.new
     taken.define_singleton_method(:compare_and_write) do |*, **|
       raise Mistri::WorkspaceConflictError, "taken"
@@ -177,7 +191,7 @@ class TestScratchpad < Minitest::Test
       Mistri.const_get(:Scratchpad, false).new(taken).save_result(ROW, "fetch")
     end
 
-    assert_match(/no free name for a saved result/, error.message)
+    assert_match(%r{\Ascratchpad/tool-results/\S+-fetch-\h{8}\.txt is taken\z}, error.message)
   end
 
   def test_the_note_lists_as_many_documents_as_fit
