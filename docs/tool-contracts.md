@@ -311,8 +311,9 @@ agent = Mistri.agent("claude-opus-5-5", tools: tools, scratchpad: workspace)
 ```
 
 - The whole of a text result over its limit is saved under
-  `scratchpad/tool-results/`, as `.json` when it is JSON and `.txt` otherwise,
-  exactly as the tool returned it.
+  `scratchpad/tool-results/`, exactly as the tool returned it. Its name ends
+  in `.json` when the text begins and ends as a JSON object or array, and in
+  `.txt` otherwise.
 - The stored result is its first 2,000 bytes and one line with the true size
   and the path. `cut` holds the path too.
 - The agent adds the document tools over the scratchpad when the host passed

@@ -71,13 +71,13 @@ module Mistri
       path
     end
 
+    # Judged by its two ends, because parsing a large result to name its
+    # document costs more than saving it.
     def json?(text)
-      return false unless text.start_with?("{", "[")
+      closing = { "{" => "}", "[" => "]" }[text[0]]
+      return false unless closing
 
-      JSON.parse(text)
-      true
-    rescue JSON::ParserError
-      false
+      (text.byteslice(-64..) || text).b.rstrip.end_with?(closing)
     end
 
     def listing
