@@ -200,7 +200,8 @@ module Mistri
       arguments["content"] = "[#{bytes} bytes]" if bytes
       call = ToolCall.new(id: "code_#{SecureRandom.hex(8)}", name:, arguments:)
       settle_from_code(call, context) do
-        Tools.file_from_code(@documents, operation, payload, run)
+        value, line = Tools.file_from_code(@documents, operation, payload, run)
+        [value, rewritten_from_code(call, line, context).last]
       end
     end
 
@@ -212,8 +213,7 @@ module Mistri
       call, refusal = prepare_call(call, normalize: true, signal: context.signal)
       settle_from_code(call, context, refusal:) do
         result, = ToolExecutor.invoke_one(@tools_by_name.fetch(call.name), call, context)
-        text = ResultLimit.texts(result.is_a?(ToolResult) ? result.content : result).join("\n")
-        [text, result]
+        rewritten_from_code(call, result, context)
       end
     end
 
@@ -263,8 +263,13 @@ module Mistri
       rescue StandardError => e
         [nil, ToolResult.new(content: e.message, error: true)]
       end
-      result = rewrite(call, result, hook_context(context.signal, context.emit)) if @after_tool
       [value, result, monotonic_now - started]
+    end
+
+    # The code receives what after_tool returned, as the model would.
+    def rewritten_from_code(call, result, context)
+      result = rewrite(call, result, hook_context(context.signal, context.emit)) if @after_tool
+      [ResultLimit.texts(result.is_a?(ToolResult) ? result.content : result).join("\n"), result]
     end
 
     def install_tools(tools)

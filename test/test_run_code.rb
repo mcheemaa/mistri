@@ -94,6 +94,20 @@ class TestRunCode < Minitest::Test
                  agent.session.messages.find(&:tool?).text)
   end
 
+  def test_code_receives_what_after_tool_returned
+    lookup = Mistri::Tool.define("lookup", "Looks up a customer.") { "Ana, card 4111" }
+    hide = ->(call, _result, _context) { "Ana, card [hidden]" if call.name == "lookup" }
+    script = [["tool", { "name" => "lookup", "arguments" => {} }]]
+    calls = [{ name: "run_code", arguments: { code: JSON.generate(script) } }]
+    provider = Mistri::Providers::Fake.new(turns: [{ tool_calls: calls }, { text: "done" }])
+    agent = Mistri::Agent.new(provider:, tools: [lookup], sandbox: ScriptedSandbox.new,
+                              after_tool: hide)
+
+    agent.run("go")
+
+    assert_equal %(printed\n["Ana, card [hidden]"]), agent.session.messages.find(&:tool?).text
+  end
+
   def test_code_writes_over_a_document_only_after_reading_it
     agent, = run_code([["write", { "path" => "scratchpad/notes.md", "content" => "blind" }],
                        ["write", { "path" => "scratchpad/tool-results/x.txt", "content" => "x" }],
