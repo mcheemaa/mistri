@@ -73,11 +73,11 @@ module Mistri
 
       def initialize(wasm:, timeout: 10, total_timeout: 300, memory: 64 * 1024 * 1024,
                      sha256: SHA256)
-        unless Digest::SHA256.file(wasm).hexdigest == sha256
+        @wasm = File.binread(wasm)
+        unless Digest::SHA256.hexdigest(@wasm) == sha256
           raise ConfigurationError, "#{wasm} is not the QuickJS build this adapter was written for"
         end
 
-        @wasm = wasm
         @limits = { timeout:, total_timeout:, memory: }
         @building = Mutex.new
       end
@@ -92,7 +92,8 @@ module Mistri
       private
 
       # wasmtime's engine and its timer do not survive a fork, so a process
-      # builds its own at its first run.
+      # builds its own at its first run, from the bytes that were checked: the
+      # file can be replaced by then.
       def engine_here
         pid, engine, wasm_module = @built || @building.synchronize { @built ||= build }
         raise ConfigurationError, FORKED unless pid == Process.pid
@@ -103,7 +104,7 @@ module Mistri
       def build
         engine = Wasmtime::Engine.new(epoch_interruption: true)
         engine.start_epoch_interval(50)
-        [Process.pid, engine, Wasmtime::Module.from_file(engine, @wasm)]
+        [Process.pid, engine, Wasmtime::Module.new(engine, @wasm)]
       end
 
       # One run in one new instance.

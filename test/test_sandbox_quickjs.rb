@@ -1,7 +1,9 @@
 # frozen_string_literal: true
 
 require_relative "test_helper"
+require "fileutils"
 require "open3"
+require "tmpdir"
 
 # The QuickJS adapter. It needs the wasmtime gem and the file quickjs.wasm of
 # the npm package quickjs-wasi 3.7.0, named by MISTRI_QUICKJS_WASM.
@@ -205,6 +207,17 @@ class TestSandboxQuickJS < Minitest::Test
 
     assert_predicate status, :success?, output
     assert_equal %w[2 Mistri::ConfigurationError], output.lines.last(2).map(&:strip)
+  end
+
+  def test_the_module_that_runs_is_the_one_that_was_checked
+    Dir.mktmpdir do |dir|
+      path = File.join(dir, "quickjs.wasm")
+      FileUtils.cp(@wasm, path)
+      sandbox = Mistri::Sandbox::QuickJS.new(wasm: path, timeout: 1)
+      File.binwrite(path, "not the module")
+
+      assert_equal 2, sandbox.run("return 1 + 1", host: ->(_operation, _payload) {}).value
+    end
   end
 
   def test_another_build_of_the_module_is_refused
