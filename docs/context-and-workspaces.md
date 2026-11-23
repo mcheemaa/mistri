@@ -368,7 +368,8 @@ well as other adapters, retain the legacy four-method behavior rather than
 advertise an unproved lock. Create-only conditional writes rely on the verified
 unique scope/path index. The adapter copies and freezes the scope Hash plus
 nested Hash, Array, Range, and String values at construction; atomic mode's
-narrower scalar contract keeps its tenant identity stable.
+narrower scalar contract keeps its tenant identity stable. It measures sizes in
+the database with `OCTET_LENGTH`, which SQLite has from version 3.43.
 
 Storage and schema capability are inspected on the first capability check and
 cached thereafter, off the edit path. Bind the workspace before concurrent use,
