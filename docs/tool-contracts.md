@@ -29,6 +29,8 @@ end
 The handler may accept only `args`, or `args` and `context`. `context.app` is
 the object passed as `Mistri.agent(context:)`; it is the usual place for the
 acting user, tenant, or request-scoped authorization context.
+`context.result_limit` is the bytes a result keeps before it is cut, or nil
+where nothing is cut, so a tool that reads in parts can size a part.
 
 Handlers may return:
 

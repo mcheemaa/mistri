@@ -22,15 +22,43 @@ class TestFileTools < Minitest::Test
     assert_includes window, "[2 more lines. Continue with offset 3.]"
   end
 
-  def test_read_file_enters_a_long_line_by_characters
-    @workspace.write("rows.json", "[#{"{\"id\":1}," * 1_000}{\"id\":\"last\"}]")
+  def test_read_file_and_grep_give_the_offset_that_reads_into_a_long_line
+    @workspace.write("rows.json", "short\nlines\n[#{"{\"id\":1}," * 1_000}{\"id\":\"last\"}]")
     lines = @tools["read_file"].call({ "path" => "rows.json" })
-    tail = @tools["read_file"].call({ "path" => "rows.json", "unit" => "characters",
-                                      "offset" => 9_000, "limit" => 100 })
+    on = @tools["read_file"].call({ "path" => "rows.json", "unit" => "characters",
+                                    "offset" => 2_012, "limit" => 9 })
+    found = @tools["grep"].call({ "pattern" => "last" })
+    at = @tools["read_file"].call({ "path" => "rows.json", "unit" => "characters",
+                                    "offset" => found[/character (\d+)/, 1].to_i, "limit" => 4 })
 
-    assert_includes lines, "[line cut: 7015 more characters, read them with unit characters]"
-    assert_match(/characters 9000-9015 of 9015:/, tail)
-    assert_includes tail, "{\"id\":\"last\"}]"
+    assert_includes lines, "[line cut: 7015 more characters. Read on with unit characters and " \
+                           "offset 2012.]"
+    assert_match(/characters 2012-2021 of 9027:\n"id":1\},\{\n/, on)
+    assert_match(/\Arows\.json:3: \[character 9020\] \.\.\./, found)
+    assert_match(/characters 9020-9024 of 9027:\nlast\n/, at)
+  end
+
+  def test_a_part_that_is_read_fits_the_limit_in_force
+    @workspace.write("notes/kanji.md", "#{"漢字のテキスト" * 12}\n" * 400)
+    @workspace.write("notes/rows.md", "order 1001 shipped to a customer\n" * 2_000)
+    read = lambda do |path, limit|
+      calls = [{ name: "read_file", arguments: { path: } }]
+      provider = Mistri::Providers::Fake.new(turns: [{ tool_calls: calls }, { text: "done" }])
+      agent = Mistri::Agent.new(provider:, files: @workspace,
+                                result_limit: Mistri::ResultLimit.new(bytes: limit))
+      agent.run("go")
+      agent.session.messages.find(&:tool?)
+    end
+
+    kanji = read.call("notes/kanji.md", 50_000)
+    rows = read.call("notes/rows.md", 8_000)
+
+    assert_nil kanji.cut
+    assert_match(/lines 1-(\d+) of 400:.*\n\[\d+ more lines\. Continue with offset \d+\.\]\z/m,
+                 kanji.text)
+    assert_nil rows.cut
+    assert_operator rows.text.bytesize, :<=, 8_000
+    assert_match(/Continue with offset \d+\.\]\z/, rows.text)
   end
 
   def test_edit_file_rewrites_through_the_workspace
@@ -98,7 +126,7 @@ class TestFileTools < Minitest::Test
 
     found = @tools["grep"].call({ "pattern" => "last" })
 
-    assert_match(/\Arows\.json:1:9008: \.\.\./, found)
+    assert_match(/\Arows\.json:1: \[character 9008\] \.\.\./, found)
     assert_operator found.length, :<, 400
   end
 

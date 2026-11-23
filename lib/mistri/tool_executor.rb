@@ -33,7 +33,7 @@ module Mistri
     module_function
 
     def call(calls, tools_by_name, signal: nil, max_concurrency: 4, session: nil, emit: nil,
-             app: nil)
+             app: nil, result_limit: nil)
       call_with_outcomes(
         calls,
         tools_by_name,
@@ -42,6 +42,7 @@ module Mistri
         session:,
         emit:,
         app:,
+        result_limit:,
         prepared_arguments: false
       ).map { |call, result, seconds, _committed| [call, result, seconds] }
     end
@@ -50,13 +51,14 @@ module Mistri
     # lower-level form preserves that boundary and exposes commitment so hooks
     # cannot run for queued calls that an abort prevented from starting.
     def call_with_outcomes(calls, tools_by_name, signal: nil, max_concurrency: 4, session: nil,
-                           emit: nil, app: nil, prepared_arguments: false)
+                           emit: nil, app: nil, result_limit: nil, prepared_arguments: false)
       return [] if calls.empty?
 
       delivery = EventDelivery.wrap(emit, passthrough: [InvocationTimeout])
       context_class = prepared_arguments ? PreparedContext : ToolContext
       context = context_class.new(session: session, signal: signal,
-                                  emit: thread_safe(delivery, signal), app: app)
+                                  emit: thread_safe(delivery, signal), app: app,
+                                  result_limit: result_limit)
       results = Array.new(calls.length)
       queue = Queue.new
       errors = Queue.new

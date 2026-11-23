@@ -1181,6 +1181,7 @@ module Mistri
                                                              max_concurrency: @max_concurrency,
                                                              session: @session, emit: emit,
                                                              app: @context,
+                                                             result_limit: @result_limit&.bytes,
                                                              prepared_arguments: true)
     end
 

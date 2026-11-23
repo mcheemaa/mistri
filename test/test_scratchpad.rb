@@ -45,14 +45,15 @@ class TestScratchpad < Minitest::Test
   def test_a_document_tool_reads_a_saved_result_without_saving_another
     @workspace.write("scratchpad/tool-results/saved.txt", ROWS)
     read_saved = { name: "read_file", arguments: { path: "scratchpad/tool-results/saved.txt" } }
-    agent, = agent_for([read_saved], result_limit: Mistri::ResultLimit.new(bytes: 4_000))
+    limit = Mistri::ResultLimit.new(bytes: 4_000, turn_bytes: 4_000)
+    agent, = agent_for([read_saved, read_saved], result_limit: limit)
 
     agent.run("go")
-    read = agent.session.messages.find(&:tool?)
+    reads = agent.session.messages.select(&:tool?)
 
-    assert_nil read.cut["path"]
+    assert(reads.all? { |read| read.cut && read.cut["path"].nil? })
     assert_equal ["scratchpad/tool-results/saved.txt"], @workspace.list
-    assert_match(/not kept.*call it again/, read.text.lines.last)
+    assert_match(/share one limit.*not kept/, reads.first.text.lines.last)
   end
 
   def test_a_result_the_scratchpad_cannot_take_is_cut_and_says_so

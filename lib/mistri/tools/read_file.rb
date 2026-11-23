@@ -2,18 +2,20 @@
 
 module Mistri
   module Tools
-    MAX_READ_CHARS = 20_000
+    MAX_READ_BYTES = 20_000
     LONG_LINE_CHARS = 2_000
+    WINDOW_MARGIN_BYTES = 400
+    private_constant :WINDOW_MARGIN_BYTES
 
     module_function
 
     def read_file(workspace)
       tool = Tool.define("read_file",
                          "Read a document. Lines come back with their numbers, at most " \
-                         "#{MAX_READ_CHARS} characters a call: pass offset and limit to read " \
-                         "further. For a very long line, pass unit \"characters\" to read it by " \
-                         "character offset. The first line states the document's version, which " \
-                         "write_file takes as if_version.",
+                         "#{MAX_READ_BYTES} bytes a call: pass offset and limit to read " \
+                         "further. A very long line is shown cut, with the offset to read on " \
+                         "from with unit \"characters\". The first line states the document's " \
+                         "version, which write_file takes as if_version.",
                          save_result: false,
                          schema: lambda {
                            string :path, "Document path", required: true
@@ -22,50 +24,75 @@ module Mistri
                            integer :limit, "How many lines, or characters, to read"
                            string :unit, "lines (the default) or characters",
                                   enum: %w[lines characters]
-                         }) do |args|
+                         }) do |args, context|
         with_document(workspace, args) do |content|
-          Tools.window(args["path"], content, args["offset"], args["limit"], args["unit"])
+          Tools.window(args["path"], content, args["offset"], args["limit"], args["unit"],
+                       bytes: window_bytes(context))
         end
       end
       bind(workspace, tool)
     end
 
-    def window(path, content, offset = nil, limit = nil, unit = nil)
-      title = "#{path}, version #{version(content)}"
-      return "#{title}, empty." if content.empty?
-      return character_window(title, content, offset.to_i, limit.to_i) if unit == "characters"
+    # A tool that reads in parts keeps its part under the limit in force, so
+    # a cut never takes the line that says how to read on.
+    def window_bytes(context)
+      limit = context&.result_limit
+      return MAX_READ_BYTES unless limit
 
-      line_window(title, content.lines, [offset.to_i, 1].max, limit.to_i)
+      (limit - WINDOW_MARGIN_BYTES).clamp(WINDOW_MARGIN_BYTES, MAX_READ_BYTES)
     end
 
-    def line_window(title, lines, from, limit)
+    def window(path, content, offset = nil, limit = nil, unit = nil, bytes: MAX_READ_BYTES)
+      title = "#{path}, version #{version(content)}"
+      return "#{title}, empty." if content.empty?
+      if unit == "characters"
+        return character_window(title, content, offset.to_i, limit.to_i,
+                                bytes)
+      end
+
+      line_window(title, content.lines, [offset.to_i, 1].max, limit.to_i, bytes)
+    end
+
+    def line_window(title, lines, from, limit, bytes)
       return "#{title}, #{lines.length} lines. Line #{from} is past the end." if from > lines.length
 
-      shown = shown_lines(lines, from, limit.positive? ? limit : lines.length)
+      shown = shown_lines(lines, from, limit.positive? ? limit : lines.length, bytes)
       last = from + shown.length - 1
       more = lines.length - last
       rest = more.positive? ? "\n[#{more} more lines. Continue with offset #{last + 1}.]" : ""
       "#{title}, lines #{from}-#{last} of #{lines.length}:\n#{shown.join("\n")}#{rest}"
     end
 
-    def shown_lines(lines, from, limit)
+    def shown_lines(lines, from, limit, bytes)
       size = 0
+      start = lines.first(from - 1).sum(&:length)
       lines[from - 1, limit].each_with_index.with_object([]) do |(line, index), shown|
-        line = line.chomp
-        if line.length > LONG_LINE_CHARS
-          line = "#{line[0, LONG_LINE_CHARS]} [line cut: #{line.length - LONG_LINE_CHARS} more " \
-                 "characters, read them with unit characters]"
-        end
-        break shown if size + line.length > MAX_READ_CHARS && shown.any?
+        entry = "#{from + index}: #{shown_line(line.chomp, start, bytes)}"
+        break shown if size + entry.bytesize > bytes && shown.any?
 
-        shown << "#{from + index}: #{line}"
-        size += line.length
+        shown << entry
+        size += entry.bytesize + 1
+        start += line.length
       end
     end
 
-    def character_window(title, content, from, limit)
+    # start is where the line begins in the document, in characters, which
+    # is what unit characters counts from.
+    def shown_line(line, start, bytes)
+      kept = fitting(line[0, LONG_LINE_CHARS], bytes)
+      return line if kept.length == line.length
+
+      "#{kept} [line cut: #{line.length - kept.length} more characters. Read on with unit " \
+        "characters and offset #{start + kept.length}.]"
+    end
+
+    def fitting(text, bytes)
+      text.bytesize > bytes ? text.byteslice(0, bytes).scrub("") : text
+    end
+
+    def character_window(title, content, from, limit, bytes)
       from = from.clamp(0, content.length)
-      part = content[from, limit.positive? ? [limit, MAX_READ_CHARS].min : MAX_READ_CHARS]
+      part = fitting(content[from, limit.positive? ? [limit, bytes].min : bytes], bytes)
       last = from + part.length
       more = content.length - last
       rest = more.positive? ? "\n[#{more} more characters. Continue with offset #{last}.]" : ""

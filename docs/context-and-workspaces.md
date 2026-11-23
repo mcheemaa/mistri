@@ -235,15 +235,16 @@ The document tools:
 
 | Tool | What the model gets |
 | --- | --- |
-| `read_file` | Numbered lines with the total and the version, 20,000 characters a call. A line over 2,000 characters is shown cut, and `unit: "characters"` reads into it by character offset |
+| `read_file` | Numbered lines with the total and the version, 20,000 bytes a call, or less where the result limit is lower. A line over 2,000 characters is shown cut, with the offset that `unit: "characters"` reads on from |
 | `write_file` | Creates a document, or replaces one at `if_version` |
 | `edit_file` | Replaces an exact snippet, as described above |
-| `grep` | A regular expression over one document or every document under a folder, with context lines or a count. A match on a long line comes with the 150 characters on each side and its column |
+| `grep` | A regular expression over one document or every document under a folder, with context lines or a count. A match on a long line comes with the 150 characters on each side and its character offset in the document |
 | `list_files` | Paths under a prefix with their sizes, 200 at most |
 | `delete_file` | Deletes one document |
 
-A pattern is 500 characters at most and runs with a one second timeout. One
-`grep` call reads 5 MB at most and says so when it stops there.
+A pattern is 500 characters at most and runs with a one second timeout for
+each match. One `grep` call reads 5 MB at most and takes five seconds at most,
+and says so when it stops at either.
 
 A path from the model is checked before any workspace is asked: relative,
 parts joined by `/`, no part that is empty, `.` or `..`, no backslash or

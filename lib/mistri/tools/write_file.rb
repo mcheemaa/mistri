@@ -2,6 +2,9 @@
 
 module Mistri
   module Tools
+    StaleWrite = Data.define(:current)
+    private_constant :StaleWrite
+
     module_function
 
     def write_file(workspace)
@@ -15,7 +18,7 @@ module Mistri
                            string :path, "Document path", required: true
                            string :content, "The full document content", required: true
                            string :if_version, "The version of the document this replaces"
-                         }) do |args|
+                         }) do |args, context|
         path = args["path"]
         refusal = unusable_path(path) || read_only(path)
         next refusal if refusal
@@ -26,7 +29,9 @@ module Mistri
                   else
                     write_legacy(workspace, path, content, args["if_version"])
                   end
-        next written if written.is_a?(ToolResult)
+        if written.is_a?(StaleWrite)
+          next stale_write(path, written.current, args["if_version"], window_bytes(context))
+        end
 
         "Wrote #{path} (#{written.length} chars), version #{version(written)}"
       end
@@ -35,7 +40,7 @@ module Mistri
 
     def write_legacy(workspace, path, content, if_version)
       current = workspace.read(path)
-      return stale_write(path, current, if_version) if current && version(current) != if_version
+      return StaleWrite.new(current) if current && version(current) != if_version
 
       workspace.write(path, content)
       content
@@ -46,18 +51,16 @@ module Mistri
     # opened, gets them as two.
     def write_atomically(workspace, path, content, if_version)
       snapshot = workspace.snapshot(path)
-      if snapshot && version(snapshot.content) != if_version
-        return stale_write(path, snapshot.content, if_version)
-      end
+      return StaleWrite.new(snapshot.content) if snapshot && version(snapshot.content) != if_version
 
       workspace.compare_and_write(path, content, expected_revision: snapshot&.revision).content
     rescue WorkspaceConflictError
-      stale_write(path, workspace.read(path).to_s, if_version)
+      StaleWrite.new(workspace.read(path).to_s)
     rescue ConfigurationError
       write_legacy(workspace, path, content, if_version)
     end
 
-    def stale_write(path, current, if_version)
+    def stale_write(path, current, if_version, bytes)
       reason = if if_version
                  "#{path} is not at version #{if_version} any more"
                else
@@ -66,7 +69,7 @@ module Mistri
       ToolResult.new(
         content: "write_file refused: #{reason}. Nothing was written. To replace it, pass " \
                  "its version as if_version. To change part of it, use edit_file. The " \
-                 "document now:\n#{window(path, current)}",
+                 "document now:\n#{window(path, current, bytes: bytes - WINDOW_MARGIN_BYTES)}",
         error: true
       )
     end
