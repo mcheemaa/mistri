@@ -77,8 +77,9 @@ module Mistri
       "it holds an empty part, . or .." if parts.intersect?(["", ".", ".."])
     end
 
+    # Compared without case, because a store may match paths that way.
     def read_only(path)
-      return unless path.to_s.start_with?(Scratchpad::RESULTS)
+      return unless path.to_s.downcase.start_with?(Scratchpad::RESULTS)
 
       ToolResult.new(
         content: "#{Scratchpad::RESULTS} holds saved tool results and is read-only. " \

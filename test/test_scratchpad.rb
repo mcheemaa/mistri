@@ -111,7 +111,10 @@ class TestScratchpad < Minitest::Test
                tools["edit_file"].call(edit), tools["delete_file"].call({ "path" => path })]
     note = tools["write_file"].call({ "path" => "scratchpad/notes.md", "content" => "mine" })
 
+    capitals = tools["delete_file"].call({ "path" => "Scratchpad/Tool-Results/saved.txt" })
+
     assert(replies.all? { |reply| reply.error? && reply.content.include?("read-only") })
+    assert_includes capitals.content, "read-only"
     assert_equal "kept", @workspace.read(path)
     assert_match(%r{\AWrote scratchpad/notes\.md}, note)
   end

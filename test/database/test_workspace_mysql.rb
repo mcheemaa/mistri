@@ -193,6 +193,15 @@ class TestWorkspaceMysql < Minitest::Test
     assert_match(/cannot join an open transaction/, error.message)
   end
 
+  def test_a_path_in_other_capitals_does_not_reach_the_read_only_folder
+    workspace = build_workspace("tenant-a", page)
+    workspace.write("scratchpad/tool-results/a.txt", "kept")
+    reply = Mistri::Tools.delete_file(workspace).call({ "path" => "Scratchpad/Tool-Results/a.txt" })
+
+    assert_includes reply.content, "read-only"
+    assert_equal "kept", workspace.read("scratchpad/tool-results/a.txt")
+  end
+
   def test_single_column_workspace_rebases_a_real_edit
     record = MysqlAtomicDocument.create!(
       tenant_id: "tenant-a", path: "page.html", content: page
