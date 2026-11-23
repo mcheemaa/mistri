@@ -423,9 +423,10 @@ is stopped, every further call from the code is refused. The result of
 tool's description states the limit and tells the model to write a longer
 output to a document.
 
-While code computes it holds Ruby's interpreter lock, so the other threads of
-the process wait until it calls out or is stopped. Keep the timeout short on a
-process that serves requests.
+Other threads of the process keep running while code computes: the adapter
+passes Ruby's interpreter lock on each time QuickJS checks for an interrupt.
+The code shares the CPU with them, so a busy process gives it less computing
+within the same timeout.
 
 A sandbox of your own is any object that answers `run(code, host:)` and
 returns a `Mistri::Sandbox::Outcome`. `host` is a callable given an operation

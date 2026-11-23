@@ -367,8 +367,9 @@ Nothing changes until you pass `sandbox:` to an agent.
 - `before_tool` is asked about every call from code, by the name of the tool:
   `read_file`, `write_file`, `list_files` and `delete_file` for the four file
   operations.
-- A run holds the interpreter lock while it computes. On a process that also
-  serves requests, set a short `timeout:`.
+- Code computes inside the host's process and shares the CPU with its other
+  threads, which keep running. `timeout:` bounds the code's own computing and
+  `total_timeout:` the whole run with its calls.
 - The result of `run_code` keeps 10,000 bytes, and the tool's description
   states it.
 - A child takes `sandbox:` as an agent option, on a `Runtime` too. Its code
