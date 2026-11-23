@@ -199,7 +199,7 @@ module Mistri
       call = ToolCall.new(id: "code_#{SecureRandom.hex(8)}", name:,
                           arguments: payload.slice("path", "prefix", "content").compact)
       call, refusal = prepare_call(call, normalize: true, signal: context.signal)
-      settle_from_code(call, context, refusal:, shown: without_content(call)) do
+      settle_from_code(call, context, refusal:) do
         file_from_code(workspace, operation, call, context, run)
       end
     end
@@ -216,9 +216,31 @@ module Mistri
                      "host's own tool. Call tools.#{name} instead.")
     end
 
-    def without_content(call)
-      bytes = call.arguments["content"]&.to_s&.bytesize if call.arguments.is_a?(Hash)
-      bytes ? call.with(arguments: call.arguments.merge("content" => "[#{bytes} bytes]")) : call
+    # Code can pass megabytes to a call, in a loop, so the copy of a call that
+    # is stored and emitted keeps SHOWN_BYTES of its arguments. The largest
+    # give way first, so a path stays whole beside a document.
+    def short_copy(call)
+      arguments = call.arguments
+      limit = ResultLimit::SHOWN_BYTES
+      return call unless @result_limit && arguments.is_a?(Hash)
+      return call if ToolArguments.serialized_size_within_limit?(arguments, limit:)
+
+      sizes = arguments.transform_values { |value| JSON.generate(value).bytesize }
+      short = sizes.sort_by(&:last).to_h do |key, size|
+        kept, used = short_argument(arguments[key], size, limit)
+        limit -= used
+        [key, kept]
+      end
+      call.with(arguments: arguments.to_h { |key, _value| [key, short[key]] })
+    end
+
+    def short_argument(value, size, left)
+      return [value, size] if size <= left
+      return ["[#{size} bytes of JSON]", 0] unless value.is_a?(String)
+
+      start = value.byteslice(0, left).scrub("")
+      notice = "[cut at #{start.bytesize} of #{value.bytesize} bytes]"
+      [[start, notice].reject(&:empty?).join("\n"), left]
     end
 
     # A read gives after_tool the document, because that is what the code
@@ -253,10 +275,10 @@ module Mistri
 
     # A call from code is stored as an entry beside the messages, not as a
     # message, because the model reads its result in the code.
-    def settle_from_code(call, context, shown: call, refusal: nil, &)
+    def settle_from_code(call, context, refusal: nil, &)
       refusal ||= refused_from_code(call, context)
-      value, result, seconds = refusal ? [nil, refusal, nil] : run_from_code(shown, context, &)
-      call = shown
+      call = short_copy(call)
+      value, result, seconds = refusal ? [nil, refusal, nil] : run_from_code(call, context, &)
       content, ui, tool_error = if result.is_a?(ToolResult)
                                   [result.content, result.ui, result.error?]
                                 else

@@ -27,7 +27,7 @@ class TestRunCode < Minitest::Test
     assert_equal "new", @workspace.read("scratchpad/notes.md")
     assert_equal(%w[search read_file write_file list_files],
                  stored.map { |entry| entry.dig("call", "name") })
-    assert_equal "[3 bytes]", stored[2].dig("call", "arguments", "content")
+    assert_equal "new", stored[2].dig("call", "arguments", "content")
     assert_equal %w[before:run_code started:run_code before:search started:search result:search
                     before:read_file started:read_file result:read_file before:write_file
                     started:write_file result:write_file before:list_files started:list_files
@@ -61,6 +61,32 @@ class TestRunCode < Minitest::Test
     assert_operator agent.session.messages.find(&:tool?).cut["bytes"], :>, 38_000
     assert_operator stored.dig("content", 0, "text").bytesize, :<=, 2_000
     assert_equal 38_000, stored.dig("cut", "bytes")
+  end
+
+  def test_the_entry_of_a_call_from_code_keeps_a_short_copy_of_its_arguments
+    given = nil
+    save = Mistri::Tool.define("save_rows", "Saves rows.", schema: lambda {
+      string :region, "Region", required: true
+      string :note, "A note", required: true
+      array :rows, "Rows", required: true, items: { type: "object" }
+    }) do |arguments|
+      given = arguments
+      "saved"
+    end
+    arguments = { "note" => "n" * 3_000, "rows" => Array.new(200) { |n| { "id" => n } },
+                  "region" => "emea" }
+
+    _replies, agent = answers([["tool", { "name" => "save_rows", "arguments" => arguments }]],
+                              tools: [save])
+    stored = agent.session.entries.find { |entry| entry["type"] == "code_call" }
+                  .dig("call", "arguments")
+
+    assert_equal arguments, given
+    assert_equal %w[note rows region], stored.keys
+    assert_equal "emea", stored["region"]
+    assert_match(/\An+\n\[cut at \d+ of 3000 bytes\]\z/, stored["note"])
+    assert_match(/\A\[\d+ bytes of JSON\]\z/, stored["rows"])
+    assert_operator JSON.generate(stored).bytesize, :<, 2_200
   end
 
   def test_code_is_refused_what_the_agent_does_not_have

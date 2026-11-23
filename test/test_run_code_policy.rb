@@ -64,23 +64,27 @@ class TestRunCodePolicy < Minitest::Test
     assert_equal %(printed\n["Ana, card [hidden]"]), agent.session.messages.find(&:tool?).text
   end
 
-  def test_a_write_from_code_shows_a_hook_its_content_and_stores_only_its_size
+  def test_a_write_from_code_shows_a_hook_its_content_and_stores_a_short_copy
     seen = []
     watch = lambda do |call, _context|
       seen << call.arguments["content"] if call.name == "write_file"
       "no tables are dropped" if call.arguments["content"].to_s.include?("DROP")
     end
-    replies, agent = answers([["write", { "path" => "scratchpad/a.md", "content" => "plan" }],
+    plan = "a step of the plan\n" * 500
+    replies, agent = answers([["write", { "path" => "scratchpad/a.md", "content" => plan }],
                               ["write",
                                { "path" => "scratchpad/b.md", "content" => "DROP TABLE" }]],
                              scratchpad: @workspace, before_tool: watch)
     stored = agent.session.entries.select { |entry| entry["type"] == "code_call" }
 
-    assert_equal ["plan", "DROP TABLE"], seen
+    assert_equal [plan, "DROP TABLE"], seen
     assert_match(/Blocked: no tables are dropped/, replies[1])
     assert_nil @workspace.read("scratchpad/b.md")
-    assert_equal(["[4 bytes]", "[10 bytes]"],
-                 stored.map { |entry| entry.dig("call", "arguments", "content") })
+    assert_equal plan, @workspace.read("scratchpad/a.md")
+    assert_equal "scratchpad/a.md", stored[0].dig("call", "arguments", "path")
+    assert_match(/\A(a step of the plan\n)+a step.*\n\[cut at \d+ of 9500 bytes\]\z/,
+                 stored[0].dig("call", "arguments", "content"))
+    assert_equal "DROP TABLE", stored[1].dig("call", "arguments", "content")
   end
 
   def test_code_reaches_a_hosts_own_document_tool_only_as_a_tool

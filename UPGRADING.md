@@ -367,13 +367,15 @@ Nothing changes until you pass `sandbox:` to an agent.
   workers, build it before the fork and run code only in the workers.
 - An event subscriber sees `:tool_started` and `:tool_result` for calls the
   code makes. Their call ids begin with `code_`, and their `message` is not
-  among the session's messages. The `:tool_result` event carries the short
-  copy that is stored, the first 2,000 bytes, with the true size in the
-  message's `cut`: the whole result went to the code.
+  among the session's messages. Both events carry the short copy that is
+  stored: 2,000 bytes of the call's arguments, and the first 2,000 bytes of
+  the result with the true size in the message's `cut`. The whole of both
+  went to the tool and to the code.
 - A session holds entries of type `code_call`. Code that reads
   `Session#entries` by type leaves them out of a transcript for a person, or
-  shows them under the `run_code` call they belong to. An entry keeps the
-  first 2,000 bytes of its result and the true size.
+  shows them under the `run_code` call they belong to. An entry keeps 2,000
+  bytes of the call's arguments, and the first 2,000 bytes of its result with
+  the true size.
 - `before_tool` is asked about every call from code, by the name of the tool:
   `read_file`, `write_file`, `list_files` and `delete_file` for the four file
   operations, with what the code passed. The code receives what `after_tool`

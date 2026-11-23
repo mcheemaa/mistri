@@ -25,7 +25,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   the calls it makes, and at 64 MB. A call from code passes the tool's
   contract, its timeout, `before_tool`, the approval rule and `after_tool`,
   emits its events, and is stored as a `code_call` entry with a short copy of
-  its result. A tool that needs approval, or that ends the turn, is refused
+  its arguments and of its result. A tool that needs approval, or that ends the turn, is refused
   in the code. `files` in code works through the built-in document tools, so
   a host's own document tool is reached only as a tool. The result of
   `run_code` keeps 10,000 bytes, and its description tells the model to write

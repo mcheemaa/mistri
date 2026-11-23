@@ -418,8 +418,10 @@ needs approval for the call, or that ends the turn, is refused in the code with
 a message to call it directly. So is `tool_search`, which loads tools for the
 model. The call is stored as a `code_call` entry beside
 the messages, not as a message: the model reads the result in its code, so it
-is not sent again with later requests. The entry of a write holds the size of
-its content, not the content.
+is not sent again with later requests. The entry and the two events hold a
+short copy: 2,000 bytes of the call's arguments and 2,000 bytes of its result.
+Among the arguments the largest give way first, so a path stays whole beside
+the content of a write, which keeps its start and its true size.
 
 Limits: ten seconds of the code's own computing, five minutes for the whole
 run with the calls it makes, and 64 MB, set with `timeout:`, `total_timeout:`
