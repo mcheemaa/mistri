@@ -75,6 +75,17 @@ class TestGrep < Minitest::Test
     assert_operator many.bytesize, :<, 20_500
   end
 
+  def test_grep_advises_a_higher_head_limit_only_below_its_cap
+    @workspace.write("rows.txt", "r\n" * 300)
+
+    below = @tools["grep"].call({ "pattern" => "r", "head_limit" => 199 })
+    at_cap = @tools["grep"].call({ "pattern" => "r", "head_limit" => 1_000 })
+
+    assert_match(/\[300 matches in all, 199 shown\. Narrow the pattern or raise head_limit\.\]\z/,
+                 below)
+    assert_match(/\[300 matches in all, 200 shown\. Narrow the pattern\.\]\z/, at_cap)
+  end
+
   def test_grep_cuts_a_block_too_large_to_show_and_stops_after_its_bytes
     @workspace.write("a-wide.md", "#{"w" * 1_900} mark\n" * 30)
     @workspace.write("b-large.md", "#{"x" * 100_000}\n" * 51)

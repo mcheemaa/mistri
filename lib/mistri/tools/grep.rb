@@ -5,6 +5,7 @@ module Mistri
     MAX_PATTERN_CHARS = 500
     MAX_SEARCHED_BYTES = 5_000_000
     MAX_SEARCH_SECONDS = 5
+    MAX_HEAD_LIMIT = 200
     MATCH_SIDE_CHARS = 150
 
     module_function
@@ -23,7 +24,8 @@ module Mistri
                     string :output_mode, "content for the matches (the default), count for " \
                                          "how many there are", enum: %w[content count]
                     integer :context, "Lines to show around each match (default 0)"
-                    integer :head_limit, "Matches to show at most (default 50)"
+                    integer :head_limit, "Matches to show at most (default 50, " \
+                                         "#{MAX_HEAD_LIMIT} at most)"
                   }) do |args, context|
         Search.new(workspace, args, seconds:, bytes: window_bytes(context)).call
       end
@@ -42,7 +44,7 @@ module Mistri
         @pattern = args["pattern"].to_s
         @count_only = args["output_mode"] == "count"
         @context = args["context"].to_i.clamp(0, 10)
-        @limit = (args["head_limit"] || 50).to_i.clamp(1, 200)
+        @limit = (args["head_limit"] || 50).to_i.clamp(1, MAX_HEAD_LIMIT)
         @blocks = []
         @size = 0
         @shown = 0
@@ -168,8 +170,14 @@ module Mistri
       def more
         return unless @matches > @shown
 
-        advice = @full ? "pass a path" : "raise head_limit"
-        "\n[#{@matches} matches in all, #{@shown} shown. Narrow the pattern or #{advice}.]"
+        advice = ["Narrow the pattern", wider].compact.join(" or ")
+        "\n[#{@matches} matches in all, #{@shown} shown. #{advice}.]"
+      end
+
+      def wider
+        return "pass a path" if @full
+
+        "raise head_limit" if @limit < MAX_HEAD_LIMIT
       end
 
       def left_out
