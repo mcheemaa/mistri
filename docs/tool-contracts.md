@@ -277,7 +277,10 @@ it where it is stored. `after_tool` still receives the whole result.
 - The results that answer one assistant message share 200,000 bytes. Over
   that, the largest give way first, down to one size for all of them, and each
   keeps at least 2,000 bytes. A compaction never makes one turn smaller, so
-  this is what keeps a turn inside the model's window.
+  this is what keeps a turn inside the model's window. The bytes are shared
+  among the results as the tools returned them, because `after_tool` runs on
+  each result just before it is stored: a result that a hook then makes
+  smaller still counts at its size, up to its limit.
 - An image is not counted and is never cut.
 - `cut` on the tool message holds the true size, as in
   `{ "bytes" => 2062500, "lines" => 62500 }`. It is nil on a result stored
@@ -332,11 +335,13 @@ agent = Mistri.agent("claude-opus-5-5", tools: tools, scratchpad: workspace)
   `delete_file`.
 - A note tells the model what the scratchpad is for. After a compaction that
   summarized it, the note is appended again with what the scratchpad holds.
-- `scratchpad/tool-results/` is read-only to the model. It may keep notes of
-  its own elsewhere under `scratchpad/`. The folder's own path is refused as
-  well, and so is a path that differs from it by capitals, accents or another
-  form of its letters, since a store may match such a path to the folder. A
-  store that matches paths by rules beyond those is the host's to guard.
+- `scratchpad/tool-results/` is read-only to the model, so that it does not
+  write over a saved result by mistake. It may keep notes of its own elsewhere
+  under `scratchpad/`. The folder's own path is refused as well, and so is a
+  path that differs from it by capitals or accents. The check guards against a
+  mistake and is not a boundary: a store may match further letters to the
+  folder, as MySQL's default collation matches `ł` to `l`, and such a path
+  then reaches a saved result as any path reaches the host's own documents.
 - A result with an image is cut and not saved. So is a result the scratchpad
   cannot take: its line says it could not be saved, and Mistri prints a warning.
 - A tool defined with `save_result: false` is cut and never saved. The document
