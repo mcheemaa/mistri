@@ -275,6 +275,19 @@ Mistri.agent(
 )
 ```
 
+### An empty completion after text ends the turn
+
+A model that has written to the user and then called a tool often answers the
+tool's result with an empty completion. 0.7.0 sent the same request up to
+three more times. The turn now ends there.
+
+- `result.text` of such a run reads the text the model wrote before the tool
+  call, which `result.said` holds. It read the empty final message before. A
+  host that shows the streamed text and then adds `result.text` reads
+  `result.message.text` for the final message alone.
+- An empty completion is still retried while the model has written no text
+  since the user's last message.
+
 ### A gated tool tells the model
 
 The description a provider receives for a tool with `needs_approval` now ends
