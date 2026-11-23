@@ -84,7 +84,7 @@ module Mistri
       def search(path, regexp)
         content = @workspace.read(path).to_s
         lines = content.lines
-        start = 0
+        offset = 0
         lines.each_with_index do |line, index|
           break @late = true if clock > @deadline
 
@@ -92,18 +92,18 @@ module Mistri
           unless found.empty?
             @lines += 1
             @matches += found.length
-            show(path, lines, index, found, start) unless @count_only
+            show(path, lines, index, found, offset) unless @count_only
           end
-          start += line.length
+          offset += line.length
         end
         @searched += content.bytesize
       end
 
-      def show(path, lines, index, found, start)
+      def show(path, lines, index, found, offset)
         line = lines[index]
         if line.length > LONG_LINE_CHARS
           found.first([@limit - @shown, 0].max).each do |match|
-            add(around(path, index, line, match, start), 1)
+            add(around(path, index, line, match, offset), 1)
           end
         elsif @shown < @limit
           add(with_context(path, lines, index), found.length)
@@ -125,10 +125,10 @@ module Mistri
         (from..to).map { |n| "#{path}:#{n + 1}: #{lines[n].chomp[0, LONG_LINE_CHARS]}" }.join("\n")
       end
 
-      def around(path, index, line, match, start)
+      def around(path, index, line, match, offset)
         from = [match.begin(0) - MATCH_SIDE_CHARS, 0].max
         to = [match.end(0) + MATCH_SIDE_CHARS, line.length].min
-        "#{path}:#{index + 1}: [character #{start + match.begin(0)}] " \
+        "#{path}:#{index + 1}: [character #{offset + match.begin(0)}] " \
           "#{"..." if from.positive?}#{line[from...to].chomp}#{"..." if to < line.length}"
       end
 

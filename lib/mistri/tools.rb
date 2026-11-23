@@ -18,8 +18,8 @@ module Mistri
 
     module_function
 
-    # The workspace a built-in document tool was bound to, or nil for any
-    # other tool: files in code works on it, and only through these tools.
+    # files in code works only through a built-in document tool, on the
+    # workspace that tool is bound to.
     def bound_workspace(tool) = BOUND_WORKSPACES[tool]
 
     def bind(workspace, tool)

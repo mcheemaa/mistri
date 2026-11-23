@@ -65,25 +65,23 @@ module Mistri
 
     def shown_lines(lines, from, limit, bytes)
       size = 0
-      start = lines.first(from - 1).sum(&:length)
+      offset = lines.first(from - 1).sum(&:length)
       lines[from - 1, limit].each_with_index.with_object([]) do |(line, index), shown|
-        entry = "#{from + index}: #{shown_line(line.chomp, start, bytes)}"
+        entry = "#{from + index}: #{shown_line(line.chomp, offset, bytes)}"
         break shown if size + entry.bytesize > bytes && shown.any?
 
         shown << entry
         size += entry.bytesize + 1
-        start += line.length
+        offset += line.length
       end
     end
 
-    # start is where the line begins in the document, in characters, which
-    # is what unit characters counts from.
-    def shown_line(line, start, bytes)
+    def shown_line(line, offset, bytes)
       kept = fitting(line[0, LONG_LINE_CHARS], bytes)
       return line if kept.length == line.length
 
       "#{kept} [line cut: #{line.length - kept.length} more characters. Read on with unit " \
-        "characters and offset #{start + kept.length}.]"
+        "characters and offset #{offset + kept.length}.]"
     end
 
     def fitting(text, bytes)
