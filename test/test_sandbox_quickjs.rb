@@ -64,6 +64,22 @@ class TestSandboxQuickJS < Minitest::Test
     assert_operator Process.clock_gettime(Process::CLOCK_MONOTONIC) - started, :<, 5
   end
 
+  def test_a_run_makes_no_call_after_its_total_limit
+    sandbox = Mistri::Sandbox::QuickJS.new(wasm: @wasm, timeout: 1, total_timeout: 0.3)
+    host = lambda do |_operation, _payload|
+      sleep 0.2
+      "read"
+    end
+
+    outcome = sandbox.run(<<~JS, host:)
+      let calls = 0;
+      try { while (true) { files.read("a"); calls++; } } catch (error) { return [calls, error.message]; }
+    JS
+
+    assert_equal [2, "the run passed its limit of 0.3 seconds, so no more calls are answered"],
+                 outcome.value
+  end
+
   def test_what_the_code_prints_is_kept_up_to_a_bound
     outcome = @sandbox.run(<<~JS, host: ->(_operation, _payload) {})
       const line = "x".repeat(10000);

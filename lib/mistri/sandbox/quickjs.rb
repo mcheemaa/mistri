@@ -60,20 +60,20 @@ module Mistri
       MAX_PRINTED_BYTES = 100_000
       private_constant :WASI, :EXPORTS, :PRELUDE, :FORKED, :MAX_PRINTED_BYTES
 
-      def initialize(wasm:, timeout: 10, memory: 64 * 1024 * 1024, sha256: SHA256)
+      def initialize(wasm:, timeout: 10, total_timeout: 300, memory: 64 * 1024 * 1024,
+                     sha256: SHA256)
         unless Digest::SHA256.file(wasm).hexdigest == sha256
           raise ConfigurationError, "#{wasm} is not the QuickJS build this adapter was written for"
         end
 
         @wasm = wasm
-        @timeout = timeout
-        @memory = memory
+        @limits = { timeout:, total_timeout:, memory: }
         @building = Mutex.new
       end
 
       def run(code, host:)
         engine, wasm_module = engine_here
-        Run.new(engine, wasm_module, host, @timeout, @memory).call(code)
+        Run.new(engine, wasm_module, host, **@limits).call(code)
       rescue Wasmtime::Error => e
         raise Stopped, "the code was stopped: #{e.message.lines.first.to_s.strip}"
       end
@@ -97,11 +97,13 @@ module Mistri
 
       # One run in one new instance.
       class Run
-        def initialize(engine, wasm_module, host, timeout, memory)
+        def initialize(engine, wasm_module, host, timeout:, total_timeout:, memory:)
           @host = host
           @timeout = timeout
+          @total_timeout = total_timeout
           @memory = memory
           @deadline = now + timeout
+          @ends = now + total_timeout
           @output = []
           @printed = 0
           @dropped = 0
@@ -206,11 +208,20 @@ module Mistri
             @returned = true
             @value = request["value"]
           when "throw" then @thrown = request["message"].to_s
-          else return { "value" => unclocked { @host.call(operation, request) } }
+          else return { "value" => asked(operation, request) }
           end
           { "value" => nil }
         rescue StandardError => e
           { "error" => e.message }
+        end
+
+        def asked(operation, request)
+          if now > @ends
+            raise Error, "the run passed its limit of #{@total_timeout} seconds, so no more " \
+                         "calls are answered"
+          end
+
+          unclocked { @host.call(operation, request) }
         end
 
         def keep(text)

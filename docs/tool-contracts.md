@@ -412,11 +412,13 @@ the messages, not as a message: the model reads the result in its code, so it
 is not sent again with later requests. The entry of a write holds the size of
 its content, not the content.
 
-Limits: ten seconds of the code's own computing and 64 MB a run, set with
-`timeout:` and `memory:`. A run that passes either is stopped and the model
-is told. The time a tool or a document takes to answer the code does not
-count, so a slow tool does not end the run that called it. Once the agent's
-run is stopped, every further call from the code is refused. The result of
+Limits: ten seconds of the code's own computing, five minutes for the whole
+run with the calls it makes, and 64 MB, set with `timeout:`, `total_timeout:`
+and `memory:`. A run that passes the first or the third is stopped and the
+model is told. The time a tool or a document takes to answer the code does not
+count against the first, so a slow tool does not end the run that called it.
+It counts against the second: after the total limit, and once the agent's run
+is stopped, every further call from the code is refused. The result of
 `run_code` keeps 10,000 bytes, and with a scratchpad the whole is saved. The
 tool's description states the limit and tells the model to write a longer
 output to a document.
