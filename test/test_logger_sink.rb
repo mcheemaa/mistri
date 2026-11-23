@@ -86,7 +86,7 @@ class TestLoggerSink < Minitest::Test # rubocop:disable Metrics/ClassLength -- o
     sink.call(Mistri::Event.new(type: :thinking_end, content_index: 0,
                                 content: "Weighing the options"))
     sink.call(Mistri::Event.new(type: :approval_needed,
-                                tool_call: tool_call("send_gift", { "to" => "sarah" })))
+                                tool_call: tool_call("send_invite", { "to" => "sarah" })))
     sink.call(Mistri::Event.new(type: :compacting))
     sink.call(Mistri::Event.new(type: :compaction, content: "The story so far"))
     sink.call(Mistri::Event.new(type: :compaction, content: "The story again",
@@ -99,7 +99,7 @@ class TestLoggerSink < Minitest::Test # rubocop:disable Metrics/ClassLength -- o
                                 status: "done", content: "found it"))
 
     assert_match(/INFO \[mistri\] thinking "Weighing the options"/, io.string)
-    assert_match(/INFO \[mistri\] approval needed send_gift#c1 \{"to":"sarah"\}/, io.string)
+    assert_match(/INFO \[mistri\] approval needed send_invite#c1 \{"to":"sarah"\}/, io.string)
     assert_match(/INFO \[mistri\] compacting/, io.string)
     assert_match(/INFO \[mistri\] compacted "The story so far"/, io.string)
     assert_match(/INFO \[mistri\] compacted \(claude-sonnet-5-5\) "The story again"/, io.string)
@@ -144,7 +144,7 @@ class TestLoggerSink < Minitest::Test # rubocop:disable Metrics/ClassLength -- o
     sink = Mistri::Sinks::Logger.new(logger)
 
     sink.run_finished(Mistri::Result.new(message: nil, status: :awaiting_approval,
-                                         pending: [tool_call("send_gift")]))
+                                         pending: [tool_call("send_invite")]))
     sink.run_finished(Mistri::Result.new(message: nil, status: :completed, handed_off: true))
     sink.run_finished(Mistri::Result.new(message: nil, status: :aborted))
     sink.run_finished(Mistri::Result.new(message: nil, status: :budget))
@@ -329,15 +329,15 @@ class TestLoggerSink < Minitest::Test # rubocop:disable Metrics/ClassLength -- o
   def test_resume_frames_its_outcomes_including_still_pending
     logger, io = capture
     Mistri.logger = logger
-    gated = Mistri::Tool.define("send_gift", "Sends.", needs_approval: true) { "sent" }
+    gated = Mistri::Tool.define("send_invite", "Sends.", needs_approval: true) { "sent" }
     provider = Mistri::Providers::Fake.new(turns: [
-                                             { tool_calls: [{ name: "send_gift",
+                                             { tool_calls: [{ name: "send_invite",
                                                               arguments: {} }] },
                                              { text: "Sent it." }
                                            ])
     agent = Mistri::Agent.new(provider:, tools: [gated])
 
-    suspended = agent.run("send sarah a gift")
+    suspended = agent.run("send sarah an invite")
     agent.resume
     agent.session.approve(suspended.pending.fetch(0).id)
     finished = agent.resume
@@ -345,11 +345,11 @@ class TestLoggerSink < Minitest::Test # rubocop:disable Metrics/ClassLength -- o
     assert_predicate finished, :completed?
     log = io.string
 
-    assert_match(/approval needed send_gift#\S+ \{\}/, log)
+    assert_match(/approval needed send_invite#\S+ \{\}/, log)
     assert_equal 2, log.scan("done suspended (1 approval pending)").length,
                  "the run frame and the still-pending resume frame both report suspension"
     assert_equal 2, log.scan("resume (fake-1, 1 tool)").length
-    assert_match(/tool send_gift#\S+ ok/, log)
+    assert_match(/tool send_invite#\S+ ok/, log)
     assert_match(/done completed in/, log)
   end
 

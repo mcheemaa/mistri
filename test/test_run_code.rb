@@ -44,7 +44,7 @@ class TestRunCode < Minitest::Test
   end
 
   def test_code_cannot_make_a_call_that_needs_approval_or_one_a_hook_blocks
-    agent, = run_code([["tool", { "name" => "send_gift", "arguments" => {} }],
+    agent, = run_code([["tool", { "name" => "issue_refund", "arguments" => {} }],
                        ["tool", { "name" => "search", "arguments" => { "status" => "blocked" } }],
                        ["tool", { "name" => "search", "arguments" => { "status" => 7 } }],
                        ["tool", { "name" => "run_code", "arguments" => { "code" => "[]" } }]])
@@ -107,7 +107,7 @@ class TestRunCode < Minitest::Test
   def run_code(script)
     search = Mistri::Tool.define("search", "Searches orders.",
                                  schema: -> { string :status, "Status" }) { "3 open orders" }
-    gift = Mistri::Tool.define("send_gift", "Sends a gift.", needs_approval: true) do
+    refund = Mistri::Tool.define("issue_refund", "Refunds an order.", needs_approval: true) do
       @sent << true
       "sent"
     end
@@ -118,7 +118,7 @@ class TestRunCode < Minitest::Test
     end
     calls = [{ name: "run_code", arguments: { code: JSON.generate(script) } }]
     provider = Mistri::Providers::Fake.new(turns: [{ tool_calls: calls }, { text: "done" }])
-    agent = Mistri::Agent.new(provider:, tools: [search, gift], scratchpad: @workspace,
+    agent = Mistri::Agent.new(provider:, tools: [search, refund], scratchpad: @workspace,
                               sandbox: ScriptedSandbox.new, before_tool: block)
     agent.run("go") do |event|
       events << "started:#{event.tool_call.name}" if event.type == :tool_started

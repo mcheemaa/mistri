@@ -13,18 +13,18 @@ class TestControlSurfacesIntegration < Minitest::Test
       store = Mistri::Stores::JSONL.new(dir)
       recipient = Integration.codename
       sent = []
-      gift = Mistri::Tool.define("send_gift", "Sends a real gift to a person.",
-                                 needs_approval: true,
-                                 schema: lambda {
-                                   string :to, "Recipient name", required: true
-                                 }) do |args|
+      invite = Mistri::Tool.define("send_invite", "Sends a real invitation to a person.",
+                                   needs_approval: true,
+                                   schema: lambda {
+                                     string :to, "Recipient name", required: true
+                                   }) do |args|
         sent << args["to"]
-        "gift queued for #{args["to"]}"
+        "invitation queued for #{args["to"]}"
       end
       session = Mistri::Session.new(store:)
-      first = Mistri::Agent.new(provider: Mistri.provider(model), tools: [gift], session:)
+      first = Mistri::Agent.new(provider: Mistri.provider(model), tools: [invite], session:)
 
-      suspended = first.run("Send a gift to #{recipient}. Use the tool.")
+      suspended = first.run("Send an invitation to #{recipient}. Use the tool.")
 
       assert_predicate suspended, :awaiting_approval?
       assert_empty sent, "the gated tool ran before approval"
@@ -32,7 +32,7 @@ class TestControlSurfacesIntegration < Minitest::Test
       # The decision arrives later, from a bare session on the same files.
       Mistri::Session.new(store:, id: session.id).approve(suspended.pending.first.id)
 
-      resumed = Mistri::Agent.new(provider: Mistri.provider(model), tools: [gift],
+      resumed = Mistri::Agent.new(provider: Mistri.provider(model), tools: [invite],
                                   session: Mistri::Session.new(store:, id: session.id)).resume
 
       assert_predicate resumed, :completed?

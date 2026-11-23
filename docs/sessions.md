@@ -220,17 +220,17 @@ earlier thinking. The run continues. See
 Declare a boolean or argument predicate on the tool:
 
 ```ruby
-send_gift = Mistri::Tool.define(
-  "send_gift", "Sends a physical gift.",
+issue_refund = Mistri::Tool.define(
+  "issue_refund", "Refunds an order.",
   schema: lambda {
-    string :recipient_id, "Recipient ID", required: true
-    number :value_usd, "Gift value", required: true
+    string :order_id, "Order ID", required: true
+    number :amount_usd, "Refund amount", required: true
   },
-  needs_approval: ->(args) { args.fetch("value_usd") > 100 },
+  needs_approval: ->(args) { args.fetch("amount_usd") > 100 },
 ) do |args|
-  Gifts.send!(
-    recipient_id: args.fetch("recipient_id"),
-    value_usd: args.fetch("value_usd"),
+  Refunds.issue!(
+    order_id: args.fetch("order_id"),
+    amount_usd: args.fetch("amount_usd"),
   )
 end
 ```
@@ -243,7 +243,7 @@ never reaches the approval.
 When the model calls it:
 
 ```ruby
-result = agent.run("Send the launch gift to customer 42")
+result = agent.run("Refund all 240 dollars of order 42")
 result.awaiting_approval? # => true
 
 call = result.pending.first
@@ -256,7 +256,7 @@ host's own UI. A decision needs only a store and Session:
 ```ruby
 session = Mistri::Session.new(store: store, id: session_id)
 session.approve(call.id, note: "Approved by finance")
-# or: session.deny(call.id, note: "Use the standard gift instead")
+# or: session.deny(call.id, note: "Refund the shipping fee only")
 ```
 
 The decision may be appended from another process at any later time. Nothing

@@ -98,15 +98,15 @@ A tool can require approval. The run parks the call and returns immediately;
 no thread waits for the decision.
 
 ```ruby
-send_gift = Mistri::Tool.define(
-  "send_gift", "Sends the selected gift.",
-  schema: -> { number :total_usd, "Quoted total", required: true },
-  needs_approval: ->(args) { args.fetch("total_usd") > 500 },
-) { |args| Gifts.send!(args) }
+issue_refund = Mistri::Tool.define(
+  "issue_refund", "Refunds an order.",
+  schema: -> { number :amount_usd, "Refund amount", required: true },
+  needs_approval: ->(args) { args.fetch("amount_usd") > 500 },
+) { |args| Refunds.issue!(args) }
 
-agent = Mistri.agent("claude-opus-5-5", tools: [send_gift])
+agent = Mistri.agent("claude-opus-5-5", tools: [issue_refund])
 
-result = agent.run("Send the executive box to Sarah.")
+result = agent.run("Refund all 640 dollars of order 1042.")
 result.awaiting_approval? # => true; the handler did not run
 
 call = result.pending.fetch(0)

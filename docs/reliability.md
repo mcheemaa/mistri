@@ -64,15 +64,15 @@ Build write tools around a domain idempotency key or reconciliation handle:
 
 ```ruby
 Mistri::Tool.define(
-  "send_gift", "Sends one gift order.",
+  "place_order", "Places one order.",
   schema: lambda {
     string :order_id, "Host-issued idempotency key", required: true
-    string :recipient_id, "Recipient ID", required: true
+    string :customer_id, "Customer ID", required: true
   },
 ) do |args|
-  GiftOrders.create_once!(
+  Orders.create_once!(
     idempotency_key: args.fetch("order_id"),
-    recipient_id: args.fetch("recipient_id"),
+    customer_id: args.fetch("customer_id"),
   )
 end
 ```

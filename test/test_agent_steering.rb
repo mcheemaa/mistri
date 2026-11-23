@@ -90,14 +90,14 @@ class TestAgentSteering < Minitest::Test
   def test_a_steer_composes_with_approval_resume
     store = Mistri::Stores::Memory.new
     session = Mistri::Session.new(store:)
-    gated = Mistri::Tool.define("send_gift", "Sends.", needs_approval: true) { "sent" }
-    gift_call = { tool_calls: [{ name: "send_gift", arguments: {} }] }
-    first = Mistri::Agent.new(provider: Mistri::Providers::Fake.new(turns: [gift_call]),
+    gated = Mistri::Tool.define("send_invite", "Sends.", needs_approval: true) { "sent" }
+    invite_call = { tool_calls: [{ name: "send_invite", arguments: {} }] }
+    first = Mistri::Agent.new(provider: Mistri::Providers::Fake.new(turns: [invite_call]),
                               tools: [gated], session:)
     call = first.run("send it").pending.first
 
     # While suspended, the user adds a thought and then approves.
-    session.steer("gift wrap it too")
+    session.steer("add the agenda too")
     session.approve(call.id)
 
     provider = Mistri::Providers::Fake.new(turns: [{ text: "Sent, wrapped." }])
@@ -107,7 +107,7 @@ class TestAgentSteering < Minitest::Test
     assert_predicate result, :completed?
     resumed = provider.requests.last[:messages]
 
-    assert(resumed.any? { |m| m.user? && m.text == "gift wrap it too" })
+    assert(resumed.any? { |m| m.user? && m.text == "add the agenda too" })
     assert(resumed.any?(&:tool?), "the approved tool result precedes the steer")
   end
 
