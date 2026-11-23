@@ -8,24 +8,26 @@ module Mistri
     module_function
 
     def read_file(workspace)
-      Tool.define("read_file",
-                  "Read a document. Lines come back with their numbers, at most " \
-                  "#{MAX_READ_CHARS} characters a call: pass offset and limit to read " \
-                  "further. For a very long line, pass unit \"characters\" to read it by " \
-                  "character offset. The first line states the document's version, which " \
-                  "write_file takes as if_version.",
-                  save_result: false,
-                  schema: lambda {
-                    string :path, "Document path", required: true
-                    integer :offset, "The line to start at, from 1. With unit characters, " \
-                                     "the character, from 0"
-                    integer :limit, "How many lines, or characters, to read"
-                    string :unit, "lines (the default) or characters", enum: %w[lines characters]
-                  }) do |args|
+      tool = Tool.define("read_file",
+                         "Read a document. Lines come back with their numbers, at most " \
+                         "#{MAX_READ_CHARS} characters a call: pass offset and limit to read " \
+                         "further. For a very long line, pass unit \"characters\" to read it by " \
+                         "character offset. The first line states the document's version, which " \
+                         "write_file takes as if_version.",
+                         save_result: false,
+                         schema: lambda {
+                           string :path, "Document path", required: true
+                           integer :offset, "The line to start at, from 1. With unit characters, " \
+                                            "the character, from 0"
+                           integer :limit, "How many lines, or characters, to read"
+                           string :unit, "lines (the default) or characters",
+                                  enum: %w[lines characters]
+                         }) do |args|
         with_document(workspace, args) do |content|
           Tools.window(args["path"], content, args["offset"], args["limit"], args["unit"])
         end
       end
+      bind(workspace, tool)
     end
 
     def window(path, content, offset = nil, limit = nil, unit = nil)

@@ -6,16 +6,16 @@ module Mistri
 
     def write_file(workspace)
       atomic = atomic_workspace?(workspace)
-      Tool.define("write_file",
-                  "Create a document, or replace one. To replace a document that exists, " \
-                  "pass if_version, the version read_file showed for it. A write without " \
-                  "the current version is refused and returns the document as it is now.",
-                  eager_input_streaming: true, save_result: false,
-                  schema: lambda {
-                    string :path, "Document path", required: true
-                    string :content, "The full document content", required: true
-                    string :if_version, "The version of the document this replaces"
-                  }) do |args|
+      tool = Tool.define("write_file",
+                         "Create a document, or replace one. To replace a document that exists, " \
+                         "pass if_version, the version read_file showed for it. A write without " \
+                         "the current version is refused and returns the document as it is now.",
+                         eager_input_streaming: true, save_result: false,
+                         schema: lambda {
+                           string :path, "Document path", required: true
+                           string :content, "The full document content", required: true
+                           string :if_version, "The version of the document this replaces"
+                         }) do |args|
         path = args["path"]
         refusal = unusable_path(path) || read_only(path)
         next refusal if refusal
@@ -30,6 +30,7 @@ module Mistri
 
         "Wrote #{path} (#{written.length} chars), version #{version(written)}"
       end
+      bind(workspace, tool)
     end
 
     def write_legacy(workspace, path, content, if_version)

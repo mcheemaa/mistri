@@ -7,15 +7,16 @@ module Mistri
     module_function
 
     def list_files(workspace)
-      Tool.define("list_files",
-                  "List documents with their sizes, optionally under a prefix.",
-                  save_result: false,
-                  schema: -> { string :prefix, "Only paths starting with this" }) do |args|
+      tool = Tool.define("list_files",
+                         "List documents with their sizes, optionally under a prefix.",
+                         save_result: false,
+                         schema: -> { string :prefix, "Only paths starting with this" }) do |args|
         prefix = args["prefix"].to_s
         next listing(workspace, nil) if prefix.empty?
 
         unusable_path(prefix, prefix: true) || listing(workspace, prefix)
       end
+      bind(workspace, tool)
     end
 
     # Sizes come from a workspace that answers sizes, so a listing never

@@ -192,16 +192,48 @@ module Mistri
 
       name = FILES_FROM_CODE[operation]
       raise Error, "the code asked for #{operation}, which does not exist" unless name
-      raise Error, "this agent has no documents" unless @documents
-      raise Error, "you do not have the #{name} tool" unless @tools_by_name.key?(name)
 
-      arguments = payload.slice("path", "prefix").compact
-      bytes = payload["content"]&.to_s&.bytesize
-      arguments["content"] = "[#{bytes} bytes]" if bytes
-      call = ToolCall.new(id: "code_#{SecureRandom.hex(8)}", name:, arguments:)
-      settle_from_code(call, context) do
-        value, line = Tools.file_from_code(@documents, operation, payload, run)
-        [value, rewritten_from_code(call, line, context).last]
+      workspace = documents_of(name, operation)
+      call = ToolCall.new(id: "code_#{SecureRandom.hex(8)}", name:,
+                          arguments: payload.slice("path", "prefix", "content").compact)
+      call, refusal = prepare_call(call, normalize: true, signal: context.signal)
+      settle_from_code(call, context, refusal:, shown: without_content(call)) do
+        file_from_code(workspace, operation, call, context, run)
+      end
+    end
+
+    # files in code is the built-in document tool of the same kind, on the
+    # workspace that tool is bound to. A host's own tool of that name has a
+    # handler of its own, so code reaches it only as a tool.
+    def documents_of(name, operation)
+      tool = @tools_by_name[name]
+      raise Error, "you do not have the #{name} tool" unless tool
+
+      Tools.bound_workspace(tool) ||
+        raise(Error, "files.#{operation} is not available, because #{name} here is the " \
+                     "host's own tool. Call tools.#{name} instead.")
+    end
+
+    def without_content(call)
+      bytes = call.arguments["content"]&.to_s&.bytesize if call.arguments.is_a?(Hash)
+      bytes ? call.with(arguments: call.arguments.merge("content" => "[#{bytes} bytes]")) : call
+    end
+
+    # A read gives after_tool the document, because that is what the code
+    # receives.
+    def file_from_code(workspace, operation, call, context, run)
+      value, line = Tools.file_from_code(workspace, operation, call.arguments, run)
+      return [value, line] unless @after_tool
+
+      seen = operation == "read" ? value : line
+      text, result = rewritten_from_code(call, seen, context)
+      return [nil, result] if result.is_a?(ToolResult) && result.error?
+      return [value, line] if text == seen
+
+      case operation
+      when "read" then [text, "Read #{call.arguments["path"]} (#{text.bytesize} bytes)"]
+      when "list" then [text.split("\n"), text]
+      else [value, text]
       end
     end
 
@@ -219,9 +251,10 @@ module Mistri
 
     # A call from code is stored as an entry beside the messages, not as a
     # message, because the model reads its result in the code.
-    def settle_from_code(call, context, refusal: nil, &)
+    def settle_from_code(call, context, shown: call, refusal: nil, &)
       refusal ||= refused_from_code(call, context)
-      value, result, seconds = refusal ? [nil, refusal, nil] : run_from_code(call, context, &)
+      value, result, seconds = refusal ? [nil, refusal, nil] : run_from_code(shown, context, &)
+      call = shown
       content, ui, tool_error = if result.is_a?(ToolResult)
                                   [result.content, result.ui, result.error?]
                                 else

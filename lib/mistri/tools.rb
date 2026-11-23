@@ -13,7 +13,19 @@ module Mistri
                 "newText" => "new_string", "new" => "new_string", "replace" => "new_string",
                 "replaceAll" => "replace_all", "file" => "path", "filename" => "path" }.freeze
 
+    BOUND_WORKSPACES = ObjectSpace::WeakMap.new
+    private_constant :BOUND_WORKSPACES
+
     module_function
+
+    # The workspace a built-in document tool was bound to, or nil for any
+    # other tool: files in code works on it, and only through these tools.
+    def bound_workspace(tool) = BOUND_WORKSPACES[tool]
+
+    def bind(workspace, tool)
+      BOUND_WORKSPACES[tool] = workspace
+      tool
+    end
 
     def files(workspace)
       [read_file(workspace), write_file(workspace), edit_file(workspace),

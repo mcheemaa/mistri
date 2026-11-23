@@ -385,21 +385,27 @@ with its own memory.
 What the code has:
 
 - `files.read(path)`, `files.write(path, text)`, `files.list(prefix)` and
-  `files.delete(path)` over the scratchpad's workspace. A read returns the
-  whole document. Each needs the document tool of the same kind among the
-  agent's tools. A write over a document that exists needs a read of it in the
-  same run, and `scratchpad/tool-results/` stays read-only.
+  `files.delete(path)`. Each is the document tool of the same kind, on the
+  workspace that tool is bound to, so the agent needs that tool. A read returns
+  the whole document. A write over a document that exists needs a read of it in
+  the same run, and `scratchpad/tool-results/` stays read-only. Where a document
+  tool is the host's own, code calls it as a tool, as in
+  `await tools.write_file({ path, content })`.
 - `await tools.NAME(arguments)` for every other tool of the agent. It returns
   the result's text, and a failed result is thrown as an error.
 - `console.log`, and the standard JavaScript objects. There is no network, no
   file system, no clock of the host, no timers and no `URL` class.
 
-A call from code is a tool call. It passes the tool's argument contract,
-`before_tool` and `after_tool`, and emits `:tool_started` and `:tool_result`
-with a call id that begins with `code_`. A tool that needs approval for the
-call is refused in the code with a message to call it directly. The call is
-stored as a `code_call` entry beside the messages, not as a message: the model
-reads the result in its code, so it is not sent again with later requests.
+A call from code is a tool call. It passes the tool's argument contract, its
+timeout, `before_tool` and `after_tool`, and emits `:tool_started` and
+`:tool_result` with a call id that begins with `code_`. `before_tool` is given
+what the code passed, the content of a write included, and the code receives
+what `after_tool` returned. For `files.read` that is the document. A tool that
+needs approval for the call, or that ends the turn, is refused in the code with
+a message to call it directly. The call is stored as a `code_call` entry beside
+the messages, not as a message: the model reads the result in its code, so it
+is not sent again with later requests. The entry of a write holds the size of
+its content, not the content.
 
 Limits: ten seconds of the code's own computing and 64 MB a run, set with
 `timeout:` and `memory:`. A run that passes either is stopped and the model

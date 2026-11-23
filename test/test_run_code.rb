@@ -108,6 +108,59 @@ class TestRunCode < Minitest::Test
     assert_equal %(printed\n["Ana, card [hidden]"]), agent.session.messages.find(&:tool?).text
   end
 
+  def test_a_write_from_code_shows_a_hook_its_content_and_stores_only_its_size
+    seen = []
+    watch = lambda do |call, _context|
+      seen << call.arguments["content"] if call.name == "write_file"
+      "no tables are dropped" if call.arguments["content"].to_s.include?("DROP")
+    end
+    replies, agent = answers([["write", { "path" => "scratchpad/a.md", "content" => "plan" }],
+                              ["write",
+                               { "path" => "scratchpad/b.md", "content" => "DROP TABLE" }]],
+                             scratchpad: @workspace, before_tool: watch)
+    stored = agent.session.entries.select { |entry| entry["type"] == "code_call" }
+
+    assert_equal ["plan", "DROP TABLE"], seen
+    assert_match(/Blocked: no tables are dropped/, replies[1])
+    assert_nil @workspace.read("scratchpad/b.md")
+    assert_equal(["[4 bytes]", "[10 bytes]"],
+                 stored.map { |entry| entry.dig("call", "arguments", "content") })
+  end
+
+  def test_code_reaches_a_hosts_own_document_tool_only_as_a_tool
+    written = []
+    schema = lambda do
+      string :path, "Path", required: true
+      string :content, "Content", required: true
+    end
+    own = Mistri::Tool.define("write_file", "Writes a document.", needs_approval: true,
+                                                                  schema:) do |args|
+      written << args
+      "written"
+    end
+    arguments = { "path" => "scratchpad/a.md", "content" => "x" }
+    replies, = answers([["write", arguments],
+                        ["tool", { "name" => "write_file", "arguments" => arguments }],
+                        ["read", { "path" => "scratchpad/notes.md" }]],
+                       tools: [own, Mistri::Tools.read_file(@workspace)], scratchpad: @workspace)
+
+    assert_empty written
+    assert_match(/files.write is not available, because write_file here is the host's own tool/,
+                 replies[0])
+    assert_match(/needs a person's approval/, replies[1])
+    assert_equal "old", replies[2]
+  end
+
+  def test_a_read_from_code_gives_after_tool_the_document
+    hide = ->(call, result, _context) { result.sub("old", "[hidden]") if call.name == "read_file" }
+    replies, agent = answers([["read", { "path" => "scratchpad/notes.md" }]],
+                             scratchpad: @workspace, after_tool: hide)
+    stored = agent.session.entries.find { |entry| entry["type"] == "code_call" }
+
+    assert_equal ["[hidden]"], replies
+    assert_equal "Read scratchpad/notes.md (8 bytes)", stored.dig("message", "content", 0, "text")
+  end
+
   def test_code_writes_over_a_document_only_after_reading_it
     agent, = run_code([["write", { "path" => "scratchpad/notes.md", "content" => "blind" }],
                        ["write", { "path" => "scratchpad/tool-results/x.txt", "content" => "x" }],
@@ -154,6 +207,14 @@ class TestRunCode < Minitest::Test
   end
 
   private
+
+  def answers(script, **)
+    calls = [{ name: "run_code", arguments: { code: JSON.generate(script) } }]
+    provider = Mistri::Providers::Fake.new(turns: [{ tool_calls: calls }, { text: "done" }])
+    agent = Mistri::Agent.new(provider:, sandbox: ScriptedSandbox.new, **)
+    agent.run("go")
+    [JSON.parse(agent.session.messages.find(&:tool?).text.lines.last), agent]
+  end
 
   def run_code(script)
     search = Mistri::Tool.define("search", "Searches orders.",
