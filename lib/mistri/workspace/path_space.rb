@@ -36,7 +36,6 @@ module Mistri
           @scratchpad.list(prefix).select { |path| scratch?(path) }).sort
       end
 
-      # Conditional writes hold only where both workspaces make them.
       def atomic_writes?
         [@files, @scratchpad].all? { |workspace| Tools.atomic_workspace?(workspace) }
       end

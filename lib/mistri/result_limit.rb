@@ -2,19 +2,12 @@
 
 module Mistri
   # How much of a tool result is stored, and so sent to the model with every
-  # later request. One result keeps its start up to bytes. The results that
-  # answer one assistant message share turn_bytes: a compaction never makes
-  # one turn smaller, so a turn has to fit by itself.
-  #
-  #   Mistri.agent("claude-opus-5-5", result_limit: Mistri::ResultLimit.new(bytes: 20_000))
-  #
-  # result_limit: false stores every result whole.
+  # later request. The results that answer one assistant message share
+  # turn_bytes, because a compaction never makes one turn smaller.
   class ResultLimit
     DEFAULT_BYTES = 50_000
     DEFAULT_TURN_BYTES = 200_000
-    # What each result of a crowded turn keeps at least.
-    FLOOR_BYTES = 2_000
-    # What is shown of a result whose whole is saved.
+    SHARED_FLOOR_BYTES = 2_000
     SHOWN_BYTES = 2_000
 
     OWN = "[This result was %<bytes>d bytes in %<lines>d lines. Only its start is above. The " \
@@ -33,18 +26,17 @@ module Mistri
     private_constant :OWN, :SHARED, :UNSAVED, :SAVED
 
     # The limit of each result of one assistant message, asked for as the
-    # results are stored one after another. left holds the turn to its bytes
-    # when a hook made a result larger than the tool returned it.
+    # results are stored. left is tracked as well, because a hook can make a
+    # result larger than the tool returned it.
     class Turn
       def initialize(level, left)
         @level = level
         @left = left
       end
 
-      # own is the limit the result would have by itself.
-      def limit(own)
-        left = [@left, FLOOR_BYTES].max
-        [own, @level || own, left].min
+      def limit(own_limit)
+        left = [@left, SHARED_FLOOR_BYTES].max
+        [own_limit, @level || own_limit, left].min
       end
 
       def spend(bytes)
@@ -74,20 +66,11 @@ module Mistri
       @turn_bytes = turn_bytes
     end
 
-    # sizes are the results of one assistant message as the tools returned
-    # them, each no larger than its own limit. Over the turn's bytes, the
-    # largest give way first, down to one level for all of them, so a small
-    # result stays whole beside a large one. spent is what the message's
-    # earlier results already hold.
     def turn(sizes, spent: 0)
       left = turn_bytes - spent
       Turn.new(sizes.sum <= left ? nil : level(sizes, [left, 0].max), left)
     end
 
-    # The content with its text cut to limit bytes, and what was cut: the
-    # true bytes and lines, or nil for content that fits. Images stay.
-    # shared marks a limit that came from the turn, and unsaved a result
-    # that a scratchpad failed to save.
     def bound(content, limit = bytes, shared: false, unsaved: false)
       texts = self.class.texts(content)
       size = texts.sum(&:bytesize)
@@ -103,7 +86,6 @@ module Mistri
       [cut_to(content, [limit - notice.bytesize - 1, 0].max, notice), cut]
     end
 
-    # The start of a text whose whole is saved at path, and what was cut.
     def shown(text, path)
       cut = { "bytes" => text.bytesize, "lines" => lines(text), "path" => path }
       ["#{start_of(text, SHOWN_BYTES)}\n#{format(SAVED, **cut.transform_keys(&:to_sym))}", cut]
@@ -111,6 +93,8 @@ module Mistri
 
     private
 
+    # The largest results give way first, down to one level for all of them,
+    # so a small result stays whole beside a large one.
     def level(sizes, left)
       remaining = sizes.length
       sizes.sort.each do |size|
@@ -119,7 +103,7 @@ module Mistri
         left -= size
         remaining -= 1
       end
-      [left / remaining, FLOOR_BYTES].max
+      [left / remaining, SHARED_FLOOR_BYTES].max
     end
 
     def cut_to(content, limit, notice)
@@ -137,7 +121,7 @@ module Mistri
       blocks << Content::Text.new(text: notice)
     end
 
-    # Whole lines where the text has them, and never half a character.
+    # A cut at a line end, unless that loses more than half of what fits.
     def start_of(text, limit)
       return text if text.bytesize <= limit
 

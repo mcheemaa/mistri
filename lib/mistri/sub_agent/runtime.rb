@@ -262,7 +262,6 @@ module Mistri
                 "background runtime skills would add tools outside the durable grant"
         end
 
-        # An agent with documents adds the document tools when it has none.
         def validate_documents!(options, names)
           return unless options.key?(:files) || options.key?(:scratchpad)
           return if names.include?("read_file")

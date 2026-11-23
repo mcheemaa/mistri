@@ -8,19 +8,11 @@ require_relative "../sandbox"
 module Mistri
   module Sandbox
     # JavaScript in QuickJS compiled to WebAssembly, run by wasmtime inside the
-    # host's process. Not auto-required: add the wasmtime gem and
-    #
-    #   require "mistri/sandbox/quickjs"
-    #   sandbox = Mistri::Sandbox::QuickJS.new(wasm: "vendor/quickjs.wasm")
-    #
-    # wasm is the file quickjs.wasm of the npm package quickjs-wasi, version
-    # 3.7.0. Another build is refused unless its SHA-256 is passed. The module
-    # imports twelve functions and every one is a block below, so the code
-    # reaches nothing else. Each run gets a new instance with its own memory.
-    #
-    # A run holds the interpreter lock while the code computes: other threads
-    # of the process wait until the code calls out or reaches its deadline.
-    # The deadline counts that computing, not the time the host takes to answer.
+    # host's process. Not auto-required, because wasmtime is an optional gem.
+    # The pinned build is quickjs.wasm of the npm package quickjs-wasi 3.7.0.
+    # Every import of the module is defined below, so the code reaches nothing
+    # else. A run holds the interpreter lock while the code computes: other
+    # threads wait until it calls out or reaches its deadline.
     class QuickJS
       SHA256 = "c0bd8f296e18cf074969f6401b9ecb72609a1323818ec2b9bf7a8f8d740d1363"
       WASI = "wasi_snapshot_preview1"
@@ -30,7 +22,6 @@ module Mistri
         qjs_is_job_pending qjs_set_memory_limit qjs_set_interrupt_handler qjs_get_global
         qjs_set_prop_string qjs_new_host_function wasm_malloc wasm_free
       ].freeze
-      # What the code sees: files, tools and console, each a call to the host.
       PRELUDE = <<~JS
         (() => {
           const host = globalThis.__host;
@@ -132,8 +123,8 @@ module Mistri
           @call[:wasm_free].call(name)
         end
 
-        # Every import of the module. The clock and the random source answer
-        # constants, so the code learns nothing about the host from them.
+        # The clock and the random source answer constants, so the code learns
+        # nothing about the host from them.
         def linker(engine)
           linker = Wasmtime::Linker.new(engine)
           system_imports(linker)
@@ -173,7 +164,6 @@ module Mistri
           end
         end
 
-        # What the code has no use for answers an error code or nothing.
         def refused_imports(linker)
           linker.func_new(WASI, "fd_close", [:i32], [:i32]) { |_caller, _fd| 52 }
           linker.func_new(WASI, "fd_fdstat_get", %i[i32 i32], [:i32]) { |_caller, *| 8 }

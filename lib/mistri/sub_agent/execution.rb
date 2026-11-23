@@ -68,8 +68,6 @@ module Mistri
         agent.run(task, signal: signal, &tagged)
       end
 
-      # A worker shares the scratchpad it is given and is told a folder of
-      # its own in it.
       def with_own_folder(agent_options, origin)
         shared = agent_options[:scratchpad]
         return agent_options unless shared

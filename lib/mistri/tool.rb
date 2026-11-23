@@ -17,9 +17,6 @@ module Mistri
 
     # instructions is text from the tool's server on how to use its tools. An
     # agent appends it to the conversation as a reminder.
-    #
-    # result_limit is the bytes one result of this tool keeps, in place of the
-    # agent's limit for every tool.
     attr_reader :name, :description, :input_schema, :timeout, :instructions, :result_limit
 
     # Define a tool. Give the argument shape as a JSON Schema value via
@@ -136,10 +133,8 @@ module Mistri
       @ends_turn
     end
 
-    # Whether an agent with a scratchpad saves the whole of a result of this
-    # tool that is too large to show. False for a tool that reads in parts
-    # itself, as the document tools do: its result is cut and never saved, so
-    # reading a saved result cannot save another.
+    # False for a tool that reads in parts itself, as the document tools do,
+    # so reading a saved result cannot save another.
     def save_result?
       @save_result
     end

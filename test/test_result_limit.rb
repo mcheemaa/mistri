@@ -53,7 +53,7 @@ class TestResultLimit < Minitest::Test
     approved = agent.session.messages.select(&:tool?).last
 
     assert_equal "export_all", approved.tool_name
-    assert_operator approved.text.bytesize, :<=, Mistri::ResultLimit::FLOOR_BYTES
+    assert_operator approved.text.bytesize, :<=, Mistri::ResultLimit::SHARED_FLOOR_BYTES
     assert_equal 330_000, approved.cut["bytes"]
   end
 
@@ -65,7 +65,7 @@ class TestResultLimit < Minitest::Test
     stored = agent.session.messages.select(&:tool?).sum { |result| result.text.bytesize }
 
     assert_operator stored, :<=,
-                    Mistri::ResultLimit::DEFAULT_TURN_BYTES + (2 * Mistri::ResultLimit::FLOOR_BYTES)
+                    Mistri::ResultLimit::DEFAULT_TURN_BYTES + (2 * Mistri::ResultLimit::SHARED_FLOOR_BYTES)
   end
 
   def test_false_stores_a_result_whole

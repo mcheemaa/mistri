@@ -4,8 +4,7 @@ module Mistri
   module Tools
     MAX_PATTERN_CHARS = 500
     MAX_SEARCHED_BYTES = 5_000_000
-    # Characters shown on each side of a match on a long line.
-    MATCH_WINDOW_CHARS = 150
+    MATCH_SIDE_CHARS = 150
 
     module_function
 
@@ -110,8 +109,8 @@ module Mistri
       end
 
       def around(path, index, line, match)
-        from = [match.begin(0) - MATCH_WINDOW_CHARS, 0].max
-        to = [match.end(0) + MATCH_WINDOW_CHARS, line.length].min
+        from = [match.begin(0) - MATCH_SIDE_CHARS, 0].max
+        to = [match.end(0) + MATCH_SIDE_CHARS, line.length].min
         "#{path}:#{index + 1}:#{match.begin(0)}: #{"..." if from.positive?}" \
           "#{line[from...to].chomp}#{"..." if to < line.length}"
       end

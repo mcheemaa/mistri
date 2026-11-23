@@ -18,9 +18,6 @@ module Mistri
 
     module_function
 
-    # host answers what the code asks for: it is given the operation, its
-    # payload, the tool context of this run and a Hash that lives as long as
-    # the run.
     def run_code(sandbox, &host)
       Tool.define("run_code", RUN_CODE,
                   result_limit: MAX_CODE_RESULT_BYTES,
@@ -46,9 +43,6 @@ module Mistri
       outcome.error ? ToolResult.new(content: text, error: true) : text
     end
 
-    # One file operation asked for by code: its value for the code, and the
-    # line stored for it. A write replaces a document only when this run read
-    # it and it has not changed since.
     def file_from_code(workspace, operation, payload, seen)
       path = (operation == "list" ? payload["prefix"] : payload["path"]).to_s
       unusable = unusable_path(path, prefix: operation == "list") unless path.empty?

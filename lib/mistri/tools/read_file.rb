@@ -3,7 +3,6 @@
 module Mistri
   module Tools
     MAX_READ_CHARS = 20_000
-    # A line longer than this is shown cut, and read on by characters.
     LONG_LINE_CHARS = 2_000
 
     module_function

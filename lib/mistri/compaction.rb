@@ -93,20 +93,19 @@ module Mistri
           reported(messages[position])
         end
         base = index ? reported(messages[index]) : 0
-        reader = reader(messages)
-        messages.drop(index ? index + 1 : 0).sum(base) { |message| estimate(message, reader) }
+        provider = latest_provider(messages)
+        messages.drop(index ? index + 1 : 0).sum(base) { |message| estimate(message, provider) }
       end
 
-      # The provider of the newest assistant turn, which reads what follows it.
-      def reader(messages)
+      def latest_provider(messages)
         messages.reverse_each.find { |message| message.assistant? && message.provider }&.provider
       end
 
-      def estimate(message, reader = nil)
+      def estimate(message, provider = nil)
         return (chars(message) / CHARS_PER_TOKEN).ceil unless message.tool?
 
         text = message.content.grep(Content::Text).sum { |block| block.text.length }
-        per_token = RESULT_CHARS_PER_TOKEN.fetch(reader, CHARS_PER_TOKEN)
+        per_token = RESULT_CHARS_PER_TOKEN.fetch(provider, CHARS_PER_TOKEN)
         ((text / per_token) + ((chars(message) - text) / CHARS_PER_TOKEN)).ceil
       end
 

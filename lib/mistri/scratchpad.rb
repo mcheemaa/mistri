@@ -1,12 +1,8 @@
 # frozen_string_literal: true
 
 module Mistri
-  # The agent's own folder in a workspace the host builds and scopes. The whole
-  # of a tool result that is too large to show is saved under
-  # scratchpad/tool-results/, and the model reads it there in parts with the
-  # document tools.
-  #
-  #   Mistri.agent("claude-opus-5-5", tools: tools, scratchpad: workspace)
+  # The agent's own folder in a workspace the host builds and scopes, where
+  # the whole of a tool result that is too large to show is saved.
   class Scratchpad
     ROOT = "scratchpad/"
     RESULTS = "scratchpad/tool-results/"
@@ -24,21 +20,18 @@ module Mistri
 
     attr_reader :workspace
 
-    # folder is the part of the scratchpad a worker is told to write in.
-    def initialize(workspace, folder: nil)
+    def initialize(workspace, worker_folder: nil)
       @workspace = workspace
-      @folder = folder
+      @worker_folder = worker_folder
       @atomic = Tools.atomic_workspace?(workspace)
     end
 
-    # The same scratchpad for a worker, with a folder of its own.
     def for_worker(name)
       part = name.to_s.downcase.gsub(/[^a-z0-9]+/, "-").delete_prefix("-").delete_suffix("-")
-      self.class.new(@workspace, folder: "#{ROOT}agents/#{part}/")
+      self.class.new(@workspace, worker_folder: "#{ROOT}agents/#{part}/")
     end
 
-    # Saves the whole text of one result and returns its path. A name that is
-    # taken gets a number, so a result never replaces another.
+    # A name that is taken gets a number, so a result never replaces another.
     def save_result(text, tool_name)
       stem = "#{RESULTS}#{Time.now.utc.strftime("%Y%m%dT%H%M%S")}-" \
              "#{tool_name.to_s.gsub(/[^A-Za-z0-9_-]/, "_")}"
@@ -50,18 +43,16 @@ module Mistri
       raise Error, "no free name for a saved result at #{stem}.#{extension}"
     end
 
-    # What the model is told about the scratchpad. After a compaction the
-    # earlier note is gone from the conversation, so this one also lists what
-    # the scratchpad holds.
+    # After a compaction the earlier note is gone from the conversation, so the
+    # note also lists what the scratchpad holds.
     def note
-      text = @folder ? "#{NOTE} #{format(SHARED, folder: @folder)}" : NOTE
+      text = @worker_folder ? "#{NOTE} #{format(SHARED, folder: @worker_folder)}" : NOTE
       held = listing
       held.empty? ? text : "#{text}\n\nIt holds:\n#{held}"
     end
 
     private
 
-    # The path, or nil when a document is there already.
     def create(path, text)
       return create_in_two_steps(path, text) unless @atomic
 

@@ -169,17 +169,12 @@ module Mistri
 
     private
 
-    # The host's documents and the scratchpad in one path space: a path under
-    # scratchpad/ is the scratchpad's and every other path the host's.
     def documents(files, scratchpad)
       return files || scratchpad if files.nil? || scratchpad.nil? || files.equal?(scratchpad)
 
       Workspace::PathSpace.new(files:, scratchpad:)
     end
 
-    # The skill reader for an agent with skills, the document tools for an
-    # agent with documents whose host gave it none, and run_code for an agent
-    # with a sandbox.
     def with_own_tools(tools, skills, sandbox)
       tools += [Skills.reader(skills)] unless skills.empty?
       own_files = @documents && tools.none? { |tool| tool.name == "read_file" }
@@ -191,10 +186,6 @@ module Mistri
                         "delete" => "delete_file" }.freeze
     private_constant :FILES_FROM_CODE
 
-    # What code in the sandbox asks for. Each call passes what a call from
-    # the model passes: the tool's contract, before_tool, the approval rule
-    # and after_tool, with its events. It is stored as an entry beside the
-    # messages, because the model reads its result in the code.
     def from_code(operation, payload, context, run)
       raise Error, "the run was stopped" if context.signal&.aborted?
       return tool_from_code(payload, context) if operation == "tool"
@@ -226,7 +217,8 @@ module Mistri
       end
     end
 
-    # The block returns the value for the code and the result to store.
+    # A call from code is stored as an entry beside the messages, not as a
+    # message, because the model reads its result in the code.
     def settle_from_code(call, context, refusal: nil, &)
       refusal ||= refused_from_code(call, context)
       value, result, seconds = refusal ? [nil, refusal, nil] : run_from_code(call, context, &)
@@ -1236,7 +1228,7 @@ module Mistri
 
       own = own_limit(call)
       limit = turn ? turn.limit(own) : own
-      content, cut = saved(content, limit, call) ||
+      content, cut = saved_in_scratchpad(content, limit, call) ||
                      @result_limit.bound(content, limit, shared: limit < own)
       turn&.spend(ResultLimit.size(content))
       [content, cut]
@@ -1247,9 +1239,7 @@ module Mistri
       (tool.respond_to?(:result_limit) && tool.result_limit) || @result_limit.bytes
     end
 
-    # With a scratchpad, the whole of a text over its limit is saved there and
-    # its start is stored. A text the scratchpad cannot take is cut.
-    def saved(content, limit, call)
+    def saved_in_scratchpad(content, limit, call)
       return unless @scratchpad && content.is_a?(String) && content.bytesize > limit
 
       tool = @tools_by_name[call.name]
@@ -1291,8 +1281,8 @@ module Mistri
       @result_limit.turn(sizes, spent:)
     end
 
-    # What the newest assistant message's results hold already, when the rest
-    # of them are answered after an approval.
+    # After an approval the rest of a turn's results are answered in a later
+    # run, so the turn's limit counts what is stored already.
     def stored_for_turn
       return 0 unless @result_limit
 

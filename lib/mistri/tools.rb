@@ -34,15 +34,13 @@ module Mistri
       yield content
     end
 
-    # What read_file shows for a document and write_file takes back as
-    # if_version: the same for the same bytes, in any process.
+    # A hash of the content, so a version is the same in any process.
     def version(content)
       Digest::SHA256.hexdigest(content.b)[0, 12]
     end
 
-    # A path from the model is checked before any workspace is asked, so the
-    # same rules hold on every backend: relative, parts joined by /, and no
-    # part that is empty, . or ..
+    # Checked before any workspace is asked, so the same rules hold on every
+    # backend.
     def unusable_path(path, prefix: false)
       path = path.to_s
       path = path.delete_suffix("/") if prefix
@@ -67,7 +65,6 @@ module Mistri
       "it holds an empty part, . or .." if parts.intersect?(["", ".", ".."])
     end
 
-    # The folder an agent saves whole tool results in is the model's to read.
     def read_only(path)
       return unless path.to_s.start_with?(Scratchpad::RESULTS)
 
