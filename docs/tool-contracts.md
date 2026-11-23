@@ -430,10 +430,15 @@ is stopped, every further call from the code is refused. The result of
 tool's description states the limit and tells the model to write a longer
 output to a document.
 
-Other threads of the process keep running while code computes: the adapter
-passes Ruby's interpreter lock on each time QuickJS checks for an interrupt.
-The code shares the CPU with them, so a busy process gives it less computing
-within the same timeout.
+While code computes it holds Ruby's interpreter lock. The adapter passes the
+lock on each time QuickJS checks for an interrupt, which it does in the code's
+own loops and not inside one built-in call. A search in a long string or a
+sort of a large array runs to its end with the lock held, and a loop of such
+calls is checked rarely: code that searched a string of 20 MB in a loop kept
+every other thread waiting for the whole ten seconds. On a process that serves
+requests, set `timeout:` to the longest wait its other threads can take, or
+run the agent in a job. The code also shares the CPU with those threads, so a
+busy process gives it less computing within the same timeout.
 
 A sandbox of your own is any object that answers `run(code, host:)` and
 returns a `Mistri::Sandbox::Outcome`. `host` is a callable given an operation

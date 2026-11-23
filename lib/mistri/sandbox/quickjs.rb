@@ -12,8 +12,9 @@ module Mistri
     # host's process. Not auto-required, because wasmtime is an optional gem.
     # The pinned build is quickjs.wasm of the npm package quickjs-wasi 3.7.0.
     # Every import of the module is defined below, so the code reaches nothing
-    # else. While the code computes it holds the interpreter lock, and passes
-    # it on at each of QuickJS's interrupt checks, so other threads keep running.
+    # else. While the code computes it holds the interpreter lock. It passes
+    # the lock on at QuickJS's interrupt checks, which one built-in call never
+    # makes, so other threads can wait for as long as timeout.
     class QuickJS
       SHA256 = "c0bd8f296e18cf074969f6401b9ecb72609a1323818ec2b9bf7a8f8d740d1363"
       WASI = "wasi_snapshot_preview1"

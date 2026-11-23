@@ -376,9 +376,12 @@ Nothing changes until you pass `sandbox:` to an agent.
 - `files` in code works through the built-in document tools. Where a document
   tool is your own, code calls it as a tool, under its contract and its
   approval rule.
-- Code computes inside the host's process and shares the CPU with its other
-  threads, which keep running. `timeout:` bounds the code's own computing and
-  `total_timeout:` the whole run with its calls.
+- Code computes inside the host's process and holds Ruby's interpreter lock
+  while it does. The lock is passed on in the code's own loops, and not during
+  one built-in call such as a search in a long string, so other threads can
+  wait for as long as `timeout:`. Keep it short on a process that serves
+  requests. `timeout:` bounds the code's own computing and `total_timeout:`
+  the whole run with its calls.
 - The result of `run_code` keeps 10,000 bytes, and the tool's description
   states it.
 - A child takes `sandbox:` as an agent option, on a `Runtime` too. Its code
