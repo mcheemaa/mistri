@@ -153,13 +153,15 @@ module Mistri
         def now = Process.clock_gettime(Process::CLOCK_MONOTONIC)
 
         # A job that throws outside a promise, as a callback of queueMicrotask
-        # does, leaves the job that reports the return value unrun.
+        # does, is the code's error while the code has not returned. After
+        # that it is ignored, as a promise that nothing handles is.
         def run_jobs
           until @call[:qjs_is_job_pending].call.zero?
             next unless @call[:qjs_execute_pending_job].call.negative?
             raise Stopped, unfinished if now > @deadline
 
-            return @thrown ||= read(@call[:qjs_get_exception].call)
+            error = read(@call[:qjs_get_exception].call)
+            @thrown ||= error unless @returned
           end
         end
 

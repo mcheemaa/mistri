@@ -245,9 +245,14 @@ class TestSandboxQuickJS < Minitest::Test
   def test_an_error_thrown_in_a_queued_job_is_the_codes_error
     code = 'queueMicrotask(() => { throw new Error("late") }); return 5'
 
-    outcome = @sandbox.run(code, host: ->(_operation, _payload) {})
+    host = ->(_operation, _payload) {}
+    late = "Promise.resolve().then(() => queueMicrotask(() => { throw 1 })); return 5"
+
+    outcome = @sandbox.run(code, host:)
+    returned = @sandbox.run(late, host:)
 
     assert_equal "Error: late", outcome.error
+    assert_equal [5, nil], [returned.value, returned.error]
   end
 
   def test_the_module_that_runs_is_the_one_that_was_checked
