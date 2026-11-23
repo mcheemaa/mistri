@@ -30,6 +30,16 @@ class TestGrep < Minitest::Test
     assert_operator found.length, :<, 400
   end
 
+  def test_grep_leaves_out_a_document_that_is_not_text_and_says_so
+    @workspace.write("logo.png", "\x89PNG\xFF".dup.force_encoding(Encoding::UTF_8))
+    @workspace.write("notes.md", "PNG is a format")
+
+    found = @tools["grep"].call({ "pattern" => "PNG" })
+
+    assert_equal "notes.md:1: PNG is a format\n" \
+                 "[Documents that are not text were not searched: 1.]", found
+  end
+
   def test_grep_stops_a_search_that_takes_too_long
     @workspace.write("slow.txt", "#{"a" * 22}!\n" * 40)
 

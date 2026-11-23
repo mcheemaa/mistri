@@ -123,6 +123,23 @@ class TestFileTools < Minitest::Test
     assert_match(/\[28334 more characters\. Continue with offset 6666\.\]\z/, part)
   end
 
+  def test_a_document_that_is_not_text_is_named_as_such_and_never_shown
+    @workspace.write("logo.png", "\x89PNG\xFF".dup.force_encoding(Encoding::UTF_8))
+    calls = [{ name: "read_file", arguments: { path: "logo.png" } },
+             { name: "write_file", arguments: { path: "logo.png", content: "x" } },
+             { name: "edit_file",
+               arguments: { path: "logo.png", old_string: "PNG", new_string: "" } }]
+    provider = Mistri::Providers::Fake.new(turns: [{ tool_calls: calls }, { text: "done" }])
+    agent = Mistri::Agent.new(provider:, files: @workspace)
+
+    agent.run("go")
+    read, written, edited = agent.session.messages.select(&:tool?).map(&:text)
+
+    assert_match(/\Alogo\.png, version \h{12}, 5 bytes that are not text\.\z/, read)
+    assert_match(/The document now:\nlogo\.png, .* 5 bytes that are not text\.\z/, written)
+    assert_equal "edit_file failed: logo.png is not text", edited
+  end
+
   def test_a_path_too_long_or_not_text_is_refused
     replies = ["a" * 513, "caf\xE9.md".dup.force_encoding("UTF-8")].map do |path|
       @tools["read_file"].call({ "path" => path })

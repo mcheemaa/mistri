@@ -90,6 +90,14 @@ class TestRunCode < Minitest::Test
     assert_equal ["scratchpad/notes.md"], @workspace.list
   end
 
+  def test_code_is_refused_a_document_that_is_not_text
+    @workspace.write("logo.png", "\x89PNG\xFF".dup.force_encoding(Encoding::UTF_8))
+
+    replies, = answers([["read", { "path" => "logo.png" }]], files: @workspace)
+
+    assert_equal ["threw: logo.png is not text, so code cannot read it"], replies
+  end
+
   def test_a_call_from_code_is_stored_whole_where_no_limit_is_in_force
     rows = Mistri::Tool.define("rows", "Returns rows.") do
       Mistri::ToolResult.new(content: [Mistri::Content::Text.new(text: "order\n" * 1_000)])

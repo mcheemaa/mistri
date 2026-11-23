@@ -84,6 +84,8 @@ module Mistri
     end
 
     def replacement(content, args)
+      raise EditError, "#{args["path"]} is not text" unless content.valid_encoding?
+
       Edit.replace(content, args["old_string"], args["new_string"],
                    replace_all: args["replace_all"] == true)
     end

@@ -45,6 +45,7 @@ module Mistri
     def window(path, content, offset = nil, limit = nil, unit = nil, bytes: MAX_READ_BYTES)
       title = "#{path}, version #{version(content)}"
       return "#{title}, empty." if content.empty?
+      return "#{title}, #{content.bytesize} bytes that are not text." unless content.valid_encoding?
       if unit == "characters"
         return character_window(title, content, offset.to_i, limit.to_i,
                                 bytes)

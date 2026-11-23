@@ -28,8 +28,11 @@ module Mistri
           const host = globalThis.__host;
           delete globalThis.__host;
           const { stringify, parse } = JSON;
+          const wellFormed = Function.prototype.call.bind(String.prototype.toWellFormed);
+          // A string cut inside an emoji holds half of a pair, which UTF-8 cannot carry.
+          const sendable = (_key, value) => typeof value === "string" ? wellFormed(value) : value;
           const call = (op, payload) => {
-            const reply = parse(host(stringify({ op, ...payload })));
+            const reply = parse(host(stringify({ __proto__: null, op, ...payload }, sendable)));
             if (reply.error !== undefined) throw new Error(reply.error);
             return reply.value;
           };
@@ -190,7 +193,7 @@ module Mistri
           end
           linker.func_new("env", "host_call", %i[i32 i32 i32 i32 i32], [:i32]) do |_caller, *values|
             count, pointer = values.last(2)
-            request = count.positive? ? JSON.parse(read(@bytes.read(pointer, 4).unpack1("V"))) : {}
+            request = count.positive? ? read(@bytes.read(pointer, 4).unpack1("V")) : "{}"
             string(JSON.generate(answer(request)))
           end
           linker
@@ -228,7 +231,8 @@ module Mistri
 
         def memory_of(caller) = caller.export("memory").to_memory
 
-        def answer(request)
+        def answer(text)
+          request = JSON.parse(text)
           operation = request.delete("op")
           case operation
           when "print" then keep(request["text"].to_s)
@@ -239,6 +243,8 @@ module Mistri
           else return { "value" => asked(operation, request) }
           end
           { "value" => nil }
+        rescue JSON::ParserError => e
+          { "error" => "the call could not be read: #{e.message}" }
         rescue Error => e
           { "error" => e.message }
         end

@@ -52,7 +52,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   workspace method `sizes`. `write_file` takes `if_version`: it
   replaces an existing document only at the version that was read, and a
   refusal returns the document as it is. `delete_file` is new.
-  `find_in_file` is no longer among `Tools.files`.
+  `find_in_file` is no longer among `Tools.files`. A document that is not
+  valid UTF-8 is named as not text and never shown, and `grep` leaves it out.
 - A tool result is bounded where it is stored. One result larger than the
   model's window left a session over the window for good, because a
   compaction keeps a turn whole. A result now keeps its start, 50,000 bytes

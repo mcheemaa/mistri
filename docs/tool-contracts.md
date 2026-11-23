@@ -394,7 +394,8 @@ What the code has:
 - `files.read(path)`, `files.write(path, text)`, `files.list(prefix)` and
   `files.delete(path)`. Each is the document tool of the same kind, on the
   workspace that tool is bound to, so the agent needs that tool. A read returns
-  the whole document. A write over a document that exists needs a read of it in
+  the whole document, and of a document that is not text it is an error the
+  code can catch. A write over a document that exists needs a read of it in
   the same run, and `scratchpad/tool-results/` stays read-only. Where a document
   tool is the host's own, code calls it as a tool, as in
   `await tools.write_file({ path, content })`.
@@ -403,6 +404,8 @@ What the code has:
 - `console.log`, of which the first 100,000 bytes are kept, and the standard
   JavaScript objects. There is no network, no
   file system, no timers and no `URL` class. Dates are in UTC.
+- Text leaves the code as UTF-8. Half of a character that a cut left behind,
+  as `slice` can leave of an emoji, arrives as U+FFFD.
 
 A call from code is a tool call. It passes the tool's argument contract, its
 timeout, `before_tool` and `after_tool`, and emits `:tool_started` and

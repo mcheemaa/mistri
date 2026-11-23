@@ -65,6 +65,7 @@ module Mistri
     def read_from_code(workspace, path, seen)
       content = workspace.read(path)
       raise Error, "No document at #{path.inspect}" if content.nil?
+      raise Error, "#{path} is not text, so code cannot read it" unless content.valid_encoding?
 
       seen[path] = version(content)
       [content, "Read #{path} (#{content.bytesize} bytes)"]

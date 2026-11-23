@@ -108,6 +108,7 @@ class TestSandboxQuickJS < Minitest::Test
     replaced = @sandbox.run(<<~JS, host:)
       JSON.stringify = () => "not json";
       JSON.parse = () => 1;
+      Object.prototype.toJSON = () => "not the call";
       return files.read("a");
     JS
     bigint = @sandbox.run("return 10n", host:)
@@ -207,6 +208,25 @@ class TestSandboxQuickJS < Minitest::Test
 
     assert_predicate status, :success?, output
     assert_equal %w[2 Mistri::ConfigurationError], output.lines.last(2).map(&:strip)
+  end
+
+  def test_a_string_cut_inside_an_emoji_is_sent_and_a_call_that_cannot_be_read_is_the_codes_to_catch
+    asked = []
+    host = ->(operation, _payload) { asked << operation }
+
+    cut = @sandbox.run(<<~JS, host:)
+      const title = "Launch \u{1F680} day".slice(0, 8);
+      console.log(title);
+      return title;
+    JS
+    unread = @sandbox.run(<<~JS, host:)
+      try { await tools.echo({ ["a\\uD800"]: 1 }) } catch (error) { return error.message }
+    JS
+
+    assert_equal "Launch \uFFFD", cut.value
+    assert_equal ["Launch \uFFFD"], cut.output
+    assert_match(/\Athe call could not be read: /, unread.value)
+    assert_empty asked
   end
 
   def test_an_error_names_the_line_of_the_code_and_no_frame_of_the_adapter

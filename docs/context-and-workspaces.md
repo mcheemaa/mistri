@@ -246,6 +246,9 @@ A pattern is 500 characters at most and runs with a one second timeout for
 each match. One `grep` call reads 5 MB at most and takes five seconds at most,
 and says so when it stops at either.
 
+A document that is not valid UTF-8 is not text. `read_file` and `edit_file`
+say so in place of showing it, and `grep` leaves it out and counts it.
+
 A path from the model is checked before any workspace is asked: relative,
 parts joined by `/`, no part that is empty, `.` or `..`, no backslash or
 control character, 512 bytes at most. Any other path is refused with a line

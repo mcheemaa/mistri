@@ -49,6 +49,7 @@ module Mistri
         @matches = 0
         @lines = 0
         @searched = 0
+        @unread = 0
       end
 
       def call
@@ -66,7 +67,10 @@ module Mistri
         end
 
         @deadline = clock + @seconds
-        paths.each { |path| break if search(path, regexp) > MAX_SEARCHED_BYTES || @late }
+        paths.each do |path|
+          search(path, regexp)
+          break if @searched > MAX_SEARCHED_BYTES || @late
+        end
         report
       rescue RegexpError => e
         failure("The pattern could not be used: #{e.message}")
@@ -86,6 +90,8 @@ module Mistri
 
       def search(path, regexp)
         content = @workspace.read(path).to_s
+        return @unread += 1 unless content.valid_encoding?
+
         lines = content.lines
         offset = 0
         lines.each_with_index do |text, index|
@@ -148,13 +154,13 @@ module Mistri
       end
 
       def report
-        return "#{@matches} matches in #{@lines} lines#{stopped}" if @count_only
-        return "No matches.#{stopped}" if @matches.zero?
+        return "#{@matches} matches in #{@lines} lines#{left_out}" if @count_only
+        return "No matches.#{left_out}" if @matches.zero?
 
         found = @blocks.join("\n--\n")
         text = Tools.fitting(found, @bytes)
         text = "#{text}\n[cut at #{@bytes} bytes]" if text.bytesize < found.bytesize
-        "#{text}#{more}#{stopped}"
+        "#{text}#{more}#{left_out}"
       end
 
       def more
@@ -162,6 +168,12 @@ module Mistri
 
         advice = @full ? "pass a path" : "raise head_limit"
         "\n[#{@matches} matches in all, #{@shown} shown. Narrow the pattern or #{advice}.]"
+      end
+
+      def left_out
+        return stopped unless @unread.positive?
+
+        "\n[Documents that are not text were not searched: #{@unread}.]#{stopped}"
       end
 
       # The timeout of the pattern is for one match, so the whole search has
