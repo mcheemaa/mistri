@@ -277,10 +277,11 @@ it where it is stored. `after_tool` still receives the whole result.
 - The results that answer one assistant message share 200,000 bytes. Over
   that, the largest give way first, down to one size for all of them, and each
   keeps at least 2,000 bytes. A compaction never makes one turn smaller, so
-  this is what keeps a turn inside the model's window. The bytes are shared
-  among the results as the tools returned them, because `after_tool` runs on
-  each result just before it is stored: a result that a hook then makes
-  smaller still counts at its size, up to its limit.
+  this is what keeps a turn inside the model's window. `after_tool` runs on
+  each result just before it is stored, in the model's order. When a hook
+  changes a result, the bytes are shared again among that result and the ones
+  after it, so a result that a hook makes smaller leaves its room to the later
+  ones. The results stored before it keep what they were given.
 - An image is not counted and is never cut.
 - `cut` on the tool message holds the true size, as in
   `{ "bytes" => 2062500, "lines" => 62500 }`. It is nil on a result stored

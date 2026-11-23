@@ -87,6 +87,21 @@ class TestResultLimit < Minitest::Test
     end
   end
 
+  def test_a_result_that_a_hook_makes_smaller_leaves_its_room_to_the_results_after_it
+    orders = Mistri::Tool.define("orders", "Lists orders.") { ROW * 1_300 }
+    export = Mistri::Tool.define("export", "Exports rows.") { ROWS }
+    calls = Array.new(4) { { name: "export" } } + Array.new(4) { { name: "orders" } }
+    provider = Mistri::Providers::Fake.new(turns: [{ tool_calls: calls }, { text: "done" }])
+    brief = ->(call, _result, _context) { "330000 bytes kept elsewhere" if call.name == "export" }
+    agent = Mistri::Agent.new(provider:, tools: [export, orders], after_tool: brief)
+
+    agent.run("go")
+    results = agent.session.messages.select(&:tool?)
+
+    assert_equal [ROW * 1_300] * 4, results.last(4).map(&:text)
+    assert(results.none?(&:cut))
+  end
+
   def test_a_tool_is_told_the_bytes_the_result_of_its_call_keeps
     told = {}
     tool = lambda do |name, **options|

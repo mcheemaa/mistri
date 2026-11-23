@@ -1379,24 +1379,39 @@ module Mistri
       content.is_a?(String) || (blocks.any? && blocks.all?(Content::Text))
     end
 
+    # after_tool runs on a result just before it is stored, so a hook sees
+    # the results before it stored. When a hook changes a result, the turn is
+    # planned again from there: the results after it get the room it left.
     def answer_results(calls, results, executed:, signal:, spent: 0, &emit)
-      executed_results = if @after_tool
-                           {}.compare_by_identity.tap do |index|
-                             executed.each { |result| index[result] = true if result[3] }
-                           end
-                         end
-      by_call = {}.compare_by_identity
-      results.each { |result| (by_call[result[0]] ||= []) << result }
+      hooked = executed_entries(executed)
       context = hook_context(signal, emit) if @after_tool
-      turn = result_turn(results, spent)
-      calls.each do |call|
-        queued = by_call[call]
-        next unless queued && (entry = queued.shift)
-
-        _call, result, seconds = entry
-        result = rewrite(call, result, context) if executed_results&.key?(entry)
+      pending = in_call_order(calls, results)
+      turn = result_turn(pending, spent)
+      pending.each_with_index do |entry, index|
+        call, returned, seconds = entry
+        result = hooked&.key?(entry) ? rewrite(call, returned, context) : returned
+        rest = [[call, result], *pending.drop(index + 1)]
+        turn = planned_again(turn, rest) unless result.equal?(returned)
         answer(call, result, duration: seconds, turn:, &emit)
       end
+    end
+
+    def executed_entries(executed)
+      return unless @after_tool
+
+      {}.compare_by_identity.tap do |index|
+        executed.each { |result| index[result] = true if result[3] }
+      end
+    end
+
+    def in_call_order(calls, results)
+      by_call = {}.compare_by_identity
+      results.each { |result| (by_call[result[0]] ||= []) << result }
+      calls.filter_map { |call| by_call[call]&.shift }
+    end
+
+    def planned_again(turn, rest)
+      turn && result_turn(rest, @result_limit.turn_bytes - turn.left)
     end
 
     def result_turn(results, spent)

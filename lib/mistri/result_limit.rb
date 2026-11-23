@@ -31,6 +31,8 @@ module Mistri
     # results are stored. left is tracked as well, because a hook can make a
     # result larger than the tool returned it.
     class Turn
+      attr_reader :left
+
       def initialize(levels, left)
         @cut, @saved = levels
         @left = left
