@@ -397,7 +397,8 @@ What the code has:
   `await tools.write_file({ path, content })`.
 - `await tools.NAME(arguments)` for every other tool of the agent. It returns
   the result's text, and a failed result is thrown as an error.
-- `console.log`, and the standard JavaScript objects. There is no network, no
+- `console.log`, of which the first 100,000 bytes are kept, and the standard
+  JavaScript objects. There is no network, no
   file system, no clock of the host, no timers and no `URL` class.
 
 A call from code is a tool call. It passes the tool's argument contract, its

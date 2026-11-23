@@ -64,6 +64,18 @@ class TestSandboxQuickJS < Minitest::Test
     assert_operator Process.clock_gettime(Process::CLOCK_MONOTONIC) - started, :<, 5
   end
 
+  def test_what_the_code_prints_is_kept_up_to_a_bound
+    outcome = @sandbox.run(<<~JS, host: ->(_operation, _payload) {})
+      const line = "x".repeat(10000);
+      for (let i = 0; i < 30; i++) console.log(line);
+      return 1;
+    JS
+
+    assert_equal 1, outcome.value
+    assert_equal 11, outcome.output.length
+    assert_equal "[200000 more bytes were printed and not kept]", outcome.output.last
+  end
+
   def test_the_time_the_host_takes_to_answer_does_not_count_against_the_limit
     host = lambda do |_operation, _payload|
       sleep 1.3

@@ -57,7 +57,8 @@ module Mistri
       FORKED = "this process was forked after the sandbox had run code in its parent, and " \
                "wasmtime does not survive a fork. Run code only in the forked processes, or " \
                "build the sandbox in each of them."
-      private_constant :WASI, :EXPORTS, :PRELUDE, :FORKED
+      MAX_PRINTED_BYTES = 100_000
+      private_constant :WASI, :EXPORTS, :PRELUDE, :FORKED, :MAX_PRINTED_BYTES
 
       def initialize(wasm:, timeout: 10, memory: 64 * 1024 * 1024, sha256: SHA256)
         unless Digest::SHA256.file(wasm).hexdigest == sha256
@@ -102,6 +103,8 @@ module Mistri
           @memory = memory
           @deadline = now + timeout
           @output = []
+          @printed = 0
+          @dropped = 0
           @store = Wasmtime::Store.new(engine, nil,
                                        limits: { memory_size: memory + (16 * 1024 * 1024) })
           @store.set_epoch_deadline((timeout * 20) + 4)
@@ -120,7 +123,7 @@ module Mistri
           end
           raise Stopped, unfinished unless @returned || @thrown
 
-          Outcome.new(value: @value, output: @output, error: @thrown)
+          Outcome.new(value: @value, output: printed, error: @thrown)
         end
 
         private
@@ -198,7 +201,7 @@ module Mistri
         def answer(request)
           operation = request.delete("op")
           case operation
-          when "print" then @output << request["text"].to_s
+          when "print" then keep(request["text"].to_s)
           when "return"
             @returned = true
             @value = request["value"]
@@ -208,6 +211,21 @@ module Mistri
           { "value" => nil }
         rescue StandardError => e
           { "error" => e.message }
+        end
+
+        def keep(text)
+          if @dropped.zero? && @printed + text.bytesize <= MAX_PRINTED_BYTES
+            @output << text
+            @printed += text.bytesize
+          else
+            @dropped += text.bytesize
+          end
+        end
+
+        def printed
+          return @output if @dropped.zero?
+
+          [*@output, "[#{@dropped} more bytes were printed and not kept]"]
         end
 
         # The limit is on the code's own computing: the time the host takes
