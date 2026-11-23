@@ -5,6 +5,84 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+- The `:retry` event's note and the run log name what failed, as in
+  "attempt 1 failed (OverloadedError 529); retrying in 0.9s".
+- A host's documents and the scratchpad are one path space, and workers share
+  it. `files:` on the agent takes the host's workspace: the agent binds the
+  document tools itself, a path under `scratchpad/` goes to the scratchpad's
+  workspace and every other path to the host's. A child takes `files:`,
+  `scratchpad:` and `sandbox:` as agent options. A worker with a scratchpad is
+  told a folder of its own, `scratchpad/agents/<name>-<id>/`, to write what it
+  finds in as it goes. A path from the model is now checked before any
+  workspace is asked: relative, no empty part, `.` or `..`, no backslash.
+- An agent can run code the model writes. With `sandbox:` the agent adds
+  `run_code`: JavaScript that reads and writes the agent's documents, calls
+  its other tools, and returns only its answer, so a sum or a join over a
+  large result costs a few hundred tokens. `Mistri::Sandbox::QuickJS` runs it
+  in QuickJS compiled to WebAssembly inside the host's process, on the
+  optional `wasmtime` gem, with no shell and no second machine. A run is
+  stopped at ten seconds of the code's own computing, at five minutes with the
+  calls it makes, and at 64 MB, and writes 5 MB to documents at most. A call
+  from code passes the tool's contract, its timeout, `before_tool`, the
+  approval rule and `after_tool`, emits its events, and is stored as a
+  `code_call` entry with a short copy of its arguments and of its result. A
+  tool that needs approval, or that ends the turn, is refused in the code.
+  `files` in code works through the built-in document tools, so a host's own
+  document tool is reached only as a tool. The result of `run_code` keeps
+  10,000 bytes, and its description tells the model to write a longer output
+  to a document. The gem keeps zero runtime dependencies: a host that passes
+  no sandbox loads nothing new.
+- An agent takes a scratchpad. With `scratchpad:`, a workspace the host
+  scopes to the session, the whole of a tool result over its limit is saved
+  under `scratchpad/tool-results/` and the stored result is its first 2,000
+  bytes and a line with the size and the path. The agent adds the document
+  tools when the host passed none, and a note tells the model what the
+  scratchpad is for, again after a compaction with what it holds. The folder
+  of saved results is read-only to the model. A tool takes `result_limit:`
+  for a limit of its own and `save_result: false` to be cut and never saved.
+- The document tools read, search and write in parts. `Tools.files` now
+  returns `read_file`, `write_file`, `edit_file`, `grep`, `list_files` and
+  `delete_file`. `read_file` states the total and the document's version,
+  cuts a line over 2,000 characters and states the offset that
+  `unit: "characters"` reads on from. `grep` takes a regular expression over
+  one document or a folder, with context lines or a count, and shows a match
+  on a long line with the characters around it and its offset in the document.
+  One search takes five seconds at most. Both size what they return to the
+  result limit in force, which a tool's handler reads as
+  `context.result_limit`. `list_files` shows sizes from the new optional
+  workspace method `sizes`. `write_file` takes `if_version`: it
+  replaces an existing document only at the version that was read, and a
+  refusal returns the document as it is. `delete_file` is new.
+  `find_in_file` is no longer among `Tools.files`. A document that is not
+  valid UTF-8 is named as not text and never shown, and `grep` leaves it out.
+- A tool result is bounded where it is stored. One result larger than the
+  model's window left a session over the window for good, because a
+  compaction keeps a turn whole. A result now keeps its start, 50,000 bytes
+  at most, and a last line that states its true size, that the rest was not
+  kept, and that the tool can be called again for a narrower part. The
+  results that answer one assistant message share 200,000 bytes, and the
+  largest give way first. `after_tool` still receives the whole result. The
+  tool message gains `cut`, the true bytes and lines, which no provider is
+  sent. `result_limit:` on the agent takes a `Mistri::ResultLimit` with
+  other numbers, or false to store every result whole.
+- The token estimate counts a tool result at two characters a token after a
+  Claude turn. Claude counts the text of a tool result at about two
+  characters a token, and the estimate used four for every provider, so a
+  session of large results was compacted later than its window allowed.
+- The cache lock adapter warns when it is given a null cache store. A null
+  store, the Rails default in development and test, answers every
+  `unless_exist` write with success, so `Locks::RailsCache` granted every
+  lease and two runs could write one session at once. The session was then
+  refused by every later run. `Locks::RailsCache.new` now prints a warning
+  for such a store.
+- An empty completion after an answer ends the turn. A model that has written
+  to the user and then called a tool often adds nothing to the tool's result.
+  Mistri took that empty completion for a failed attempt and sent the same
+  request up to three more times, and each answer was empty again. An empty
+  completion is now retried only while the model has written no text since
+  the user's last message. The result of a run that ends this way reads the
+  text the model wrote, as `result.text` and `result.said`, where the final
+  message is empty.
 - The instructions of an MCP server reach the model. `MCP.tools` sets them on
   each bridged tool as `Tool#instructions`. An agent appends the instructions
   of every server to the conversation with its first request, as one reminder

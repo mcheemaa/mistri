@@ -26,6 +26,6 @@ agent = Mistri.agent("claude-opus-5-5",
                      tools: Mistri::Tools.files(workspace),
                      system: "Edit the page with the document tools. Read before editing.")
 
-agent.run("Change the h1 headline to: Gifts that land.")
+agent.run("Change the h1 headline to: Deploy on every merge.")
 
 puts page

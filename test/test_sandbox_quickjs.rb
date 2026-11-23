@@ -1,0 +1,274 @@
+# frozen_string_literal: true
+
+require_relative "test_helper"
+require "fileutils"
+require "open3"
+require "tmpdir"
+
+# The QuickJS adapter. It needs the wasmtime gem and the file quickjs.wasm of
+# the npm package quickjs-wasi 3.7.0, named by MISTRI_QUICKJS_WASM.
+class TestSandboxQuickJS < Minitest::Test
+  def setup
+    wasm = ENV.fetch("MISTRI_QUICKJS_WASM", nil)
+    skip "MISTRI_QUICKJS_WASM is not set" if wasm.to_s.empty?
+    begin
+      require "mistri/sandbox/quickjs"
+    rescue LoadError
+      skip "wasmtime is not installed"
+    end
+    @wasm = wasm
+    @sandbox = SANDBOXES[wasm] ||= Mistri::Sandbox::QuickJS.new(wasm:, timeout: 1)
+  end
+
+  SANDBOXES = {} # rubocop:disable Style/MutableConstant
+
+  def test_code_returns_prints_and_reaches_the_host_only_through_its_calls
+    asked = []
+    host = lambda do |operation, payload|
+      asked << [operation, payload]
+      operation == "read" ? "a,b\n1,2\n" : "tool said hi"
+    end
+
+    outcome = @sandbox.run(<<~JS, host:)
+      const rows = files.read("data.csv").trim().split("\\n").length;
+      console.log("rows", rows);
+      return { rows, said: await tools.greet({ name: "Ana" }), fetch: typeof fetch, node: typeof process };
+    JS
+
+    assert_equal({ "rows" => 2, "said" => "tool said hi", "fetch" => "undefined",
+                   "node" => "undefined" }, outcome.value)
+    assert_equal ["rows 2"], outcome.output
+    assert_equal [["read", { "path" => "data.csv" }],
+                  ["tool", { "name" => "greet", "arguments" => { "name" => "Ana" } }]], asked
+  end
+
+  def test_an_error_that_is_not_the_codes_to_catch_ends_the_run
+    host = ->(_operation, _payload) { raise IOError, "the socket closed" }
+
+    error = assert_raises(IOError) do
+      @sandbox.run('try { files.read("x") } catch (error) { return "caught" }', host:)
+    end
+
+    assert_equal "the socket closed", error.message
+    assert_equal 2, @sandbox.run("return 1 + 1", host:).value
+  end
+
+  def test_an_error_from_the_host_is_thrown_in_the_code_and_an_uncaught_one_is_reported
+    host = ->(_operation, _payload) { raise Mistri::Error, "No document at \"x\"" }
+
+    caught = @sandbox.run('try { files.read("x") } catch (error) { return error.message }', host:)
+    uncaught = @sandbox.run('files.read("x")', host:)
+
+    assert_equal 'No document at "x"', caught.value
+    assert_match(/No document at "x"/, uncaught.error)
+  end
+
+  def test_an_endless_loop_and_a_memory_bomb_are_stopped
+    host = ->(_operation, _payload) {}
+    started = Process.clock_gettime(Process::CLOCK_MONOTONIC)
+
+    loop_error = assert_raises(Mistri::Sandbox::Stopped) { @sandbox.run("while (true) {}", host:) }
+    bomb = assert_raises(Mistri::Error) do
+      @sandbox.run("const a = []; while (true) a.push('x'.repeat(1e6));", host:)
+    end
+
+    assert_match(/ran for 1 seconds/, loop_error.message)
+    assert_match(/out of memory/, bomb.message)
+    assert_operator Process.clock_gettime(Process::CLOCK_MONOTONIC) - started, :<, 5
+  end
+
+  def test_a_run_makes_no_call_after_its_total_limit
+    sandbox = Mistri::Sandbox::QuickJS.new(wasm: @wasm, timeout: 1, total_timeout: 0.3)
+    host = lambda do |_operation, _payload|
+      sleep 0.2
+      "read"
+    end
+
+    outcome = sandbox.run(<<~JS, host:)
+      let calls = 0;
+      try { while (true) { files.read("a"); calls++; } } catch (error) { return [calls, error.message]; }
+    JS
+
+    assert_equal [2, "the run passed its limit of 0.3 seconds, so no more calls are answered"],
+                 outcome.value
+  end
+
+  def test_the_code_has_the_real_time_and_new_random_numbers_in_each_run
+    host = ->(_operation, _payload) {}
+
+    first, second = Array.new(2) { @sandbox.run("return [Date.now(), Math.random()]", host:).value }
+
+    assert_in_delta Time.now.to_f * 1000, first[0], 60_000
+    refute_equal first[1], second[1]
+  end
+
+  def test_code_cannot_break_the_way_out_and_reads_its_own_mistakes
+    host = ->(_operation, _payload) { "read" }
+
+    replaced = @sandbox.run(<<~JS, host:)
+      JSON.stringify = () => "not json";
+      JSON.parse = () => 1;
+      Object.prototype.toJSON = () => "not the call";
+      return files.read("a");
+    JS
+    bigint = @sandbox.run("return 10n", host:)
+    deep = @sandbox.run("const f = () => f() + 1; try { f() } catch (error) { return error.name }",
+                        host:)
+
+    assert_equal "read", replaced.value
+    assert_match(/The value the code returned cannot be sent: TypeError/, bigint.error)
+    assert_equal "RangeError", deep.value
+  end
+
+  def test_a_run_that_never_returns_or_never_stops_printing_is_stopped
+    host = ->(_operation, _payload) {}
+
+    hung = assert_raises(Mistri::Sandbox::Stopped) do
+      @sandbox.run("await new Promise(() => {})", host:)
+    end
+    flood = assert_raises(Mistri::Sandbox::Stopped) do
+      @sandbox.run('const line = "x".repeat(1e6); while (true) console.log(line);', host:)
+    end
+
+    assert_equal "it ended without returning", hung.message
+    assert_match(/stopped|ran for 1 seconds/, flood.message)
+    assert_equal 1, @sandbox.run("Promise.reject(new Error('lost')); return 1", host:).value
+  end
+
+  def test_an_answer_larger_than_the_memory_stops_the_run_and_not_the_sandbox
+    sandbox = Mistri::Sandbox::QuickJS.new(wasm: @wasm, timeout: 1, memory: 8 * 1024 * 1024)
+    large = ->(_operation, _payload) { "x" * 30_000_000 }
+
+    error = assert_raises(Mistri::Sandbox::Stopped) do
+      sandbox.run('return files.read("a").length', host: large)
+    end
+
+    assert_equal "the code ran out of memory", error.message
+    assert_equal 2, sandbox.run("return 1 + 1", host: large).value
+  end
+
+  def test_what_the_code_prints_is_kept_up_to_a_bound
+    outcome = @sandbox.run(<<~JS, host: ->(_operation, _payload) {})
+      const line = "x".repeat(10000);
+      for (let i = 0; i < 30; i++) console.log(line);
+      return 1;
+    JS
+
+    assert_equal 1, outcome.value
+    assert_equal 11, outcome.output.length
+    assert_equal "[200000 more bytes were printed and not kept]", outcome.output.last
+  end
+
+  def test_the_time_the_host_takes_to_answer_does_not_count_against_the_limit
+    host = lambda do |_operation, _payload|
+      sleep 1.3
+      "late"
+    end
+
+    outcome = @sandbox.run("const answer = await tools.slow({}); const end = Date.now() + 300; " \
+                           "while (Date.now() < end) {} return answer", host:)
+    loop_error = assert_raises(Mistri::Sandbox::Stopped) do
+      @sandbox.run("await tools.slow({}); while (true) {}", host:)
+    end
+
+    assert_equal "late", outcome.value
+    assert_match(/ran for 1 seconds/, loop_error.message)
+  end
+
+  FORKING = <<~RUBY
+    require "mistri"
+    require "mistri/sandbox/quickjs"
+    sandbox = Mistri::Sandbox::QuickJS.new(wasm: ARGV.fetch(0), timeout: 1)
+    host = ->(_operation, _payload) {}
+    in_a_fork = lambda do
+      reader, writer = IO.pipe
+      pid = fork do
+        writer.puts(begin
+          sandbox.run("return 1 + 1", host:).value
+        rescue Mistri::ConfigurationError => e
+          e.class.name
+        end)
+        writer.close
+        exit!(0)
+      end
+      writer.close
+      Process.wait(pid)
+      reader.read.strip
+    end
+    before = in_a_fork.call
+    sandbox.run("return 1", host:)
+    puts before, in_a_fork.call
+  RUBY
+
+  # A new process, because this one has run code already.
+  def test_a_process_forked_before_any_run_runs_code_and_one_forked_after_is_refused
+    skip "this platform does not fork" unless Process.respond_to?(:fork)
+
+    lib = File.expand_path("../lib", __dir__)
+    output, status = Open3.capture2e(RbConfig.ruby, "-I#{lib}", "-e", FORKING, @wasm)
+
+    assert_predicate status, :success?, output
+    assert_equal %w[2 Mistri::ConfigurationError], output.lines.last(2).map(&:strip)
+  end
+
+  def test_a_string_cut_inside_an_emoji_is_sent_and_a_call_that_cannot_be_read_is_the_codes_to_catch
+    asked = []
+    host = ->(operation, _payload) { asked << operation }
+
+    cut = @sandbox.run(<<~JS, host:)
+      const title = "Launch \u{1F680} day".slice(0, 8);
+      console.log(title);
+      return title;
+    JS
+    unread = @sandbox.run(<<~JS, host:)
+      try { await tools.echo({ ["a\\uD800"]: 1 }) } catch (error) { return error.message }
+    JS
+
+    assert_equal "Launch \uFFFD", cut.value
+    assert_equal ["Launch \uFFFD"], cut.output
+    assert_match(/\Athe call could not be read: /, unread.value)
+    assert_empty asked
+  end
+
+  def test_an_error_names_the_line_of_the_code_and_no_frame_of_the_adapter
+    host = ->(_operation, _payload) {}
+
+    thrown = @sandbox.run("const rows = [1];\nconst n = 1;\nreturn n.missing.length;", host:)
+    malformed = @sandbox.run("const a = 1;\nconst b = 2;\nconst c = ;", host:)
+    parsed = @sandbox.run('return JSON.parse("{bad")', host:)
+
+    assert_match(/\ATypeError: .*\n    at anonymous \(<input>:3:\d+\)\z/, thrown.error)
+    assert_match(/\ASyntaxError: .*\n    at <input>:3:\d+\z/, malformed.error)
+    assert_match(/at <input>:1:2\n    at parse \(native\)\n    at anonymous \(<input>:1:\d+\)\z/,
+                 parsed.error)
+  end
+
+  def test_an_error_thrown_in_a_queued_job_is_the_codes_error
+    code = 'queueMicrotask(() => { throw new Error("late") }); return 5'
+    host = ->(_operation, _payload) {}
+    late = "Promise.resolve().then(() => queueMicrotask(() => { throw 1 })); return 5"
+
+    outcome = @sandbox.run(code, host:)
+    returned = @sandbox.run(late, host:)
+
+    assert_equal "Error: late", outcome.error
+    assert_equal [5, nil], [returned.value, returned.error]
+  end
+
+  def test_the_module_that_runs_is_the_one_that_was_checked
+    Dir.mktmpdir do |dir|
+      path = File.join(dir, "quickjs.wasm")
+      FileUtils.cp(@wasm, path)
+      sandbox = Mistri::Sandbox::QuickJS.new(wasm: path, timeout: 1)
+      File.binwrite(path, "not the module")
+
+      assert_equal 2, sandbox.run("return 1 + 1", host: ->(_operation, _payload) {}).value
+    end
+  end
+
+  def test_another_build_of_the_module_is_refused
+    assert_raises(Mistri::ConfigurationError) do
+      Mistri::Sandbox::QuickJS.new(wasm: __FILE__)
+    end
+  end
+end

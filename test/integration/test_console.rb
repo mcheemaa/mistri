@@ -5,6 +5,8 @@ require_relative "../support/integration"
 # The management console driven by a real model: spawn a worker, then read
 # it and list it through the console tools, and relay what they said.
 class TestConsoleIntegration < Minitest::Test
+  parallelize_me!
+
   Integration.scenario(self, :model_reads_and_lists_its_worker) do |model|
     number = rand(100..900)
     store = Mistri::Stores::Memory.new

@@ -7,6 +7,8 @@ require_relative "test_helper"
 # accept the reserved definition, a loaded one and a result that references it,
 # and a load must leave the cached prefix in place.
 class TestAnthropicDeferredToolsLive < Minitest::Test
+  parallelize_me!
+
   MODELS = Mistri::Models::CATALOG.each_value.select { |model| model.provider == :anthropic }
   RULES = Array.new(320) do |index|
     "Rule #{index + 1}: keep a project key in upper case and never invent one."

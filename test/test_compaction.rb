@@ -11,6 +11,17 @@ class TestCompaction < Minitest::Test
     assert_equal 100, Mistri::Compaction.estimate(message)
   end
 
+  def test_a_tool_result_counts_two_characters_a_token_after_a_claude_turn
+    image = Mistri::Content::Image.from_bytes("png", mime_type: "image/png")
+    result = Mistri::Message.tool(content: ["x" * 400, image], tool_call_id: "a")
+    claude = Mistri::Message.assistant(content: "ok", provider: :anthropic, stop_reason: :stop,
+                                       usage: Mistri::Usage.new(input: 900, output: 100))
+
+    assert_equal 1_400, Mistri::Compaction.estimate(result, :anthropic)
+    assert_equal 1_300, Mistri::Compaction.estimate(result, :openai)
+    assert_equal 2_400, Mistri::Compaction.context_tokens([claude, result])
+  end
+
   def test_context_tokens_prefers_reported_usage_and_estimates_the_tail
     usage = Mistri::Usage.new(input: 900, output: 100)
     history = [Mistri::Message.user("hi"),

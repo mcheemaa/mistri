@@ -6,6 +6,8 @@ require_relative "../eval/compaction"
 # One small cell of the eval against real models: the harness must compact,
 # probe, continue, judge, and price a run end to end.
 class TestCompactionEvalLive < Minitest::Test
+  parallelize_me!
+
   def setup
     skip "set MISTRI_LIVE=1 for live tests" unless ENV["MISTRI_LIVE"] == "1"
     skip "no ANTHROPIC_API_KEY" if ENV["ANTHROPIC_API_KEY"].to_s.empty?

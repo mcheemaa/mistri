@@ -179,6 +179,10 @@ delete(path)
 list(prefix = nil)     # sorted path Strings
 ```
 
+A backend may also answer `sizes(prefix = nil)`, a Hash of path to bytes in path
+order. `list_files` then shows each document's size without reading it. The
+built-in workspaces answer it, the Active Record one in a single query.
+
 A backend may additionally claim atomic conditional writes:
 
 ```ruby
@@ -206,10 +210,20 @@ committed and must read the document again. Custom four-method workspaces keep
 their existing behavior unless they explicitly return true from
 `atomic_writes?` and implement both methods.
 
-The conditional protocol is used by `edit_file`. `write_file` remains an
-intentional blind whole-document replacement, and deletion has no conditional
-form. When concurrent writers must preserve unrelated changes, use an anchored
-edit or provide a host tool with a stronger domain contract.
+The conditional protocol is used by `edit_file` and `write_file`. Deletion has
+no conditional form. When concurrent writers must preserve unrelated changes,
+use an anchored edit or provide a host tool with a stronger domain contract.
+
+`write_file` creates a document freely and replaces one only at the version the
+model read. `read_file`, `write_file` and `edit_file` each state the document's
+version, twelve characters that are the same for the same bytes in any process.
+A write to an existing document without `if_version`, or with a version the
+document is no longer at, is refused, and the result holds the document as it
+is now with its version. On a workspace without conditional writes the check
+and the write are two steps, so another process can still write between them.
+The same holds where a workspace cannot take one step, as the Active Record
+workspace inside a transaction the host opened, which is how a Rails test
+usually runs.
 
 For a single replacement, `edit_file` tries an exact match first, then tolerates
 indentation and trailing space differences across whole lines. In that fallback,
@@ -217,7 +231,43 @@ the final line separator is replaced only when `old_string` includes it;
 otherwise it stays untouched. Trailing blank lines are part of the anchor.
 Replacement indentation is not adjusted automatically.
 
-Bind one to the built-in read, write, edit, find, and list tools:
+The document tools:
+
+| Tool | What the model gets |
+| --- | --- |
+| `read_file` | Numbered lines with the total and the version, 20,000 bytes a call, or less where the result limit is lower. A line over 2,000 characters is shown cut, with the offset that `unit: "characters"` reads on from |
+| `write_file` | Creates a document, or replaces one at `if_version` |
+| `edit_file` | Replaces an exact snippet, as described above |
+| `grep` | A regular expression over one document or every document under a folder, with context lines or a count. A match on a long line comes with the 150 characters on each side and its character offset in the document |
+| `list_files` | Paths under a prefix with their sizes, 200 at most |
+| `delete_file` | Deletes one document |
+
+A pattern is 500 characters at most and runs with a one second timeout for
+each match. One `grep` call takes five seconds at most, and starts no further
+document once it has read 5 MB. It says so when it stops at either.
+
+A document that is not valid UTF-8 is not text. `read_file` and `edit_file`
+say so in place of showing it, and `grep` leaves it out and counts it.
+
+A path from the model is checked before any workspace is asked: relative,
+parts joined by `/`, no part that is empty, `.` or `..`, no backslash or
+control character, 512 bytes at most. Any other path is refused with a line
+that says why, on every backend alike.
+
+Pass the workspace as `files:` and the agent binds the tools itself:
+
+```ruby
+agent = Mistri.agent("claude-opus-5-5", files: workspace, scratchpad: scratch)
+```
+
+With `files:` and a [scratchpad](tool-contracts.md#saving-the-whole-result) the
+model sees one path space. A path under `scratchpad/` belongs to the
+scratchpad's workspace, and every other path to the host's. Paths are stored
+as they are, so both may be the same workspace: one table and one scope then
+hold the host's documents beside the agent's. Conditional writes hold where
+both workspaces make them.
+
+Or bind a workspace to the tools yourself and pass them in `tools:`:
 
 ```ruby
 workspace = Mistri::Workspace::Memory.new
@@ -318,7 +368,8 @@ well as other adapters, retain the legacy four-method behavior rather than
 advertise an unproved lock. Create-only conditional writes rely on the verified
 unique scope/path index. The adapter copies and freezes the scope Hash plus
 nested Hash, Array, Range, and String values at construction; atomic mode's
-narrower scalar contract keeps its tenant identity stable.
+narrower scalar contract keeps its tenant identity stable. It measures sizes in
+the database with `OCTET_LENGTH`, which SQLite has from version 3.43.
 
 Storage and schema capability are inspected on the first capability check and
 cached thereafter, off the edit path. Bind the workspace before concurrent use,

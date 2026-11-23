@@ -230,6 +230,18 @@ Only when `Mistri.locks` is set:
   its lease. A sub-agent still fails with a report, as before.
 - A session has one lease. Pass `lease: false` to `Agent.new` when your own
   code already holds a lock for the session.
+- `Locks::RailsCache` on a null cache store, the Rails default in development
+  and test, grants every lease, so two runs can write one session. Mistri now
+  warns when it is given one. Give the adapter a real store there too.
+
+### The retry note names the failure
+
+The `:retry` event's `content` and the run log now read "attempt 1 failed
+(OverloadedError 529); retrying in 0.9s". Before, they read "attempt 1 failed;
+retrying in 0.9s".
+
+- Code that matches the old text follows. `attempt`, `max_attempts` and
+  `delay` on the event are unchanged.
 
 ### OpenAI tools are no longer strict
 
@@ -263,6 +275,19 @@ Mistri.agent(
 )
 ```
 
+### An empty completion after text ends the turn
+
+A model that has written to the user and then called a tool often answers the
+tool's result with an empty completion. 0.7.0 sent the same request up to
+three more times. The turn now ends there.
+
+- `result.text` of such a run reads the text the model wrote before the tool
+  call, which `result.said` holds. It read the empty final message before. A
+  host that shows the streamed text and then adds `result.text` reads
+  `result.message.text` for the final message alone.
+- An empty completion is still retried while the model has written no text
+  since the user's last message.
+
 ### A gated tool tells the model
 
 The description a provider receives for a tool with `needs_approval` now ends
@@ -270,6 +295,131 @@ with "A person reviews each call before it runs." `Tool#description` returns
 your text unchanged.
 
 - Remove the same sentence from your own descriptions.
+
+### The document tools changed
+
+`Mistri::Tools.files` returns `read_file`, `write_file`, `edit_file`, `grep`,
+`list_files` and `delete_file`.
+
+- `find_in_file` is not among them. A host that names its tools one by one,
+  in a definition or a list, names `grep` instead. `Mistri::Tools.find_in_file`
+  still builds the old tool for a host that adds it itself.
+- `delete_file` is new. Leave it out of the tools you pass when the model
+  must not delete.
+- An agent refuses two tools of one name when it is built. A tool of your own
+  named `grep` or `delete_file`, passed beside `Tools.files`, now raises
+  "duplicate tool names: grep". Rename yours, or leave the built-in one out.
+- `write_file` no longer replaces a document blindly. To replace one that
+  exists the model passes `if_version`, which `read_file`, `write_file` and
+  `edit_file` state in their results. A prompt that tells the model to
+  overwrite a document should say to read it first, or to edit it.
+- The text of the results changed. `read_file` begins with the path, the
+  version and the range, `list_files` adds each size, and `edit_file` ends
+  with the new version. Code that reads these texts follows.
+- A custom workspace needs no change. Add `sizes(prefix = nil)`, a Hash of
+  path to bytes, to have `list_files` show sizes.
+- `list_files` shows 200 paths at most and says how many it left out. It
+  listed every path before.
+- `Mistri::Tools.numbered_window` and `Mistri::Tools::MAX_READ_CHARS` are
+  gone. `read_file` sizes a part in bytes, by `MAX_READ_BYTES`.
+
+### A large tool result is cut
+
+A result over 50,000 bytes is stored as its start and one line that states its
+true size, and the results that answer one assistant message share 200,000
+bytes. Before, every result was stored whole, and one larger than the model's
+window left the session unusable.
+
+- The rest of a cut result is not kept anywhere. Give a tool that can return
+  more than the limit a way to ask for less, such as a page or a filter. The
+  line the model reads asks it to call the tool again for the part it needs.
+- `after_tool` still receives the whole result. A host that keeps large
+  results itself does it there.
+- A tool message may hold `cut`, the true bytes and lines. Code that reads
+  session messages can show it. No provider is sent it.
+- The `:tool_result` event and its message carry the stored text. A host that
+  shows or saves tool output from the event gets the cut result. A view of its
+  own can travel in `ui`, which is never cut.
+- Pass `result_limit: Mistri::ResultLimit.new(bytes:, turn_bytes:)` for other
+  numbers. `result_limit: false` stores every result whole, as before.
+- A background child takes `result_limit:` on its `Runtime`.
+
+### A path from the model is checked
+
+The document tools refuse a path that is not plain and relative before any
+workspace is asked: one that starts with `/`, holds an empty part, `.` or
+`..`, a backslash or a control character, or is longer than 512 bytes.
+
+- A document stored under such a path, as `/index.html` could be on the
+  memory and Active Record workspaces, is no longer reachable through the
+  tools. Rename it.
+- The model reads why a path was refused and sends a relative one.
+
+### A scratchpad keeps what a cut would lose
+
+Nothing changes until you pass `scratchpad:` to an agent.
+
+- Pass a workspace scoped to the session. On the Active Record workspace that
+  is the same table with the session in the scope.
+- If you pass your own document tools, bind them to the same workspace, so
+  the path in a stored result is one the model can read. If you pass none,
+  the agent adds all six, and they reach every path of that workspace, not
+  only `scratchpad/`.
+- A path under `scratchpad/` belongs to the agent. `write_file`, `edit_file`
+  and `delete_file` refuse `scratchpad/tool-results/`.
+- A session with a scratchpad holds a system message with `reminder` set to
+  `scratchpad`. Leave it out of a view for a person, as with the others. It
+  follows the user's first message, so a test that expects the user's message
+  last in the first request reads the last user message instead.
+- A result over its limit is stored as its first 2,000 bytes and the path of
+  the whole, where an agent with no scratchpad keeps 50,000 bytes.
+- Saved results are rows the host owns. Delete them with the session.
+
+### Code the model writes
+
+Nothing changes until you pass `sandbox:` to an agent.
+
+- Add the `wasmtime` gem, require `mistri/sandbox/quickjs`, and keep the file
+  `quickjs.wasm` of the npm package `quickjs-wasi` 3.7.0 with your
+  application. Build one adapter for the process. On a server that forks its
+  workers, build it before the fork and run code only in the workers.
+- An event subscriber sees `:tool_started` and `:tool_result` for calls the
+  code makes. Their call ids begin with `code_`, and their `message` is not
+  among the session's messages. Both events carry the short copy that is
+  stored: 2,000 bytes of the call's arguments, and the first 2,000 bytes of
+  the result with the true size in the message's `cut`. The whole of both
+  went to the tool and to the code.
+- A session holds entries of type `code_call`. Code that reads
+  `Session#entries` by type leaves them out of a transcript for a person, or
+  shows them under the `run_code` call they belong to. An entry keeps 2,000
+  bytes of the call's arguments, and the first 2,000 bytes of its result with
+  the true size, and not the result's `ui`, which the `:tool_result` event
+  carries. One run stores its first 100 calls. The events are emitted for
+  every call.
+- `before_tool` is asked about every call from code, by the name of the tool:
+  `read_file`, `write_file`, `list_files` and `delete_file` for the four file
+  operations, with what the code passed. The code receives what `after_tool`
+  returns, and for `files.read` the hook is given the document.
+- `files` in code works through the built-in document tools. Where a document
+  tool is your own, code calls it as a tool, under its contract and its
+  approval rule.
+- Code computes inside the host's process and holds Ruby's interpreter lock
+  while it does. The lock is passed on in the code's own loops, and not during
+  one built-in call such as a search in a long string, so other threads can
+  wait for as long as `timeout:`. Keep it short on a process that serves
+  requests. `timeout:` bounds the code's own computing and `total_timeout:`
+  the whole run with its calls.
+- The result of `run_code` keeps 10,000 bytes, and the tool's description
+  states it.
+- A child takes `sandbox:` as an agent option, on a `Runtime` too. Its code
+  reaches only the tools and the documents the child was granted.
+
+### The token estimate after a Claude turn
+
+A tool result that follows a Claude turn is estimated at two characters a
+token. It was four. `Session#context_tokens`, `Agent#context_usage` and the
+compaction trigger read higher for such a session, so it compacts earlier.
+You do not need to change anything.
 
 ### Skills
 

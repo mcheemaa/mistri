@@ -15,22 +15,22 @@ Dir.mktmpdir do |dir|
   store = Mistri::Stores::JSONL.new(dir)
   session = Mistri::Session.new(store:)
 
-  send_gift = Mistri::Tool.define(
-    "send_gift", "Sends a real gift.", needs_approval: true,
-                                       schema: -> { string :to, "Recipient", required: true }
+  send_email = Mistri::Tool.define(
+    "send_email", "Sends a real email.", needs_approval: true,
+                                         schema: -> { string :to, "Recipient", required: true }
   ) do |args|
-    "gift queued for #{args["to"]}"
+    "email queued for #{args["to"]}"
   end
 
-  agent = Mistri.agent("claude-opus-5-5", tools: [send_gift], session:)
-  result = agent.run("Send a welcome gift to Ana.")
+  agent = Mistri.agent("claude-opus-5-5", tools: [send_email], session:)
+  result = agent.run("Send a welcome email to Ana.")
   puts "suspended: #{result.awaiting_approval?} (nothing executed)"
 
   # Any process can decide: a bare session is enough.
   Mistri::Session.new(store:, id: session.id).approve(result.pending.first.id)
 
   reloaded = Mistri::Session.new(store:, id: session.id)
-  resumed = Mistri.agent("claude-opus-5-5", tools: [send_gift], session: reloaded).resume
+  resumed = Mistri.agent("claude-opus-5-5", tools: [send_email], session: reloaded).resume
   puts "resumed: #{resumed.status}"
   puts resumed.text
 end

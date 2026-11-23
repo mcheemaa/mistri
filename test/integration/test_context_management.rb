@@ -6,6 +6,8 @@ require_relative "../support/integration"
 # Long-run survival: compaction preserves generated state across tool turns,
 # skills load on demand, and memory persists what it is told.
 class TestContextManagementIntegration < Minitest::Test
+  parallelize_me!
+
   Integration.scenario(self, :one_run_survives_two_compactions) do |model|
     secret = Integration.marker
     token = "continue-#{SecureRandom.hex(12)}"

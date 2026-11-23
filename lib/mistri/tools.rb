@@ -8,15 +8,29 @@ module Mistri
   module Tools
     ATOMIC_WORKSPACE_METHODS = %i[snapshot compare_and_write].freeze
     private_constant :ATOMIC_WORKSPACE_METHODS
+    MAX_PATH_BYTES = 512
     ALIASES = { "oldText" => "old_string", "old" => "old_string", "search" => "old_string",
                 "newText" => "new_string", "new" => "new_string", "replace" => "new_string",
                 "replaceAll" => "replace_all", "file" => "path", "filename" => "path" }.freeze
 
+    BOUND_WORKSPACES = ObjectSpace::WeakMap.new
+    private_constant :BOUND_WORKSPACES
+
     module_function
+
+    # files in code works only through a built-in document tool, on the
+    # workspace that tool is bound to.
+    def bound_workspace(tool) = BOUND_WORKSPACES[tool]
+
+    def bind(workspace, tool)
+      BOUND_WORKSPACES[tool] = workspace
+      tool
+    end
+    private_class_method :bind
 
     def files(workspace)
       [read_file(workspace), write_file(workspace), edit_file(workspace),
-       find_in_file(workspace), list_files(workspace)]
+       grep(workspace), list_files(workspace), delete_file(workspace)]
     end
 
     def memory(store)
@@ -24,10 +38,64 @@ module Mistri
     end
 
     def with_document(workspace, args)
+      unusable = unusable_path(args["path"])
+      return unusable if unusable
+
       content = workspace.read(args["path"])
       return missing_document(args["path"]) if content.nil?
 
       yield content
+    end
+
+    # A hash of the content, so a version is the same in any process.
+    def version(content)
+      Digest::SHA256.hexdigest(content.b)[0, 12]
+    end
+
+    # Checked before any workspace is asked, so the same rules hold on every
+    # backend.
+    def unusable_path(path, prefix: false)
+      path = path.to_s
+      path = path.delete_suffix("/") if prefix
+      problem = path_problem(path)
+      return unless problem
+
+      ToolResult.new(
+        content: "#{path.inspect} is not a path here: #{problem}. Use a relative path such " \
+                 "as notes/plan.md.",
+        error: true
+      )
+    end
+
+    def path_problem(path)
+      return "it is empty" if path.empty?
+      return "it is longer than #{MAX_PATH_BYTES} bytes" if path.bytesize > MAX_PATH_BYTES
+      return "it is not valid UTF-8" unless path.valid_encoding?
+      return "it holds a control character or a backslash" if path.match?(/[\x00-\x1f\x7f\\]/)
+      return "it starts with /" if path.start_with?("/")
+
+      parts = path.split("/", -1)
+      "it holds an empty part, . or .." if parts.intersect?(["", ".", ".."])
+    end
+
+    # A store may match a path to the folder without case or accents, or by
+    # Unicode's folding, so the first two parts are compared as plain letters.
+    def read_only(path)
+      first, second, = plain_letters(path.to_s).split("/", 3)
+      return unless "#{first}/" == Scratchpad::ROOT
+
+      reason = if second.nil?
+                 "scratchpad is a folder, so no document can have that path."
+               elsif "#{first}/#{second}/" == Scratchpad::RESULTS
+                 "#{Scratchpad::RESULTS} holds saved tool results and is read-only."
+               end
+      ToolResult.new(content: "#{reason} Write under scratchpad/ instead.", error: true) if reason
+    end
+
+    def plain_letters(path)
+      return path.downcase if path.ascii_only?
+
+      path.unicode_normalize(:nfkd).downcase(:fold).gsub(/[^[:ascii:]]/, "")
     end
 
     def missing_document(path)
@@ -82,6 +150,9 @@ require_relative "tools/read_file"
 require_relative "tools/write_file"
 require_relative "tools/edit_file"
 require_relative "tools/find_in_file"
+require_relative "tools/grep"
 require_relative "tools/list_files"
+require_relative "tools/delete_file"
+require_relative "tools/run_code"
 require_relative "tools/read_memory"
 require_relative "tools/update_memory"

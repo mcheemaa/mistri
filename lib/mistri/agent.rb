@@ -1,6 +1,7 @@
 # frozen_string_literal: true
 
 require "json"
+require "securerandom"
 
 module Mistri
   # The agent loop: prompt the provider, run any tools it calls, feed the
@@ -51,12 +52,18 @@ module Mistri
     def initialize(provider:, session: nil, system: nil, tools: [], budget: nil,
                    max_concurrency: 4, transform_context: nil, compaction: Compaction.new,
                    retries: RetryPolicy.new, skills: [], before_tool: nil, after_tool: nil,
-                   context: nil, log_label: nil, lease: true)
+                   context: nil, log_label: nil, lease: true, result_limit: ResultLimit.new,
+                   scratchpad: nil, sandbox: nil, files: nil)
       @provider = provider
       @session = session || Session.new(store: Stores::Memory.new)
       skills = skills.is_a?(String) ? Skills.load(skills) : Array(skills)
       @system = Skills.amend(system, skills)
-      install_tools(skills.empty? ? tools : tools + [Skills.reader(skills)])
+      scratchpad = Scratchpad.new(scratchpad) if scratchpad && !scratchpad.is_a?(Scratchpad)
+      @scratchpad = scratchpad
+      @documents = documents(files, scratchpad&.workspace)
+      @result_limit = result_limit || nil
+      @storing = Mutex.new
+      install_tools(with_own_tools(tools, skills, sandbox))
 
       @budget = budget || Budget.new
       @budget.validate_provider!(@provider)
@@ -163,19 +170,220 @@ module Mistri
 
     private
 
+    def documents(files, scratchpad)
+      return files || scratchpad if files.nil? || scratchpad.nil? || files.equal?(scratchpad)
+
+      Workspace::PathSpace.new(files:, scratchpad:)
+    end
+
+    def with_own_tools(tools, skills, sandbox)
+      tools += [Skills.reader(skills)] unless skills.empty?
+      own_files = @documents && tools.none? { |tool| tool.name == "read_file" }
+      tools += Tools.files(@documents) if own_files
+      return tools unless sandbox
+
+      tools + [Tools.run_code(sandbox, limited: !@result_limit.nil?, &method(:from_code))]
+    end
+
+    FILES_FROM_CODE = { "read" => "read_file", "write" => "write_file", "list" => "list_files",
+                        "delete" => "delete_file" }.freeze
+    SHORT_COPY = ResultLimit.new(bytes: ResultLimit::SHOWN_BYTES)
+    MAX_STORED_CODE_CALLS = 100
+    # An edit can grow a document by far more than the text it is given, so
+    # a run's budget for writes could not count it.
+    EDIT_FROM_CODE = "edit_file is not called from code. Read the document with files.read, " \
+                     "change the text in the code and write it with files.write."
+    private_constant :FILES_FROM_CODE, :SHORT_COPY, :MAX_STORED_CODE_CALLS, :EDIT_FROM_CODE
+
+    def from_code(operation, payload, context, run)
+      raise Error, "the run was stopped" if context.signal&.aborted?
+      return tool_from_code(payload, context, run) if operation == "tool"
+
+      name = FILES_FROM_CODE[operation]
+      raise Error, "the code asked for #{operation}, which does not exist" unless name
+
+      workspace = documents_of(name, operation)
+      call = ToolCall.new(id: "code_#{SecureRandom.hex(8)}", name:,
+                          arguments: payload.slice("path", "prefix", "content").compact)
+      call, refusal = prepare_call(call, normalize: true, signal: context.signal)
+      settle_from_code(call, context, run, refusal:) do
+        file_from_code(workspace, operation, call, context, run)
+      end
+    end
+
+    # files in code is the built-in document tool of the same kind, on the
+    # workspace that tool is bound to. A host's own tool of that name has a
+    # handler of its own, so code reaches it only as a tool.
+    def documents_of(name, operation)
+      tool = @tools_by_name[name]
+      raise Error, "you do not have the #{name} tool" unless tool
+
+      Tools.bound_workspace(tool) ||
+        raise(Error, "files.#{operation} is not available, because #{name} here is the " \
+                     "host's own tool. Call tools.#{name} instead.")
+    end
+
+    # Code can pass megabytes to a call, in a loop, so the copy of a call that
+    # is stored and emitted keeps SHOWN_BYTES of its arguments. The largest
+    # give way first, so a path stays whole beside a document.
+    def short_copy(call)
+      arguments = call.arguments
+      limit = ResultLimit::SHOWN_BYTES
+      return call if ToolArguments.serialized_size_within_limit?(arguments, limit:)
+      return call.with(arguments: short_value(arguments, limit)) unless arguments.is_a?(Hash)
+
+      sizes = arguments.transform_values { |value| JSON.generate(value).bytesize }
+      short = sizes.sort_by(&:last).to_h do |key, size|
+        kept, used = short_argument(arguments[key], size, limit)
+        limit -= used
+        [key, kept]
+      end
+      call.with(arguments: arguments.to_h { |key, _value| [key, short[key]] })
+    end
+
+    def short_value(value, limit)
+      short_argument(value, JSON.generate(value).bytesize, limit).first
+    end
+
+    def short_argument(value, size, left)
+      return [value, size] if size <= left
+      return ["[#{size} bytes of JSON]", 0] unless value.is_a?(String)
+
+      start = value.byteslice(0, left).scrub("")
+      notice = "[cut at #{start.bytesize} of #{value.bytesize} bytes]"
+      [[start, notice].reject(&:empty?).join("\n"), left]
+    end
+
+    # A read gives after_tool the document, because that is what the code
+    # receives.
+    def file_from_code(workspace, operation, call, context, run)
+      value, line = Tools.file_from_code(workspace, operation, call.arguments, run)
+      return [value, line] unless @after_tool
+
+      seen = operation == "read" ? value : line
+      text, result = rewritten_from_code(call, seen, context)
+      return [nil, result] if result.is_a?(ToolResult) && result.error?
+      return [value, line] if text == seen
+
+      case operation
+      when "read" then [text, "Read #{call.arguments["path"]} (#{text.bytesize} bytes)"]
+      when "list" then [text.split("\n"), text]
+      else [value, text]
+      end
+    end
+
+    def tool_from_code(payload, context, run)
+      name = payload["name"].to_s
+      tool = @tools_by_name[name]
+      raise Error, "run_code cannot be called from code" if name == "run_code"
+      raise Error, EDIT_FROM_CODE if name == "edit_file" && Tools.bound_workspace(tool)
+
+      call = ToolCall.new(id: "code_#{SecureRandom.hex(8)}", name:, arguments: payload["arguments"])
+      call, refusal = prepare_call(call, normalize: true, signal: context.signal)
+      settle_from_code(call, context, run, refusal:) do
+        whole = context.with(result_limit: nil)
+        result = Tools.within_budget(run, tool, call.arguments) do
+          ToolExecutor.invoke_one(tool, call, whole).first
+        end
+        rewritten_from_code(call, result, context)
+      end
+    end
+
+    # A call from code is stored as an entry beside the messages, not as a
+    # message, because the model reads its result in the code.
+    def settle_from_code(call, context, run, refusal: nil, &)
+      refusal ||= refused_from_code(call, context)
+      call = short_copy(call)
+      value, result, seconds = refusal ? [nil, refusal, nil] : run_from_code(call, context, &)
+      content, ui, tool_error = if result.is_a?(ToolResult)
+                                  [result.content, result.ui, result.error?]
+                                else
+                                  [result, nil, false]
+                                end
+      text = ResultLimit.texts(content).join("\n")
+      content, cut = SHORT_COPY.bound(stored_form(content))
+      message = Message.tool(content:, tool_call_id: call.id, tool_name: call.name, ui:,
+                             tool_error:, cut:)
+      store_from_code(run, call, message.with(ui: nil))
+      context.emit&.call(Event.new(type: :tool_result, tool_call: call, message:, tool_error:,
+                                   content: content.is_a?(String) ? content : "[content]",
+                                   duration: seconds))
+      raise Error, text if tool_error
+
+      value
+    end
+
+    # One run can make hundreds of thousands of calls, and a session reads
+    # every entry it holds, so a run stores its first hundred. Every call
+    # still emits its events, and only the event carries the result's ui,
+    # which can be a page. Two runs of one turn store from two threads, which
+    # a store that numbers its entries cannot take at once.
+    def store_from_code(run, call, message)
+      run.calls += 1
+      return if run.calls > MAX_STORED_CODE_CALLS
+
+      @storing.synchronize do
+        @session.append("code_call", "call" => call.to_h, "message" => message.to_h)
+      end
+    end
+
+    def refused_from_code(call, context)
+      _cleared, blocked = screen([call], context.signal, &context.emit)
+      return blocked.first[1] if blocked.any?
+
+      reason = if gated?(call) then "needs a person's approval for this call"
+               elsif ends_turn?(call) then "ends your turn"
+               elsif call.name == ToolSearch::NAME then "loads tools into your own list"
+               end
+      return unless reason
+
+      ToolResult.new(content: "#{call.name} #{reason}, so code cannot make it. Call the tool " \
+                              "yourself.", error: true)
+    rescue EventDelivery::Failure
+      raise
+    rescue StandardError => e
+      ToolResult.new(content: "Error evaluating approval policy for tool #{call.name.inspect}: " \
+                              "#{e.class}: #{e.message}. The tool did not run.", error: true)
+    end
+
+    def run_from_code(call, context)
+      context.emit&.call(Event.new(type: :tool_started, tool_call: call))
+      started = monotonic_now
+      value, result = begin
+        yield
+      rescue EventDelivery::Failure
+        raise
+      rescue StandardError => e
+        [nil, ToolResult.new(content: e.message, error: true)]
+      end
+      [value, result, monotonic_now - started]
+    end
+
+    def rewritten_from_code(call, result, context)
+      result = rewrite(call, result, hook_context(context.signal, context.emit)) if @after_tool
+      content = stored_form(result.is_a?(ToolResult) ? result.content : result)
+      [ResultLimit.texts(content).join("\n"), result]
+    end
+
     def install_tools(tools)
       deferred = tools.select { |tool| tool.respond_to?(:deferred?) && tool.deferred? }
       @loaded = []
       search = ToolSearch.tool(deferred, loaded: -> { @loaded }) unless deferred.empty?
       @tools = search ? tools + [search] : tools
-      @tools_by_name = @tools.to_h { |tool| [tool.name, tool] }
-      raise ConfigurationError, "duplicate tool names" if @tools_by_name.length != @tools.length
+      @tools_by_name = by_name(@tools)
 
       specs, @external_tool_validators = compile_tool_contracts
       names = deferred.to_h { |tool| [tool.name, true] }
       later, @eager_specs = specs.partition { |spec| names.key?(spec[:name]) }.map(&:freeze)
       @deferred_specs = later.to_h { |spec| [spec[:name], spec] }.freeze
       @defers_tools = @provider.respond_to?(:defers_tools?) && @provider.defers_tools?
+    end
+
+    def by_name(tools)
+      repeated = tools.map(&:name).tally.select { |_name, count| count > 1 }.keys
+      raise ConfigurationError, "duplicate tool names: #{repeated.join(", ")}" if repeated.any?
+
+      tools.to_h { |tool| [tool.name, tool] }
     end
 
     # run's body outside the lease; task's fix passes share task's lease.
@@ -289,7 +497,7 @@ module Mistri
           reason = @budget.exceeded(turns:, usage:, elapsed: monotonic_now - started)
           return stop_for_budget(reason, usage, &emit) if reason
         end
-        last, turn_usage = run_turn(signal, output_schema, &emit)
+        last, turn_usage, said = run_turn(signal, output_schema, &emit)
         turns += 1
         usage += turn_usage
 
@@ -297,7 +505,10 @@ module Mistri
         # transcript is unpairable and replay fails.
         parked, ended = last.tool_calls? ? run_tools(last, signal, &emit) : [[], false]
         return suspended(last, parked, usage) if parked.any?
-        return finished(last, usage, signal, handed_off: ended) if ended || done?(last, signal)
+        next unless ended || done?(last, signal)
+
+        said = nil unless last.stop_reason == StopReason::STOP && last.text.to_s.strip.empty?
+        return finished(last, usage, signal, handed_off: ended, said:)
       end
     end
 
@@ -372,7 +583,9 @@ module Mistri
     # model and a recovered retry never shows the subscriber an error it
     # walks back. Only the accepted attempt persists and terminates.
     def run_turn(signal, output_schema = nil, &emit)
-      history = sending_instructions(listing_deferred_tools(@session.messages))
+      replayed = @session.messages
+      said = said_since_user(replayed)
+      history = noting_scratchpad(sending_instructions(listing_deferred_tools(replayed)))
       history = @transform_context.reduce(history) do |messages, transform|
         transform.call(messages)
       end
@@ -391,7 +604,7 @@ module Mistri
         validate_usage!(attempt_usage, message:, kind: "turn", &emit)
         usage += attempt_usage
         attempt += 1
-        error = @retries&.error_for(message)
+        error = attempt_error(message, said)
         if retry_turn?(error, attempt, signal)
           pause = @retries.delay(attempt, error["retry_after"])
           record_retry(message, error, attempt, pause, &emit)
@@ -401,7 +614,7 @@ module Mistri
         emit&.call(held) if held
         @session.append_message(message)
         reserve_tool_call_ids(message.tool_calls)
-        return [message, usage]
+        return [message, usage, said]
       end
     end
 
@@ -432,6 +645,15 @@ module Mistri
       return messages if owed.empty?
 
       messages + [@session.append_message(Message.reminder("tool_instructions", *owed))]
+    end
+
+    # The note is owed while the conversation holds none, so a compaction that
+    # summarized it brings it back with what the scratchpad holds by then.
+    def noting_scratchpad(messages)
+      return messages unless @scratchpad
+      return messages if messages.any? { |message| message.reminder == "scratchpad" }
+
+      messages + [@session.append_message(Message.reminder("scratchpad", @scratchpad.note))]
     end
 
     # Each server's instructions that no reminder in the conversation holds
@@ -502,6 +724,21 @@ module Mistri
       @provider.native_output_schema(output_schema.schema)
     end
 
+    # Once the model has written to the user in this exchange, an empty
+    # completion is its end of turn: the same request answers the same way.
+    def attempt_error(message, said)
+      error = @retries&.error_for(message)
+      error unless said && error.equal?(RetryPolicy::EMPTY_COMPLETION)
+    end
+
+    def said_since_user(messages)
+      messages.reverse_each do |message|
+        return nil if message.user?
+        return message.text if message.assistant? && !message.text.to_s.strip.empty?
+      end
+      nil
+    end
+
     def retry_turn?(error, attempt, signal)
       return false unless @retries && error
       return false if signal&.aborted?
@@ -513,8 +750,9 @@ module Mistri
       entry = { "attempt" => attempt, "error" => error, "delay" => pause.round(2) }
       entry["usage"] = (message.usage || Usage.new).to_h
       @session.append("retry", entry)
-      note = format("attempt %<attempt>d failed; retrying in %<pause>.1fs",
-                    attempt: attempt, pause: pause)
+      reason = [error["type"], error["status"]].compact.join(" ")
+      note = format("attempt %<attempt>d failed (%<reason>s); retrying in %<pause>.1fs",
+                    attempt: attempt, reason: reason, pause: pause)
       emit&.call(Event.new(type: :retry, content: note, attempt: attempt,
                            max_attempts: @retries.attempts, delay: pause.round(2),
                            message: message))
@@ -567,7 +805,7 @@ module Mistri
     def complete_tool_batch(source_calls, prepared, batch, signal, provider:, &emit)
       batch = protect_gemini_result_order(prepared, batch) if provider == :gemini
       invalid, blocked, parked, free, rejected = batch
-      executed = execute(free, signal, &emit)
+      executed = execute(free, signal, among: prepared.length - parked.length, &emit)
       if signal&.aborted?
         uncommitted = [*invalid, *blocked, *rejected].map(&:first) + parked
         results = [*executed, *interrupted_results(uncommitted)]
@@ -631,7 +869,8 @@ module Mistri
       cleared, blocked = screen(valid, signal, &)
       return interrupt_settlement(open, approved_calls, denied, signal, &) if signal&.aborted?
 
-      executed = execute(cleared, signal, &)
+      spent = stored_for_turn
+      executed = execute(cleared, signal, among: open.length, spent:, &)
       denials = denial_results(denied)
       results = if signal&.aborted?
                   uncommitted = [*invalid, *blocked].map(&:first)
@@ -640,7 +879,7 @@ module Mistri
                   [*invalid, *blocked, *executed, *denials]
                 end
       answer_results(open.map { |approval| approval[:call] },
-                     results, executed:, signal:, &)
+                     results, executed:, signal:, spent:, &)
       executed.map(&:first)
     end
 
@@ -1002,14 +1241,22 @@ module Mistri
 
     # Runs calls without persisting them; the caller commits and rewrites
     # settled results in the model's original call order.
-    def execute(calls, signal, &emit)
+    def execute(calls, signal, among:, spent: 0, &emit)
       return [] if calls.empty?
 
       ToolExecutor.call_with_outcomes(calls, @tools_by_name, signal: signal,
                                                              max_concurrency: @max_concurrency,
                                                              session: @session, emit: emit,
                                                              app: @context,
+                                                             result_limit_for: limits(among, spent),
                                                              prepared_arguments: true)
+    end
+
+    def limits(among, spent)
+      return unless @result_limit
+
+      share = @result_limit.share(among, spent:)
+      ->(call) { [own_limit(call), share].min }
     end
 
     def interrupt_tool_turn(calls, signal, &)
@@ -1079,38 +1326,120 @@ module Mistri
 
     # The tool message carries both channels; the :tool_result event exposes
     # it whole so hosts read event.message.ui for their side of the result.
-    def answer(call, result, duration: nil, &emit)
+    def answer(call, result, duration: nil, turn: nil, &emit)
       content, ui, tool_error, loads = if result.is_a?(ToolResult)
                                          [result.content, result.ui, result.error?, result.loads]
                                        else
                                          [result, nil, false, nil]
                                        end
       loads = nil if tool_error
+      content, cut = bound(stored_form(content), turn, call)
       message = @session.append_message(Message.tool(content: content, tool_call_id: call.id,
                                                      tool_name: call.name, ui: ui,
-                                                     tool_error: tool_error, loads: loads))
+                                                     tool_error: tool_error, loads: loads,
+                                                     cut: cut))
       text = content.is_a?(String) ? content : "[content]"
       emit&.call(Event.new(type: :tool_result, tool_call: call, content: text,
                            message: message, duration: duration, tool_error: tool_error))
     end
 
-    def answer_results(calls, results, executed:, signal:, &emit)
-      executed_results = if @after_tool
-                           {}.compare_by_identity.tap do |index|
-                             executed.each { |result| index[result] = true if result[3] }
-                           end
-                         end
+    # A hook can return rows where a tool returns text. They are bounded in
+    # the blocks a message stores them as, so what is counted is what is kept.
+    def stored_form(content) = content.is_a?(String) ? content : Content.wrap(content)
+
+    def bound(content, turn, call)
+      return [content, nil] unless @result_limit
+
+      own = own_limit(call)
+      saved = saveable?(content, call)
+      limit = turn ? turn.limit(own, saved:) : own
+      content, cut = (saved && saved_in_scratchpad(content, limit, call)) ||
+                     @result_limit.bound(content, limit, shared: limit < own)
+      turn&.spend(ResultLimit.size(content))
+      [content, cut]
+    end
+
+    def own_limit(call)
+      tool = @tools_by_name[call.name]
+      (tool.respond_to?(:result_limit) && tool.result_limit) || @result_limit.bytes
+    end
+
+    def saved_in_scratchpad(content, limit, call)
+      text = content.is_a?(String) ? content : Array(content).map(&:text).join("\n")
+      return unless text.bytesize > limit
+
+      @result_limit.shown(text, @scratchpad.save_result(text, call.name), limit)
+    rescue StandardError => e
+      warn "mistri: saving a result of #{call.name} failed (#{e.class}: #{e.message}); it is cut"
+      @result_limit.bound(content, limit, unsaved: true)
+    end
+
+    def saveable?(content, call)
+      tool = @tools_by_name[call.name]
+      return false unless @scratchpad && !(tool.respond_to?(:save_result?) && !tool.save_result?)
+
+      blocks = Array(content)
+      content.is_a?(String) || (blocks.any? && blocks.all?(Content::Text))
+    end
+
+    # after_tool runs on a result just before it is stored, so a hook sees
+    # the results before it stored. When a hook changes a result, the turn is
+    # planned again from there: the results after it get the room it left.
+    def answer_results(calls, results, executed:, signal:, spent: 0, &emit)
+      hooked = executed_entries(executed)
+      context = hook_context(signal, emit) if @after_tool
+      pending = in_call_order(calls, results)
+      turn = result_turn(pending, spent)
+      pending.each_with_index do |entry, index|
+        call, returned, seconds = entry
+        result = hooked&.key?(entry) ? rewrite(call, returned, context) : returned
+        rest = [[call, result], *pending.drop(index + 1)]
+        turn = planned_again(turn, rest) unless result.equal?(returned)
+        answer(call, result, duration: seconds, turn:, &emit)
+      end
+    end
+
+    def executed_entries(executed)
+      return unless @after_tool
+
+      {}.compare_by_identity.tap do |index|
+        executed.each { |result| index[result] = true if result[3] }
+      end
+    end
+
+    def in_call_order(calls, results)
       by_call = {}.compare_by_identity
       results.each { |result| (by_call[result[0]] ||= []) << result }
-      context = hook_context(signal, emit) if @after_tool
-      calls.each do |call|
-        queued = by_call[call]
-        next unless queued && (entry = queued.shift)
+      calls.filter_map { |call| by_call[call]&.shift }
+    end
 
-        _call, result, seconds = entry
-        result = rewrite(call, result, context) if executed_results&.key?(entry)
-        answer(call, result, duration: seconds, &emit)
+    def planned_again(turn, rest)
+      turn && result_turn(rest, @result_limit.turn_bytes - turn.left)
+    end
+
+    def result_turn(results, spent)
+      return nil unless @result_limit
+
+      held = results.map do |call, result, _seconds|
+        held(call, result.is_a?(ToolResult) ? result.content : result)
       end
+      @result_limit.turn(held, spent:)
+    end
+
+    def held(call, content)
+      size = ResultLimit.size(content)
+      own = own_limit(call)
+      saved = ResultLimit::SAVED_BYTES if saveable?(content, call)
+      ResultLimit::Held.new(whole: size <= own ? size : saved || own, saved:)
+    end
+
+    # After an approval the rest of a turn's results are answered in a later
+    # run, so the turn's limit counts what is stored already.
+    def stored_for_turn
+      return 0 unless @result_limit
+
+      @session.messages.reverse_each.take_while(&:tool?)
+              .sum { |message| ResultLimit.size(message.content) }
     end
 
     def gated?(call)
@@ -1143,12 +1472,12 @@ module Mistri
     # the signal is what knows the user stopped it. handed_off marks a run
     # an ends_turn tool ended, and only a genuinely completed one: a run
     # aborted during that same tool phase handed nothing to anyone.
-    def finished(message, usage, signal = nil, handed_off: false)
+    def finished(message, usage, signal = nil, handed_off: false, said: nil)
       status = { StopReason::ABORTED => :aborted, StopReason::BUDGET => :budget,
                  StopReason::ERROR => :error }.fetch(message.stop_reason, :completed)
       status = :aborted if status == :completed && signal&.aborted?
       Result.new(message: message, status: status, usage: usage,
-                 handed_off: handed_off && status == :completed)
+                 handed_off: handed_off && status == :completed, said:)
     end
 
     def suspended(message, parked, usage)

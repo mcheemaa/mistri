@@ -7,6 +7,8 @@ require_relative "test_helper"
 # that loads tools must call one an additional_tools item declared, take the
 # replay of that call, and keep its cached prefix across the load.
 class TestOpenAIDeferredToolsLive < Minitest::Test
+  parallelize_me!
+
   MODELS = Mistri::Models::CATALOG.each_value.select do |model|
     model.provider == :openai && Mistri::Models.tool_loading?(model.id)
   end

@@ -203,6 +203,25 @@ class TestLocks < Minitest::Test
     refute locks.flag?("stop:1")
   end
 
+  def test_rails_cache_warns_on_a_null_store_which_grants_every_lock
+    begin
+      require "active_support"
+      require "active_support/cache"
+    rescue LoadError
+      skip "activesupport not installed"
+    end
+    require "mistri/locks/rails_cache"
+
+    _out, err = capture_io do
+      locks = Mistri::Locks::RailsCache.new(cache: ActiveSupport::Cache::NullStore.new)
+
+      assert locks.acquire("run:1", ttl: 60)
+      assert locks.acquire("run:1", ttl: 60)
+    end
+
+    assert_match(/null cache store, which grants every lock/, err)
+  end
+
   def test_rails_cache_raises_when_a_cache_write_fails
     require "mistri/locks/rails_cache"
     # Redis and Memcache stores answer nil when the backend is down.

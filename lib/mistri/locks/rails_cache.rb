@@ -12,6 +12,12 @@ module Mistri
         @cache = cache || (defined?(Rails) && Rails.cache) ||
                  raise(ConfigurationError, "no cache store; pass cache: or configure Rails.cache")
         @namespace = namespace
+        return unless defined?(ActiveSupport::Cache::NullStore)
+        return unless @cache.is_a?(ActiveSupport::Cache::NullStore)
+
+        warn "mistri: Mistri::Locks::RailsCache was given a null cache store, which grants " \
+             "every lock, so two runs can write one session at once. Pass a cache that every " \
+             "process shares."
       end
 
       def acquire(key, ttl:)

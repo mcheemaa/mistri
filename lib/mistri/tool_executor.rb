@@ -33,7 +33,7 @@ module Mistri
     module_function
 
     def call(calls, tools_by_name, signal: nil, max_concurrency: 4, session: nil, emit: nil,
-             app: nil)
+             app: nil, result_limit_for: nil)
       call_with_outcomes(
         calls,
         tools_by_name,
@@ -42,6 +42,7 @@ module Mistri
         session:,
         emit:,
         app:,
+        result_limit_for:,
         prepared_arguments: false
       ).map { |call, result, seconds, _committed| [call, result, seconds] }
     end
@@ -50,7 +51,8 @@ module Mistri
     # lower-level form preserves that boundary and exposes commitment so hooks
     # cannot run for queued calls that an abort prevented from starting.
     def call_with_outcomes(calls, tools_by_name, signal: nil, max_concurrency: 4, session: nil,
-                           emit: nil, app: nil, prepared_arguments: false)
+                           emit: nil, app: nil, result_limit_for: nil,
+                           prepared_arguments: false)
       return [] if calls.empty?
 
       delivery = EventDelivery.wrap(emit, passthrough: [InvocationTimeout])
@@ -60,7 +62,9 @@ module Mistri
       results = Array.new(calls.length)
       queue = Queue.new
       errors = Queue.new
-      calls.each_with_index { |call, index| queue << [call, index] }
+      calls.each_with_index do |call, index|
+        queue << [call, index, context.with(result_limit: result_limit_for&.call(call))]
+      end
       workers = max_concurrency.clamp(1, calls.length)
       Array.new(workers) { worker(queue, results, tools_by_name, context, errors) }.each(&:join)
       unless errors.empty?
@@ -81,7 +85,7 @@ module Mistri
         loop do
           break unless errors.empty?
 
-          call, index = begin
+          call, index, own = begin
             queue.pop(true)
           rescue ThreadError
             break
@@ -91,7 +95,7 @@ module Mistri
             next
           end
 
-          results[index] = run_one(call, index, results, tools_by_name, context)
+          results[index] = run_one(call, index, results, tools_by_name, own)
         end
       rescue StandardError => e
         errors << e

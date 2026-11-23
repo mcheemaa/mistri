@@ -29,6 +29,11 @@ end
 The handler may accept only `args`, or `args` and `context`. `context.app` is
 the object passed as `Mistri.agent(context:)`; it is the usual place for the
 acting user, tenant, or request-scoped authorization context.
+`context.result_limit` is the bytes the result of this call keeps before it
+is cut, or nil where nothing is cut, so a tool that reads in parts can size a
+part. It is the tool's own limit or the agent's, or the call's share of the
+turn's bytes where that is less: the more calls the model makes at once, the
+smaller the part.
 
 Handlers may return:
 
@@ -50,8 +55,8 @@ A completed model call moves through these phases in order:
 5. `before_tool` evaluates current application policy.
 6. `needs_approval` decides whether the prepared call must park.
 7. A free call emits `:tool_started` and invokes the handler.
-8. `after_tool` may rewrite the result, which then persists and emits
-   `:tool_result`.
+8. `after_tool` may rewrite the result.
+9. The result is [bounded](#large-results), persists and emits `:tool_result`.
 
 Malformed or invalid calls do not reach policy or execution. The model receives
 a bounded error result it can correct, while valid sibling calls in the same
@@ -261,6 +266,92 @@ end
 `ui` persists on the tool message and appears on the `:tool_result` event, but
 is never sent to a provider.
 
+## Large results
+
+A stored result is sent to the model with every later request, so Mistri bounds
+it where it is stored. `after_tool` still receives the whole result.
+
+- One result keeps its start, 50,000 bytes at most, on whole lines where it has
+  them. Its last line states the true size, that the rest was not kept, and
+  that the tool can be called again for a narrower part.
+- The results that answer one assistant message share 200,000 bytes. Over
+  that, the largest give way first, down to one size for all of them, which is
+  never under 2,000 bytes. A compaction never makes one turn smaller, so this
+  is what keeps a turn inside the model's window. `after_tool` runs on
+  each result just before it is stored, in the model's order. When a hook
+  changes a result, the bytes are shared again among that result and the ones
+  after it, so a result that a hook makes smaller leaves its room to the later
+  ones. The results stored before it keep what they were given.
+- An image is not counted and is never cut.
+- `cut` on the tool message holds the true size, as in
+  `{ "bytes" => 2062500, "lines" => 62500 }`. It is nil on a result stored
+  whole and is never sent to a provider. The `:tool_result` event carries the
+  stored text.
+
+Give a tool that can return a lot a way to ask for less: a page, a filter or a
+count. The model reads the last line and calls the tool again.
+
+```ruby
+agent = Mistri.agent(
+  "claude-opus-5-5",
+  tools: tools,
+  result_limit: Mistri::ResultLimit.new(bytes: 20_000, turn_bytes: 100_000),
+)
+```
+
+`result_limit: false` stores every result whole. One result larger than the
+model's window then leaves the session with no way back, because a compaction
+cannot shrink the turn that holds it.
+
+A tool takes `result_limit:` too, the bytes one of its own results keeps in
+place of the agent's number. A host can then lower the agent's limit for
+chatty tools and leave a tool whose result the model needs whole as it is. The
+skill reader keeps 50,000 bytes whatever the agent's limit. A tool's limit is
+a positive number of bytes: no tool is exempt, and its results still share the
+turn's bytes with the others.
+
+### Saving the whole result
+
+Pass `scratchpad:`, a [workspace](context-and-workspaces.md#workspaces-and-document-tools)
+the host builds and scopes to the session, and nothing is lost:
+
+```ruby
+agent = Mistri.agent("claude-opus-5-5", tools: tools, scratchpad: workspace)
+```
+
+- The whole of a text result over its limit is saved under
+  `scratchpad/tool-results/`, exactly as the tool returned it. Its name ends
+  in `.json` when the text begins and ends as a JSON object or array, and in
+  `.txt` otherwise.
+- The stored result is its first 2,000 bytes and one line with the true size
+  and the path. `cut` holds the path too.
+- Where the results of one turn are over its 200,000 bytes together, the
+  largest are saved first, and the ones that then fit stay whole.
+- The agent adds the six document tools when the host passed none, so the
+  model reads a saved result in parts or searches it. The scratchpad is a
+  folder of the workspace you pass, and the tools reach every path of that
+  workspace, not only `scratchpad/`. Pass one that holds only what the model
+  may read and change. A host that passes its own document tools binds them
+  to the same workspace, and leaves out any the model must not have, such as
+  `delete_file`.
+- A note tells the model what the scratchpad is for. After a compaction that
+  summarized it, the note is appended again with what the scratchpad holds.
+- `scratchpad/tool-results/` is read-only to the model, so that it does not
+  write over a saved result by mistake. It may keep notes of its own elsewhere
+  under `scratchpad/`. The folder's own path is refused as well, and so is a
+  path that differs from it by capitals or accents. The check guards against a
+  mistake and is not a boundary: a store may match further letters to the
+  folder, as MySQL's default collation matches `ł` to `l`, and such a path
+  then reaches a saved result as any path reaches the host's own documents.
+- A result with an image is cut and not saved. So is a result the scratchpad
+  cannot take: its line says it could not be saved, and Mistri prints a warning.
+- A tool defined with `save_result: false` is cut and never saved. The document
+  tools are, so reading a saved result cannot save another.
+
+With a scratchpad a lower limit costs little, because the model can still reach
+the whole. `Mistri::ResultLimit.new(bytes: 8_000)` keeps results of middle
+size out of every later request.
+
 Non-text tool-result content remains provider-neutral in the Session. Anthropic
 can receive image blocks in a tool result. The current OpenAI and Gemini
 function-result serializers have no such encoding and send an explicit
@@ -288,6 +379,101 @@ An error flag does not make a replay safe. A handler may have committed a write
 before raising or timing out. Mistri never mechanically replays the same call
 because it is marked failed, but the model may issue another call. The host
 still owns idempotency and reconciliation.
+
+## Code the model writes
+
+Some work is arithmetic over more data than a model should read: a sum over a
+saved result, a join of two documents, a count of every link on a page. With a
+sandbox the agent gains `run_code`, and the model writes JavaScript that does
+the work and returns only the answer.
+
+```ruby
+# Gemfile: gem "wasmtime"
+require "mistri/sandbox/quickjs"
+
+SANDBOX = Mistri::Sandbox::QuickJS.new(wasm: "vendor/quickjs.wasm")
+
+agent = Mistri.agent("claude-opus-5-5", tools: tools, scratchpad: workspace,
+                     sandbox: SANDBOX)
+```
+
+`Mistri::Sandbox::QuickJS` runs the code in QuickJS compiled to WebAssembly,
+inside the host's process, on the `wasmtime` gem. Nothing else is installed
+and no other process or machine is involved. The wasm file is `quickjs.wasm`
+from the npm package `quickjs-wasi`, version 3.7.0. The adapter checks its
+SHA-256 and refuses another build unless you pass `sha256:`. Build one adapter
+for the process. It compiles the module at its first run, which takes about
+100 ms, and each run gets a new instance with its own memory. On a server that
+forks its workers, build the adapter before the fork and run code only in the
+workers: wasmtime does not survive a fork, so a process forked from one that
+has already run code is refused. On macOS such a process also aborts when it
+exits, inside the wasmtime gem.
+
+What the code has:
+
+- `files.read(path)`, `files.write(path, text)`, `files.list(prefix)` and
+  `files.delete(path)`. Each is the document tool of the same kind, on the
+  workspace that tool is bound to, so the agent needs that tool. A read returns
+  the whole document, and of a document that is not text it is an error the
+  code can catch. A write over a document that exists needs a read of it in
+  the same run, and `scratchpad/tool-results/` stays read-only. Where a document
+  tool is the host's own, code calls it as a tool, as in
+  `await tools.write_file({ path, content })`.
+- `await tools.NAME(arguments)` for every other tool of the agent. It returns
+  the result's text, and a failed result is thrown as an error. The built-in
+  `edit_file` is the one exception: code changes a document by reading it and
+  writing it with `files.write`.
+- `console.log`, of which the first 100,000 bytes are kept, and the standard
+  JavaScript objects. There is no network, no file system, no timers and no
+  `URL` class. Dates are in UTC.
+- Text leaves the code as UTF-8. Half of a character that a cut left behind,
+  as `slice` can leave of an emoji, arrives as U+FFFD.
+
+A call from code is a tool call. It passes the tool's argument contract, its
+timeout, `before_tool` and `after_tool`, and emits `:tool_started` and
+`:tool_result` with a call id that begins with `code_`. Two runs of code in
+one turn make their calls at once, so the hooks are then called from two
+threads. `before_tool` is given what the code passed, the content of a write
+included, and the code receives what `after_tool` returned. For `files.read`
+that is the document. A tool that needs approval for the call, or that ends
+the turn, is refused in the code with a message to call it directly. So is
+`tool_search`, which loads tools for the model. The call is stored as a
+`code_call` entry beside the messages, not as a message: the model reads the
+result in its code, so it is not sent again with later requests. One run
+stores its first 100 calls, and every call emits its events. The result's `ui`
+travels on the event and is not stored. The entry and the two events hold a
+short copy: 2,000 bytes of the call's arguments and 2,000 bytes of its result.
+Among the arguments the largest give way first, so a path stays whole beside
+the content of a write, which keeps its start and its true size.
+
+Limits: ten seconds of the code's own computing, five minutes for the whole
+run with the calls it makes, and 64 MB, set with `timeout:`, `total_timeout:`
+and `memory:`. One run writes 5 MB to documents at most, through `files` or
+the built-in `write_file`, and a write past that is an error the code can
+catch. A run that passes the first or the third is stopped and the model is
+told. The time a tool or a document takes to answer the code does not count
+against the first, so a slow tool does not end the run that called it. It
+counts against the second: after the total limit, and once the agent's run is
+stopped, every further call from the code is refused. The result of `run_code`
+keeps 10,000 bytes, and with a scratchpad the whole is saved. The tool's
+description states the limit and tells the model to write a longer output to a
+document.
+
+While code computes it holds Ruby's interpreter lock. The adapter passes the
+lock on each time QuickJS checks for an interrupt, which it does in the code's
+own loops and not inside one built-in call. A search in a long string or a
+sort of a large array runs to its end with the lock held, and a loop of such
+calls is checked rarely: code that searched a string of 20 MB in a loop kept
+every other thread waiting for the whole ten seconds. On a process that serves
+requests, set `timeout:` to the longest wait its other threads can take, or
+run the agent in a job. The code also shares the CPU with those threads, so a
+busy process gives it less computing within the same timeout.
+
+A sandbox of your own is any object that answers `run(code, host:)` and
+returns a `Mistri::Sandbox::Outcome`. `host` is a callable given an operation
+name and a Hash, and is the only way out of the sandbox. A `Mistri::Error` that
+`host` raises is the code's to catch. Any other error ends the run, so an
+event subscriber's failure reaches the caller as it does for any tool call.
 
 ## Tools on demand
 
@@ -522,7 +708,8 @@ same structural preflight before its argument object is canonicalized.
 
 These are safety boundaries, not business validation. Keep tool schemas narrow,
 validate domain rules explicitly, and return references rather than embedding
-unbounded data in a tool call.
+unbounded data in a tool call. A tool result is bounded as
+[Large results](#large-results) describes.
 
 ## Related guides
 

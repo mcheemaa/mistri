@@ -6,6 +6,8 @@ require_relative "test_helper"
 
 # A real output-limit stop must leave the durable conversation usable after reload.
 class TestCompactionLive < Minitest::Test
+  parallelize_me!
+
   # Observe the actual wire result without replacing the summarizer or its response.
   class ObservedAnthropic < Mistri::Providers::Anthropic
     attr_reader :reply

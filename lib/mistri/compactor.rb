@@ -176,8 +176,9 @@ module Mistri
       # position, so the walk goes on to the entry it stands behind.
       def keep_boundary(replay, keep_recent)
         kept = 0
+        latest = Compaction.latest_provider(replay.map(&:first))
         replay.reverse_each do |(message, index)|
-          kept += Compaction.estimate(message)
+          kept += Compaction.estimate(message, latest)
           return index if index && kept >= keep_recent
         end
         nil

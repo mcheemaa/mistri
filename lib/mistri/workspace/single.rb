@@ -90,6 +90,10 @@ module Mistri
         prefix.nil? || @path.start_with?(prefix.to_s) ? [@path] : []
       end
 
+      def sizes(prefix = nil)
+        list(prefix).to_h { |path| [path, @read.call.to_s.bytesize] }
+      end
+
       private
 
       def verify_path!(path)

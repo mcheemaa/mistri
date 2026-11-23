@@ -20,8 +20,11 @@ module Mistri
   #   }) do |args, context|
   #     Bookings.create(args.fetch("hotel_id"), traveler: context.app[:traveler])
   #   end
-  ToolContext = Data.define(:session, :signal, :emit, :app) do
-    def initialize(session: nil, signal: nil, emit: nil, app: nil)
+  #
+  # result_limit is the bytes a result of this call keeps before it is cut,
+  # or nil where nothing is cut, so a tool that reads in parts can size a part.
+  ToolContext = Data.define(:session, :signal, :emit, :app, :result_limit) do
+    def initialize(session: nil, signal: nil, emit: nil, app: nil, result_limit: nil)
       super
     end
   end

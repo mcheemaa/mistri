@@ -6,6 +6,8 @@ require_relative "test_helper"
 # Prefix-bound thinking must survive compaction as durable history, without
 # sending an invalid signature back in the shortened replay.
 class TestPrefixBoundCompactionLive < Minitest::Test
+  parallelize_me!
+
   MODELS = Mistri::Models::CATALOG.keys.select { |id| Mistri::Models.prefix_bound_thinking?(id) }
   SYSTEM = "Follow the user's instructions exactly. " \
            "Use lookup_checkpoint before stating its value."

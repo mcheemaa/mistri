@@ -8,6 +8,8 @@ require_relative "test_helper"
 # fallback: a real Haiku writes the checkpoint and a continuation on the
 # reloaded session still recalls the original requirement.
 class TestCompactionFallbackLive < Minitest::Test
+  parallelize_me!
+
   def setup
     skip "set MISTRI_LIVE=1 for live tests" unless ENV["MISTRI_LIVE"] == "1"
     skip "no ANTHROPIC_API_KEY" if ENV["ANTHROPIC_API_KEY"].to_s.empty?

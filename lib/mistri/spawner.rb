@@ -55,10 +55,18 @@ module Mistri
       SubAgent.run_child(label: label_for(args), provider: provider_for(worker),
                          system: worker[:system], tools: worker[:tools],
                          task: args.fetch("task"), parent_context: context,
-                         agent_options: @agent_options)
+                         agent_options: options_within(worker[:tools]))
     end
 
     private
+
+    # An agent with documents and no read_file adds the document tools itself,
+    # which a spawn that did not grant read_file never gave.
+    def options_within(granted)
+      return @agent_options if granted.any? { |tool| tool.name == "read_file" }
+
+      @agent_options.except(:files, :scratchpad)
+    end
 
     def validate_configuration!(tools, models, dispatcher, runtime_factory)
       validate_tool_pool!(tools)

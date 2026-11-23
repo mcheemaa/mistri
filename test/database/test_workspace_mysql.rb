@@ -193,6 +193,15 @@ class TestWorkspaceMysql < Minitest::Test
     assert_match(/cannot join an open transaction/, error.message)
   end
 
+  def test_a_path_in_other_capitals_does_not_reach_the_read_only_folder
+    workspace = build_workspace("tenant-a", page)
+    workspace.write("scratchpad/tool-results/a.txt", "kept")
+    reply = Mistri::Tools.delete_file(workspace).call({ "path" => "Scratchpad/Tool-Results/a.txt" })
+
+    assert_includes reply.content, "read-only"
+    assert_equal "kept", workspace.read("scratchpad/tool-results/a.txt")
+  end
+
   def test_single_column_workspace_rebases_a_real_edit
     record = MysqlAtomicDocument.create!(
       tenant_id: "tenant-a", path: "page.html", content: page
@@ -207,7 +216,8 @@ class TestWorkspaceMysql < Minitest::Test
     result = Mistri::Tools.edit_file(workspace).call(headline_edit("Agent"))
     final = workspace.read("page.html")
 
-    assert_equal "Replaced 1 occurrence(s) in page.html", result
+    assert_equal "Replaced 1 occurrence(s) in page.html, version #{Mistri::Tools.version(final)}",
+                 result
     assert_equal 2, workspace.comparisons
     assert_includes final, "<h1>Agent</h1>"
     assert_includes final, "<aside>Human</aside>"
@@ -366,6 +376,15 @@ class TestWorkspaceMysql < Minitest::Test
     assert_equal 0, MysqlAtomicDocument.count
   ensure
     ActiveRecord::Base.connection.execute("DROP TRIGGER IF EXISTS move_mistri_document")
+  end
+
+  def test_sizes_are_the_bytes_of_each_document_in_scope
+    workspace = build_workspace("tenant-a", "é" * 10)
+    workspace.write("notes/b.md", "four")
+    build_workspace("tenant-b", "other")
+
+    assert_equal({ "notes/b.md" => 4, "page.html" => 20 }, workspace.sizes)
+    assert_equal({ "notes/b.md" => 4 }, workspace.sizes("notes/"))
   end
 
   def test_identical_paths_are_isolated_by_scope

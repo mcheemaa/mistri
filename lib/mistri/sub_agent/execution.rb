@@ -60,11 +60,19 @@ module Mistri
                           signal:, emit:, agent_options:)
         origin = "#{label}##{child.id[0, 8]}"
         agent = Agent.new(provider: provider, session: child, system: system,
-                          tools: tools, log_label: origin, lease: false, **agent_options)
+                          tools: tools, log_label: origin, lease: false,
+                          **with_own_folder(agent_options, origin))
         tagged = ->(event) { forward(event, origin, emit) }
         return agent.task(task, schema: schema, signal: signal, &tagged) if schema
 
         agent.run(task, signal: signal, &tagged)
+      end
+
+      def with_own_folder(agent_options, origin)
+        shared = agent_options[:scratchpad]
+        return agent_options unless shared
+
+        agent_options.merge(scratchpad: Scratchpad.new(shared).for_worker(origin))
       end
 
       def forward(event, origin, emit)
@@ -75,7 +83,7 @@ module Mistri
       end
 
       private :abort_before_child_start!, :execute_child, :forward,
-              :release_inline_lease, :run_child_agent
+              :release_inline_lease, :run_child_agent, :with_own_folder
     end
   end
 end

@@ -4,6 +4,8 @@ require_relative "test_helper"
 
 # The whole loop against a real provider: prompt, tool call, result, answer.
 class TestAgentLive < Minitest::Test
+  parallelize_me!
+
   def setup
     skip "set MISTRI_LIVE=1 for live tests" unless ENV["MISTRI_LIVE"] == "1"
     skip "no ANTHROPIC_API_KEY" if ENV["ANTHROPIC_API_KEY"].to_s.empty?

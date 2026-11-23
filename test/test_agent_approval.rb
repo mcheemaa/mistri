@@ -9,12 +9,12 @@ class TestAgentApproval < Minitest::Test
   def test_a_gated_call_suspends_the_run_without_executing
     sent = []
     events = []
-    agent = build_agent(sent, turns: [gift_turn, { text: "Sent!" }])
+    agent = build_agent(sent, turns: [invite_turn, { text: "Sent!" }])
 
-    result = agent.run("Send Ana a gift") { |event| events << event }
+    result = agent.run("Send Ana an invite") { |event| events << event }
 
     assert_predicate result, :awaiting_approval?
-    assert_equal "send_gift", result.pending.first.name
+    assert_equal "send_invite", result.pending.first.name
     assert_empty sent, "the gated tool must not execute before approval"
     assert(events.any? { |e| e.type == :approval_needed })
     refute(events.any? { |e| e.type == :tool_started })
@@ -24,8 +24,8 @@ class TestAgentApproval < Minitest::Test
     store = Mistri::Stores::Memory.new
     sent = []
     session = Mistri::Session.new(store:)
-    first = build_agent(sent, turns: [gift_turn, { text: "Sent!" }], session:)
-    call = first.run("Send Ana a gift").pending.first
+    first = build_agent(sent, turns: [invite_turn, { text: "Sent!" }], session:)
+    call = first.run("Send Ana an invite").pending.first
 
     # Days later, a web request records the decision with no agent at all.
     Mistri::Session.new(store:, id: session.id).approve(call.id)
@@ -43,8 +43,8 @@ class TestAgentApproval < Minitest::Test
 
   def test_a_denial_reaches_the_model_in_band
     sent = []
-    agent = build_agent(sent, turns: [gift_turn, { text: "Understood, not sending." }])
-    agent.run("Send Ana a gift")
+    agent = build_agent(sent, turns: [invite_turn, { text: "Understood, not sending." }])
+    agent.run("Send Ana an invite")
     call_id = agent.session.open_approvals.first[:call].id
     agent.session.deny(call_id, note: "too expensive")
 
@@ -60,18 +60,18 @@ class TestAgentApproval < Minitest::Test
   end
 
   def test_resume_before_a_decision_returns_still_suspended
-    agent = build_agent([], turns: [gift_turn])
-    agent.run("Send Ana a gift")
+    agent = build_agent([], turns: [invite_turn])
+    agent.run("Send Ana an invite")
 
     result = agent.resume
 
     assert_predicate result, :awaiting_approval?
-    assert_equal "send_gift", result.pending.first.name
+    assert_equal "send_invite", result.pending.first.name
   end
 
   def test_run_refuses_while_approvals_are_open
-    agent = build_agent([], turns: [gift_turn])
-    agent.run("Send Ana a gift")
+    agent = build_agent([], turns: [invite_turn])
+    agent.run("Send Ana an invite")
 
     assert_raises(Mistri::ConfigurationError) { agent.run("another thing") }
   end
@@ -79,14 +79,14 @@ class TestAgentApproval < Minitest::Test
   def test_ungated_calls_in_the_same_turn_execute_before_suspension
     log = []
     turn = { tool_calls: [{ name: "lookup", arguments: {} },
-                          { name: "send_gift", arguments: { "to" => "Ana" } }] }
+                          { name: "send_invite", arguments: { "to" => "Ana" } }] }
     provider = Mistri::Providers::Fake.new(turns: [turn])
     lookup = Mistri::Tool.define("lookup", "Free.") do
       log << :looked
       "found"
     end
-    gift = gift_tool(log)
-    agent = Mistri::Agent.new(provider:, tools: [lookup, gift])
+    invite = invite_tool(log)
+    agent = Mistri::Agent.new(provider:, tools: [lookup, invite])
 
     result = agent.run("go")
 
@@ -188,22 +188,21 @@ class TestAgentApproval < Minitest::Test
 
   private
 
-  def gift_turn
-    { tool_calls: [{ name: "send_gift", arguments: { "to" => "Ana" } }] }
+  def invite_turn
+    { tool_calls: [{ name: "send_invite", arguments: { "to" => "Ana" } }] }
   end
 
-  def gift_tool(sink)
-    Mistri::Tool.define("send_gift", "Sends a real gift.", needs_approval: true,
-                                                           schema: lambda {
-                                                             string :to, "Recipient", required: true
-                                                           }) do |args|
+  def invite_tool(sink)
+    Mistri::Tool.define("send_invite", "Sends a real invite.",
+                        needs_approval: true,
+                        schema: -> { string :to, "Recipient", required: true }) do |args|
       sink << args
-      "gift queued"
+      "invite queued"
     end
   end
 
   def build_agent(sent, turns:, session: nil)
     provider = Mistri::Providers::Fake.new(turns: turns)
-    Mistri::Agent.new(provider:, tools: [gift_tool(sent)], session:)
+    Mistri::Agent.new(provider:, tools: [invite_tool(sent)], session:)
   end
 end

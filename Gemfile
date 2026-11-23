@@ -29,6 +29,12 @@ group :postgres_test, optional: true do
   gem "pg", require: false
 end
 
+# The QuickJS sandbox runs on the wasmtime gem. The adapter stays optional,
+# and its tests skip themselves without the gem and the wasm file.
+group :sandbox_test, optional: true do
+  gem "wasmtime", require: false
+end
+
 # Lint tools run on one Ruby in CI; their dependencies drop old rubies faster
 # than the gem does, so the test matrix must not install them.
 group :lint do

@@ -6,6 +6,8 @@ require "securerandom"
 # A literal pre-0.6 repeated-ID history must remain a valid continuation on
 # every provider, not merely pass Mistri's local audit.
 class TestLegacySessionLive < Minitest::Test
+  parallelize_me!
+
   def setup
     skip "set MISTRI_LIVE=1 for live tests" unless ENV["MISTRI_LIVE"] == "1"
   end

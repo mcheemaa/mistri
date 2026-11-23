@@ -57,6 +57,10 @@ module Mistri
         end
       end
 
+      def sizes(prefix = nil)
+        list(prefix).to_h { |path| [path, @mutex.synchronize { @documents[path]&.bytesize.to_i }] }
+      end
+
       private
 
       def own(content) = String.new(content.to_s).freeze

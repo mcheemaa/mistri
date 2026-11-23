@@ -17,7 +17,7 @@ module Mistri
 
     # instructions is text from the tool's server on how to use its tools. An
     # agent appends it to the conversation as a reminder.
-    attr_reader :name, :description, :input_schema, :timeout, :instructions
+    attr_reader :name, :description, :input_schema, :timeout, :instructions, :result_limit
 
     # Define a tool. Give the argument shape as a JSON Schema value via
     # input_schema:, or build it in Ruby with a schema: block. The result is
@@ -37,7 +37,8 @@ module Mistri
     def initialize(name:, description:, input_schema: EMPTY_SCHEMA, eager_input_streaming: false,
                    needs_approval: false, ends_turn: false, timeout: nil, deferred: false,
                    instructions: nil, argument_normalizer: nil, argument_validator: nil,
-                   complete_argument_validator: nil, &handler)
+                   complete_argument_validator: nil, save_result: true, result_limit: nil,
+                   &handler)
       raise ArgumentError, "tool #{name.inspect} needs a handler block" unless handler
       unless argument_normalizer.nil? || argument_normalizer.respond_to?(:call)
         raise ArgumentError, "argument_normalizer must be callable"
@@ -65,6 +66,8 @@ module Mistri
       @timeout = timeout
       @deferred = deferred
       @instructions = instructions
+      @save_result = save_result
+      @result_limit = checked_limit(result_limit)
       @argument_normalizer = argument_normalizer
       @argument_validator = argument_validator
       @complete_argument_validator = complete_argument_validator
@@ -130,6 +133,12 @@ module Mistri
       @ends_turn
     end
 
+    # False for a tool that reads in parts itself, as the document tools do,
+    # so reading a saved result cannot save another.
+    def save_result?
+      @save_result
+    end
+
     # A deferred tool is not shown to the model until a tool result loads it,
     # so a large set costs nothing until one is needed. An agent that holds
     # any adds the tool_search tool, which finds and loads them.
@@ -163,6 +172,12 @@ module Mistri
 
       review = @needs_approval.respond_to?(:call) ? "may review a call" : "reviews each call"
       "#{@description} A person #{review} before it runs.".lstrip
+    end
+
+    def checked_limit(limit)
+      return limit if limit.nil? || (limit.is_a?(Integer) && limit.positive?)
+
+      raise ArgumentError, "result_limit must be a positive Integer of bytes"
     end
 
     def prepared_context?(context)

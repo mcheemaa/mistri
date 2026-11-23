@@ -19,7 +19,7 @@ class TestMcpOauth < Minitest::Test # rubocop:disable Metrics/ClassLength -- one
 
   def start_flow(server, **options)
     options[:issuer] = server.origin if options[:client_id] && !options.key?(:issuer)
-    Mistri::MCP::OAuth.start(url: server.url, client_name: "Sendoso",
+    Mistri::MCP::OAuth.start(url: server.url, client_name: "Example App",
                              redirect_uri: "https://app.example.com/mcp/callback",
                              allow_non_public: Mistri::Test::ALLOW_LOOPBACK, **options)
   end
@@ -30,7 +30,7 @@ class TestMcpOauth < Minitest::Test # rubocop:disable Metrics/ClassLength -- one
 
       registration = server.registrations.first
 
-      assert_equal "Sendoso", registration["client_name"],
+      assert_equal "Example App", registration["client_name"],
                    "registration happens as the application, never the harness"
       assert_equal ["https://app.example.com/mcp/callback"], registration["redirect_uris"]
       assert_equal "client_secret_basic", registration["token_endpoint_auth_method"]
@@ -207,7 +207,7 @@ class TestMcpOauth < Minitest::Test # rubocop:disable Metrics/ClassLength -- one
     with_server do |server|
       redirect_uri = "https://app.example.com:443/"
       flow = Mistri::MCP::OAuth.start(
-        url: server.url, client_name: "Sendoso", redirect_uri: redirect_uri,
+        url: server.url, client_name: "Example App", redirect_uri: redirect_uri,
         allow_non_public: Mistri::Test::ALLOW_LOOPBACK
       )
       query = URI.decode_www_form(URI(flow["authorize_url"]).query).to_h

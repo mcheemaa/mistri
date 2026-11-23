@@ -20,14 +20,18 @@ require_relative "mistri/task_output"
 require_relative "mistri/edit"
 require_relative "mistri/tool_context"
 require_relative "mistri/tool_result"
+require_relative "mistri/result_limit"
 require_relative "mistri/tool"
 require_relative "mistri/tool_search"
 require_relative "mistri/workspace"
 require_relative "mistri/workspace/memory"
 require_relative "mistri/workspace/directory"
 require_relative "mistri/workspace/single"
+require_relative "mistri/workspace/path_space"
 require_relative "mistri/memory"
 require_relative "mistri/tools"
+require_relative "mistri/scratchpad"
+require_relative "mistri/sandbox"
 require_relative "mistri/definition"
 require_relative "mistri/skill"
 require_relative "mistri/skills"
@@ -60,7 +64,7 @@ require_relative "mistri/providers/gemini"
 
 # Mistri (مستری): the fixer. An agent harness for Ruby applications.
 module Mistri
-  private_constant :ToolArguments
+  private_constant :ToolArguments, :Scratchpad
 
   PROVIDERS = { anthropic: Providers::Anthropic, openai: Providers::OpenAI,
                 gemini: Providers::Gemini }.freeze

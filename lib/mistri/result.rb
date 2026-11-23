@@ -8,16 +8,18 @@ module Mistri
   # for a decision that may come days later.
   #
   # Reads delegate to the final message, so result.text works whether the run
-  # completed or suspended.
+  # completed or suspended. said is the text the model last wrote where its
+  # final message is empty, as after a tool call it had nothing to add to, and
+  # result.text reads it then.
   # output is a task's validated value, nil on plain runs. usage is the
   # run's own accounting: every provider attempt plus compaction calls, summed
   # (a resumed run counts from the resume; task sums across its fix passes).
   # handed_off marks a run that ended because an ends_turn tool executed:
   # complete, but the final word was the tool's, and whatever comes next (a
   # human's answer) arrives as the next run's input.
-  Result = Data.define(:message, :status, :pending, :output, :usage, :handed_off) do
+  Result = Data.define(:message, :status, :pending, :output, :usage, :handed_off, :said) do
     def initialize(message:, status:, pending: [], output: nil, usage: Usage.zero,
-                   handed_off: false)
+                   handed_off: false, said: nil)
       super
     end
 
@@ -28,7 +30,7 @@ module Mistri
     def errored? = status == :error
     def handed_off? = handed_off
 
-    def text = message&.text
+    def text = said || message&.text
     def stop_reason = message&.stop_reason
     def error_message = message&.error_message
     def tool_calls = message ? message.tool_calls : []

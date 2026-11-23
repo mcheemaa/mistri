@@ -9,7 +9,7 @@ module Mistri
   #
   #   agent = Mistri.agent("claude-opus-5-5", tools: tools,
   #                        transform_context: Mistri::Reminder.every(
-  #                          3, "Stay on gifting. Verify with tools before claiming.",
+  #                          3, "Stay on the request. Verify with tools before claiming.",
   #                        ))
   #
   # Due is counted in completed assistant turns: the first reminder lands

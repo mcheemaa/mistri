@@ -23,7 +23,7 @@ class TestAgentRetry < Minitest::Test
 
     retry_event = events.find { |e| e.type == :retry }
 
-    assert_match(/retrying/, retry_event.content)
+    assert_match(/attempt 1 failed \(.*529\); retrying/, retry_event.content)
     assert_equal 1, retry_event.attempt
     assert_equal 2, retry_event.max_attempts
     assert_kind_of Float, retry_event.delay
@@ -138,6 +138,41 @@ class TestAgentRetry < Minitest::Test
     assert_predicate result, :completed?
     assert_equal 3, provider.requests.length, "two retries, then the answer stands as it is"
     assert_equal 1, events.count(&:terminal?), "only the accepted attempt's :done surfaces"
+  end
+
+  # A model that has answered and then called a tool often adds nothing to the
+  # tool's result. The same request gives the same empty answer.
+  def test_an_empty_completion_after_an_answer_ends_the_turn
+    shown = Mistri::Tool.define("show_buttons", "Show buttons.") { "shown" }
+    provider = Mistri::Providers::Fake.new(turns: [
+                                             { text: "Here is my pick.",
+                                               tool_calls: [{ name: "show_buttons" }] },
+                                             { text: "" }
+                                           ])
+    agent = Mistri::Agent.new(provider:, tools: [shown], retries: FAST)
+
+    result = agent.run("go")
+
+    assert_predicate result, :completed?
+    assert_equal 2, provider.requests.length
+    refute(agent.session.entries.any? { |e| e["type"] == "retry" })
+    assert_equal "Here is my pick.", result.text
+    assert_equal "", result.message.text
+  end
+
+  def test_an_empty_completion_after_a_silent_tool_call_still_retries
+    looked = Mistri::Tool.define("look_up", "Look up.") { "found" }
+    provider = Mistri::Providers::Fake.new(turns: [
+                                             { tool_calls: [{ name: "look_up" }] },
+                                             { text: "" },
+                                             { text: "It is found." }
+                                           ])
+    agent = Mistri::Agent.new(provider:, tools: [looked], retries: FAST)
+
+    result = agent.run("go")
+
+    assert_equal "It is found.", result.text
+    assert_equal 3, provider.requests.length
   end
 
   def test_a_permanent_failure_fails_fast
