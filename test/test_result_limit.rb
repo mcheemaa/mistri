@@ -74,6 +74,15 @@ class TestResultLimit < Minitest::Test
     assert_raises(ArgumentError) { Mistri::Message.new(role: :user, content: "x", cut: {}) }
   end
 
+  def test_a_tools_own_limit_is_a_positive_number_of_bytes
+    [false, 0, "200000", 1.5].each do |limit|
+      error = assert_raises(ArgumentError) do
+        Mistri::Tool.define("export", "Exports rows.", result_limit: limit) { "rows" }
+      end
+      assert_equal "result_limit must be a positive Integer of bytes", error.message
+    end
+  end
+
   def test_a_result_of_text_blocks_keeps_its_first_blocks
     blocks = %w[a b c].map { |letter| Mistri::Content::Text.new(text: letter * 3_000) }
     limit = Mistri::ResultLimit.new(bytes: 4_500)

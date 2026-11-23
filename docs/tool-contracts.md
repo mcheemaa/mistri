@@ -299,7 +299,9 @@ cannot shrink the turn that holds it.
 A tool takes `result_limit:` too, the bytes one of its own results keeps in
 place of the agent's number. A host can then lower the agent's limit for
 chatty tools and leave a tool whose result the model needs whole as it is. The
-skill reader keeps 50,000 bytes whatever the agent's limit.
+skill reader keeps 50,000 bytes whatever the agent's limit. A tool's limit is
+a positive number of bytes: no tool is exempt, and its results still share the
+turn's bytes with the others.
 
 ### Saving the whole result
 

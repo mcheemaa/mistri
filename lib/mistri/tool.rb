@@ -67,7 +67,7 @@ module Mistri
       @deferred = deferred
       @instructions = instructions
       @save_result = save_result
-      @result_limit = result_limit
+      @result_limit = checked_limit(result_limit)
       @argument_normalizer = argument_normalizer
       @argument_validator = argument_validator
       @complete_argument_validator = complete_argument_validator
@@ -172,6 +172,12 @@ module Mistri
 
       review = @needs_approval.respond_to?(:call) ? "may review a call" : "reviews each call"
       "#{@description} A person #{review} before it runs.".lstrip
+    end
+
+    def checked_limit(limit)
+      return limit if limit.nil? || (limit.is_a?(Integer) && limit.positive?)
+
+      raise ArgumentError, "result_limit must be a positive Integer of bytes"
     end
 
     def prepared_context?(context)
