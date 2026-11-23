@@ -111,6 +111,7 @@ module Mistri
         line.scan(regexp) do
           count += 1
           found << Regexp.last_match if found.length < keep
+          break @late = true if clock > @deadline
         end
         [count, found]
       end
