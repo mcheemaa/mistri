@@ -54,24 +54,44 @@ module Mistri
           };
         })();
       JS
-      private_constant :WASI, :EXPORTS, :PRELUDE
+      FORKED = "this process was forked after the sandbox had run code in its parent, and " \
+               "wasmtime does not survive a fork. Run code only in the forked processes, or " \
+               "build the sandbox in each of them."
+      private_constant :WASI, :EXPORTS, :PRELUDE, :FORKED
 
       def initialize(wasm:, timeout: 10, memory: 64 * 1024 * 1024, sha256: SHA256)
         unless Digest::SHA256.file(wasm).hexdigest == sha256
           raise ConfigurationError, "#{wasm} is not the QuickJS build this adapter was written for"
         end
 
+        @wasm = wasm
         @timeout = timeout
         @memory = memory
-        @engine = Wasmtime::Engine.new(epoch_interruption: true)
-        @engine.start_epoch_interval(50)
-        @module = Wasmtime::Module.from_file(@engine, wasm)
+        @building = Mutex.new
       end
 
       def run(code, host:)
-        Run.new(@engine, @module, host, @timeout, @memory).call(code)
+        engine, wasm_module = engine_here
+        Run.new(engine, wasm_module, host, @timeout, @memory).call(code)
       rescue Wasmtime::Error => e
         raise Stopped, "the code was stopped: #{e.message.lines.first.to_s.strip}"
+      end
+
+      private
+
+      # wasmtime's engine and its timer do not survive a fork, so a process
+      # builds its own at its first run.
+      def engine_here
+        pid, engine, wasm_module = @built || @building.synchronize { @built ||= build }
+        raise ConfigurationError, FORKED unless pid == Process.pid
+
+        [engine, wasm_module]
+      end
+
+      def build
+        engine = Wasmtime::Engine.new(epoch_interruption: true)
+        engine.start_epoch_interval(50)
+        [Process.pid, engine, Wasmtime::Module.from_file(engine, @wasm)]
       end
 
       # One run in one new instance.

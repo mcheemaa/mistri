@@ -379,8 +379,12 @@ inside the host's process, on the `wasmtime` gem. Nothing else is installed
 and no other process or machine is involved. The wasm file is `quickjs.wasm`
 from the npm package `quickjs-wasi`, version 3.7.0. The adapter checks its
 SHA-256 and refuses another build unless you pass `sha256:`. Build one adapter
-for the process: the module is compiled once, and each run gets a new instance
-with its own memory.
+for the process. It compiles the module at its first run, which takes about
+100 ms, and each run gets a new instance with its own memory. On a server that
+forks its workers, build the adapter before the fork and run code only in the
+workers: wasmtime does not survive a fork, so a process forked from one that
+has already run code is refused. On macOS such a process also aborts when it
+exits, inside the wasmtime gem.
 
 What the code has:
 

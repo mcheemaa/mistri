@@ -1,6 +1,7 @@
 # frozen_string_literal: true
 
 require_relative "test_helper"
+require "open3"
 
 # The QuickJS adapter. It needs the wasmtime gem and the file quickjs.wasm of
 # the npm package quickjs-wasi 3.7.0, named by MISTRI_QUICKJS_WASM.
@@ -13,6 +14,7 @@ class TestSandboxQuickJS < Minitest::Test
     rescue LoadError
       skip "wasmtime is not installed"
     end
+    @wasm = wasm
     @sandbox = SANDBOXES[wasm] ||= Mistri::Sandbox::QuickJS.new(wasm:, timeout: 1)
   end
 
@@ -75,6 +77,42 @@ class TestSandboxQuickJS < Minitest::Test
 
     assert_equal "late", outcome.value
     assert_match(/ran for 1 seconds/, loop_error.message)
+  end
+
+  FORKING = <<~RUBY
+    require "mistri"
+    require "mistri/sandbox/quickjs"
+    sandbox = Mistri::Sandbox::QuickJS.new(wasm: ARGV.fetch(0), timeout: 1)
+    host = ->(_operation, _payload) {}
+    in_a_fork = lambda do
+      reader, writer = IO.pipe
+      pid = fork do
+        writer.puts(begin
+          sandbox.run("return 1 + 1", host:).value
+        rescue Mistri::ConfigurationError => e
+          e.class.name
+        end)
+        writer.close
+        exit!(0)
+      end
+      writer.close
+      Process.wait(pid)
+      reader.read.strip
+    end
+    before = in_a_fork.call
+    sandbox.run("return 1", host:)
+    puts before, in_a_fork.call
+  RUBY
+
+  # A new process, because this one has run code already.
+  def test_a_process_forked_before_any_run_runs_code_and_one_forked_after_is_refused
+    skip "this platform does not fork" unless Process.respond_to?(:fork)
+
+    lib = File.expand_path("../lib", __dir__)
+    output, status = Open3.capture2e(RbConfig.ruby, "-I#{lib}", "-e", FORKING, @wasm)
+
+    assert_predicate status, :success?, output
+    assert_equal %w[2 Mistri::ConfigurationError], output.lines.last(2).map(&:strip)
   end
 
   def test_another_build_of_the_module_is_refused
