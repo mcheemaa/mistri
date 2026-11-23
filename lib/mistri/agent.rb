@@ -62,6 +62,7 @@ module Mistri
       @scratchpad = scratchpad
       @documents = documents(files, scratchpad&.workspace)
       @result_limit = result_limit || nil
+      @storing = Mutex.new
       install_tools(with_own_tools(tools, skills, sandbox))
 
       @budget = budget || Budget.new
@@ -302,12 +303,15 @@ module Mistri
 
     # One run can make hundreds of thousands of calls, and a session reads
     # every entry it holds, so a run stores its first hundred. Every call
-    # still emits its events.
+    # still emits its events. Two runs of one turn store from two threads,
+    # which a store that numbers its entries cannot take at once.
     def store_from_code(run, call, message)
       run.calls += 1
       return if run.calls > MAX_STORED_CODE_CALLS
 
-      @session.append("code_call", "call" => call.to_h, "message" => message.to_h)
+      @storing.synchronize do
+        @session.append("code_call", "call" => call.to_h, "message" => message.to_h)
+      end
     end
 
     def refused_from_code(call, context)

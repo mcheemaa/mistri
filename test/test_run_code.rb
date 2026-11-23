@@ -125,6 +125,33 @@ class TestRunCode < Minitest::Test
     assert_equal 105, events.count("result:search")
   end
 
+  def test_two_runs_of_code_in_one_turn_store_their_calls_one_at_a_time
+    store = Class.new(Mistri::Stores::Memory) do
+      def append(*)
+        @inside = @inside.to_i + 1
+        overlapped = @inside > 1
+        sleep 0.002
+        raise "two appends at once" if overlapped
+
+        super
+      ensure
+        @inside -= 1
+      end
+    end.new
+    search = Mistri::Tool.define("search", "Searches orders.") { "3 open orders" }
+    script = JSON.generate(Array.new(10) { ["tool", { "name" => "search", "arguments" => {} }] })
+    calls = Array.new(2) { { name: "run_code", arguments: { code: script } } }
+    provider = Mistri::Providers::Fake.new(turns: [{ tool_calls: calls }, { text: "done" }])
+    agent = Mistri::Agent.new(provider:, tools: [search], session: Mistri::Session.new(store:),
+                              sandbox: Mistri::Test::ScriptedSandbox.new)
+
+    agent.run("go")
+    results = agent.session.messages.select(&:tool?)
+
+    assert_empty(results.select(&:tool_error?).map(&:text))
+    assert_equal(20, agent.session.entries.count { |entry| entry["type"] == "code_call" })
+  end
+
   def test_one_run_of_code_writes_five_megabytes_at_most
     large = "x" * 3_000_000
     script = [["write", { "path" => "scratchpad/a.txt", "content" => large }],
