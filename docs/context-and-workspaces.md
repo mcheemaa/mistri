@@ -243,8 +243,8 @@ The document tools:
 | `delete_file` | Deletes one document |
 
 A pattern is 500 characters at most and runs with a one second timeout for
-each match. One `grep` call reads 5 MB at most and takes five seconds at most,
-and says so when it stops at either.
+each match. One `grep` call takes five seconds at most, and starts no further
+document once it has read 5 MB. It says so when it stops at either.
 
 A document that is not valid UTF-8 is not text. `read_file` and `edit_file`
 say so in place of showing it, and `grep` leaves it out and counts it.

@@ -49,6 +49,7 @@ module Mistri
         @matches = 0
         @lines = 0
         @searched = 0
+        @unsearched = 0
         @unread = 0
       end
 
@@ -67,8 +68,9 @@ module Mistri
         end
 
         @deadline = clock + @seconds
-        paths.each do |path|
+        paths.each_with_index do |path, index|
           search(path, regexp)
+          @unsearched = paths.length - index - 1
           break if @searched > MAX_SEARCHED_BYTES || @late
         end
         report
@@ -182,7 +184,7 @@ module Mistri
         if @late
           "\n[The search stopped after #{@seconds} seconds. Pass a path or a simpler pattern " \
             "to search the rest.]"
-        elsif @searched > MAX_SEARCHED_BYTES
+        elsif @unsearched.positive?
           "\n[The search stopped after #{MAX_SEARCHED_BYTES} bytes. Pass a path to search the " \
             "rest.]"
         end

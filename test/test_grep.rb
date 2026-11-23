@@ -83,10 +83,12 @@ class TestGrep < Minitest::Test
 
     wide = grep.call({ "pattern" => "mark", "path" => "a-wide.md", "context" => 10 })
     stopped = grep.call({ "pattern" => "needle" })
+    whole = grep.call({ "pattern" => "^x", "path" => "b-large.md", "output_mode" => "count" })
 
     assert_match(/\n\[cut at 20000 bytes\]/, wide)
     assert_equal "No matches.\n[The search stopped after 5000000 bytes. Pass a path to search " \
                  "the rest.]", stopped
+    assert_equal "51 matches in 51 lines", whole
   end
 
   def test_grep_counts_every_match_and_keeps_only_those_it_shows
