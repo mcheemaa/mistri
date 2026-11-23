@@ -215,7 +215,9 @@ class TestScratchpad < Minitest::Test
        tools["delete_file"].call({ "path" => path })]
     end
     beside = tools["write_file"].call({ "path" => "scratchpad/tool-results.md", "content" => "x" })
+    folder = tools["write_file"].call({ "path" => "Scratchpad", "content" => "x" })
 
+    assert_match(/\Ascratchpad is a folder, so no document can have that path\./, folder.content)
     assert(replies.all? { |reply| reply.error? && reply.content.include?("read-only") })
     assert_match(%r{\AWrote scratchpad/tool-results\.md}, beside)
   end

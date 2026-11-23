@@ -81,14 +81,15 @@ module Mistri
     # A store may match a path to the folder without case or accents, or by
     # Unicode's folding, so the first two parts are compared as plain letters.
     def read_only(path)
-      folder = plain_letters(path.to_s).split("/", 3).first(2).join("/")
-      return unless "#{folder}/" == Scratchpad::RESULTS
+      first, second, = plain_letters(path.to_s).split("/", 3)
+      return unless "#{first}/" == Scratchpad::ROOT
 
-      ToolResult.new(
-        content: "#{Scratchpad::RESULTS} holds saved tool results and is read-only. " \
-                 "Write under scratchpad/ instead.",
-        error: true
-      )
+      reason = if second.nil?
+                 "scratchpad is a folder, so no document can have that path."
+               elsif "#{first}/#{second}/" == Scratchpad::RESULTS
+                 "#{Scratchpad::RESULTS} holds saved tool results and is read-only."
+               end
+      ToolResult.new(content: "#{reason} Write under scratchpad/ instead.", error: true) if reason
     end
 
     def plain_letters(path)
