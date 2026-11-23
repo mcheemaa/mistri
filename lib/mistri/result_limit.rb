@@ -9,7 +9,7 @@ module Mistri
     DEFAULT_TURN_BYTES = 200_000
     SHARED_FLOOR_BYTES = 2_000
     SHOWN_BYTES = 2_000
-    # The start of a saved result with its line, as a turn counts it.
+    # 300 bytes are room for the line that names where the whole is saved.
     SAVED_BYTES = SHOWN_BYTES + 300
 
     OWN = "[This result was %<bytes>d bytes in %<lines>d lines. Only its start is above. The " \
@@ -47,6 +47,10 @@ module Mistri
     end
     private_constant :Turn
 
+    # What one result holds: whole, with the turn to itself, and saved, once
+    # the scratchpad has taken it, which is nil where it can only be cut.
+    Held = Data.define(:whole, :saved)
+
     attr_reader :bytes, :turn_bytes
 
     def self.texts(content)
@@ -69,17 +73,15 @@ module Mistri
       @turn_bytes = turn_bytes
     end
 
-    # What each of the results of one turn can keep whatever the others hold.
-    # The level of a turn is never under it.
+    # The level of a turn is never under this, so a result that is sized to
+    # it is never cut.
     def share(count, spent: 0)
       [[turn_bytes - spent, 0].max / count, SHARED_FLOOR_BYTES].max
     end
 
-    # sizes pairs, for each result, the bytes it holds with the turn to itself
-    # and the bytes it holds once saved, nil for a result that can only be cut.
-    def turn(sizes, spent: 0)
+    def turn(held, spent: 0)
       left = turn_bytes - spent
-      Turn.new(sizes.sum(&:first) <= left ? nil : level(sizes, [left, 0].max), left)
+      Turn.new(held.sum(&:whole) <= left ? nil : levels(held, [left, 0].max), left)
     end
 
     def bound(content, limit = bytes, shared: false, unsaved: false)
@@ -108,19 +110,23 @@ module Mistri
     # a large one. The results that can only be cut give way to one level. A
     # result that can be saved gives way to its start, and so does every one
     # of its size or more: hence a level of their own, under the smallest.
-    def level(sizes, left)
-      rest = sizes.sort_by(&:first)
-      while (whole, = rest.first)
-        larger = rest.drop(1).sum { |_bytes, saved| [saved || whole, whole].min }
+    def levels(held, left)
+      rest, left = giving_way(held.sort_by(&:whole), left)
+      saved, cut = rest.partition(&:saved)
+      left -= saved.sum { |result| [result.whole, result.saved].min }
+      [(left / cut.length if cut.any?), (saved.first.whole - 1 if saved.any?)]
+        .map { |bytes| bytes && [bytes, SHARED_FLOOR_BYTES].max }
+    end
+
+    def giving_way(rest, left)
+      while (whole = rest.first&.whole)
+        larger = rest.drop(1).sum { |result| [result.saved || whole, whole].min }
         break if whole + larger > left
 
         left -= whole
-        rest.shift
+        rest = rest.drop(1)
       end
-      saved, cut = rest.partition(&:last)
-      left -= saved.sum(&:min)
-      [(left / cut.length if cut.any?), (saved.first.first - 1 if saved.any?)]
-        .map { |bytes| bytes && [bytes, SHARED_FLOOR_BYTES].max }
+      [rest, left]
     end
 
     def cut_to(content, limit, notice)

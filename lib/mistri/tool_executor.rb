@@ -50,7 +50,6 @@ module Mistri
     # Agent prepares model arguments before approval and execution. This
     # lower-level form preserves that boundary and exposes commitment so hooks
     # cannot run for queued calls that an abort prevented from starting.
-    # result_limit is a callable that gives the bytes the result of a call keeps.
     def call_with_outcomes(calls, tools_by_name, signal: nil, max_concurrency: 4, session: nil,
                            emit: nil, app: nil, result_limit: nil, prepared_arguments: false)
       return [] if calls.empty?

@@ -1224,8 +1224,6 @@ module Mistri
                                                              prepared_arguments: true)
     end
 
-    # A call is told the bytes its result will keep: its own limit, or its
-    # share of the turn's bytes among the results answered with it.
     def limits(among, spent)
       return unless @result_limit
 
@@ -1375,19 +1373,17 @@ module Mistri
     def result_turn(results, spent)
       return nil unless @result_limit
 
-      sizes = results.map do |call, result, _seconds|
-        kept(call, result.is_a?(ToolResult) ? result.content : result)
+      held = results.map do |call, result, _seconds|
+        held(call, result.is_a?(ToolResult) ? result.content : result)
       end
-      @result_limit.turn(sizes, spent:)
+      @result_limit.turn(held, spent:)
     end
 
-    # What a result holds with the turn to itself, and what it holds once the
-    # scratchpad has taken it, which is nil for a result that can only be cut.
-    def kept(call, content)
+    def held(call, content)
       size = ResultLimit.size(content)
       own = own_limit(call)
       saved = ResultLimit::SAVED_BYTES if saveable?(content, call)
-      [size <= own ? size : saved || own, saved]
+      ResultLimit::Held.new(whole: size <= own ? size : saved || own, saved:)
     end
 
     # After an approval the rest of a turn's results are answered in a later
