@@ -305,6 +305,10 @@ your text unchanged.
   with the new version. Code that reads these texts follows.
 - A custom workspace needs no change. Add `sizes(prefix = nil)`, a Hash of
   path to bytes, to have `list_files` show sizes.
+- `list_files` shows 200 paths at most and says how many it left out. It
+  listed every path before.
+- `Mistri::Tools.numbered_window` and `Mistri::Tools::MAX_READ_CHARS` are
+  gone. `read_file` sizes a part in bytes, by `MAX_READ_BYTES`.
 
 ### A large tool result is cut
 
