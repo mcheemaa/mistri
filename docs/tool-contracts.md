@@ -423,7 +423,9 @@ What the code has:
 
 A call from code is a tool call. It passes the tool's argument contract, its
 timeout, `before_tool` and `after_tool`, and emits `:tool_started` and
-`:tool_result` with a call id that begins with `code_`. `before_tool` is given
+`:tool_result` with a call id that begins with `code_`. Two runs of code in
+one turn make their calls at once, so the hooks are then called from two
+threads. `before_tool` is given
 what the code passed, the content of a write included, and the code receives
 what `after_tool` returned. For `files.read` that is the document. A tool that
 needs approval for the call, or that ends the turn, is refused in the code with
