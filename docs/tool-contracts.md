@@ -409,7 +409,8 @@ timeout, `before_tool` and `after_tool`, and emits `:tool_started` and
 what the code passed, the content of a write included, and the code receives
 what `after_tool` returned. For `files.read` that is the document. A tool that
 needs approval for the call, or that ends the turn, is refused in the code with
-a message to call it directly. The call is stored as a `code_call` entry beside
+a message to call it directly. So is `tool_search`, which loads tools for the
+model. The call is stored as a `code_call` entry beside
 the messages, not as a message: the model reads the result in its code, so it
 is not sent again with later requests. The entry of a write holds the size of
 its content, not the content.
