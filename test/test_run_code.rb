@@ -116,6 +116,22 @@ class TestRunCode < Minitest::Test
     assert_equal ["scratchpad/notes.md"], @workspace.list
   end
 
+  def test_one_run_of_code_writes_five_megabytes_at_most
+    large = "x" * 3_000_000
+    script = [["write", { "path" => "scratchpad/a.txt", "content" => large }],
+              ["write", { "path" => "scratchpad/b.txt", "content" => large }],
+              ["write", { "path" => "scratchpad/c.txt", "content" => "small" }]]
+    tool = Mistri::Tools.run_code(Mistri::Test::ScriptedSandbox.new) do |operation, payload, _, run|
+      Mistri::Tools.file_from_code(@workspace, operation, payload, run).first
+    end
+
+    replies = JSON.parse(tool.call({ "code" => JSON.generate(script) }).lines.last)
+
+    assert_match(/\Athrew: One run of code writes 5000000 bytes at most/, replies[1])
+    assert_equal [nil, nil], replies.values_at(0, 2)
+    assert_equal %w[scratchpad/a.txt scratchpad/c.txt scratchpad/notes.md], @workspace.list
+  end
+
   def test_code_is_refused_a_document_that_is_not_text
     @workspace.write("logo.png", "\x89PNG\xFF".dup.force_encoding(Encoding::UTF_8))
 

@@ -3,6 +3,7 @@
 module Mistri
   module Tools
     MAX_CODE_RESULT_BYTES = 10_000
+    MAX_WRITTEN_BYTES = 5_000_000
     RUN_CODE = "Run JavaScript on your documents and tools. The code is the body of an async " \
                "function, so await and return work. Only what the code returns, and what it " \
                "prints with console.log, comes back to you. Use it to search, count, sort, add " \
@@ -18,6 +19,11 @@ module Mistri
                "its path."
     private_constant :RUN_CODE
 
+    # What one run of code has done so far: the versions of the documents it
+    # read and the bytes it wrote.
+    CodeRun = Struct.new(:seen, :written)
+    private_constant :CodeRun
+
     module_function
 
     def run_code(sandbox, limited: true, &host)
@@ -27,7 +33,7 @@ module Mistri
                   schema: lambda {
                     string :code, "JavaScript, the body of an async function", required: true
                   }) do |args, context|
-        run = {}
+        run = CodeRun.new({}, 0)
         asked = ->(operation, payload) { host.call(operation, payload, context, run) }
         code_result(sandbox.run(args["code"].to_s, host: asked))
       rescue Error => e
@@ -46,18 +52,18 @@ module Mistri
       outcome.error ? ToolResult.new(content: text, error: true) : text
     end
 
-    def file_from_code(workspace, operation, payload, seen)
+    def file_from_code(workspace, operation, payload, run)
       path = (operation == "list" ? payload["prefix"] : payload["path"]).to_s
       everything = operation == "list" && path.empty?
       unusable = unusable_path(path, prefix: operation == "list") unless everything
       raise Error, unusable.content if unusable
 
       case operation
-      when "read" then read_from_code(workspace, path, seen)
+      when "read" then read_from_code(workspace, path, run.seen)
       when "list"
         paths = workspace.list(payload["prefix"])
         [paths, paths.join("\n")]
-      when "write" then write_from_code(workspace, path, payload["content"].to_s, seen)
+      when "write" then write_from_code(workspace, path, payload["content"].to_s, run)
       when "delete" then delete_from_code(workspace, path)
       end
     end
@@ -73,8 +79,10 @@ module Mistri
 
     # The version this run read stands in for if_version, so a write from code
     # is conditional wherever write_file's is.
-    def write_from_code(workspace, path, content, seen)
+    def write_from_code(workspace, path, content, run)
       refuse_read_only(path)
+      refuse_over_budget(run, content)
+      seen = run.seen
       written = if atomic_workspace?(workspace)
                   write_atomically(workspace, path, content, seen[path])
                 else
@@ -85,8 +93,18 @@ module Mistri
                      "since. Read it in this code before writing it."
       end
 
+      run.written += written.bytesize
       seen[path] = version(written)
       [nil, "Wrote #{path} (#{written.length} chars), version #{seen[path]}"]
+    end
+
+    # A model's own write is bounded by what it can write in a turn. Code is
+    # bounded only by the clock, so one run has a budget.
+    def refuse_over_budget(run, content)
+      return if run.written + content.bytesize <= MAX_WRITTEN_BYTES
+
+      raise Error, "One run of code writes #{MAX_WRITTEN_BYTES} bytes at most, and this " \
+                   "write would pass that. Write the rest in another run_code call."
     end
 
     def delete_from_code(workspace, path)
@@ -103,6 +121,6 @@ module Mistri
     end
 
     private_class_method :code_result, :read_from_code, :write_from_code, :delete_from_code,
-                         :refuse_read_only
+                         :refuse_read_only, :refuse_over_budget
   end
 end

@@ -22,7 +22,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   in QuickJS compiled to WebAssembly inside the host's process, on the
   optional `wasmtime` gem, with no shell and no second machine. A run is
   stopped at ten seconds of the code's own computing, at five minutes with
-  the calls it makes, and at 64 MB. A call from code passes the tool's
+  the calls it makes, and at 64 MB, and writes 5 MB to documents at most. A call from code passes the tool's
   contract, its timeout, `before_tool`, the approval rule and `after_tool`,
   emits its events, and is stored as a `code_call` entry with a short copy of
   its arguments and of its result. A tool that needs approval, or that ends the turn, is refused
