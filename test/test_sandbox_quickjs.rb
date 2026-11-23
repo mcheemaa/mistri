@@ -165,7 +165,8 @@ class TestSandboxQuickJS < Minitest::Test
       "late"
     end
 
-    outcome = @sandbox.run("return await tools.slow({})", host:)
+    outcome = @sandbox.run("const answer = await tools.slow({}); const end = Date.now() + 300; " \
+                           "while (Date.now() < end) {} return answer", host:)
     loop_error = assert_raises(Mistri::Sandbox::Stopped) do
       @sandbox.run("await tools.slow({}); while (true) {}", host:)
     end

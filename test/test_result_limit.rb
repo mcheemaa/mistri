@@ -43,6 +43,17 @@ class TestResultLimit < Minitest::Test
     assert_match(/share one limit.*fewer calls at a time/, results.first.text.lines.last)
   end
 
+  def test_a_turn_of_many_results_leaves_each_its_floor
+    calls = Array.new(150) { |page| { name: "export", arguments: { "page" => page } } }
+    agent = agent_for(calls)
+
+    agent.run("go")
+    sizes = agent.session.messages.select(&:tool?).map { |result| result.text.bytesize }
+
+    assert_operator sizes.min, :>, 1_900
+    assert_operator sizes.max, :<=, Mistri::ResultLimit::SHARED_FLOOR_BYTES
+  end
+
   def test_a_result_answered_after_an_approval_counts_what_the_turn_holds
     calls = Array.new(4) { |page| { name: "export", arguments: { "page" => page } } }
     agent = agent_for(calls + [{ name: "export_all" }])

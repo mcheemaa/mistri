@@ -1,6 +1,7 @@
 # frozen_string_literal: true
 
 require_relative "test_helper"
+require_relative "support/plain_workspace"
 require_relative "support/scripted_sandbox"
 
 # run_code: what code in a sandbox asks for passes the same contract, hooks
@@ -262,15 +263,33 @@ class TestRunCode < Minitest::Test
   end
 
   def test_code_writes_over_a_document_only_after_reading_it
+    @workspace.write("scratchpad/tool-results/saved.txt", "kept")
     agent, = run_code([["write", { "path" => "scratchpad/notes.md", "content" => "blind" }],
                        ["write", { "path" => "scratchpad/tool-results/x.txt", "content" => "x" }],
-                       ["delete", { "path" => "scratchpad/missing.md" }]])
+                       ["delete", { "path" => "scratchpad/missing.md" }],
+                       ["delete", { "path" => "scratchpad/tool-results/saved.txt" }]])
     answers = JSON.parse(agent.session.messages.find(&:tool?).text.lines.last)
 
     assert_equal "old", @workspace.read("scratchpad/notes.md")
     assert_match(/has not read/, answers[0])
     assert_match(/read-only/, answers[1])
     assert_match(/No document/, answers[2])
+    assert_match(/read-only/, answers[3])
+    assert_equal "kept", @workspace.read("scratchpad/tool-results/saved.txt")
+  end
+
+  def test_code_reads_before_it_writes_over_a_document_where_no_write_is_conditional
+    plain = Mistri::Test::PlainWorkspace.new
+    plain.write("scratchpad/notes.md", "old")
+
+    replies, = answers([["write", { "path" => "scratchpad/notes.md", "content" => "blind" }],
+                        ["read", { "path" => "scratchpad/notes.md" }],
+                        ["write", { "path" => "scratchpad/notes.md", "content" => "seen" }]],
+                       scratchpad: plain)
+
+    assert_match(/has not read/, replies[0])
+    assert_equal "old", replies[1]
+    assert_equal "seen", plain.read("scratchpad/notes.md")
   end
 
   def test_code_makes_no_call_after_the_run_is_stopped
