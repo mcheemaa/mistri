@@ -321,6 +321,8 @@ agent = Mistri.agent("claude-opus-5-5", tools: tools, scratchpad: workspace)
   `.txt` otherwise.
 - The stored result is its first 2,000 bytes and one line with the true size
   and the path. `cut` holds the path too.
+- Where the results of one turn are over its 200,000 bytes together, the
+  largest are saved first, and the ones that then fit stay whole.
 - The agent adds the document tools over the scratchpad when the host passed
   none, so the model reads a saved result in parts or searches it. A host that
   passes its own document tools binds them to the same workspace.

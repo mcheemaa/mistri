@@ -1318,8 +1318,9 @@ module Mistri
       return [content, nil] unless @result_limit
 
       own = own_limit(call)
-      limit = turn ? turn.limit(own) : own
-      content, cut = saved_in_scratchpad(content, limit, call) ||
+      saved = saveable?(content, call)
+      limit = turn ? turn.limit(own, saved:) : own
+      content, cut = (saved && saved_in_scratchpad(content, limit, call)) ||
                      @result_limit.bound(content, limit, shared: limit < own)
       turn&.spend(ResultLimit.size(content))
       [content, cut]
@@ -1331,8 +1332,8 @@ module Mistri
     end
 
     def saved_in_scratchpad(content, limit, call)
-      text = saveable_text(content, call)
-      return unless text && text.bytesize > limit
+      text = content.is_a?(String) ? content : Array(content).map(&:text).join("\n")
+      return unless text.bytesize > limit
 
       @result_limit.shown(text, @scratchpad.save_result(text, call.name))
     rescue StandardError => e
@@ -1340,13 +1341,12 @@ module Mistri
       @result_limit.bound(content, limit, unsaved: true)
     end
 
-    def saveable_text(content, call)
+    def saveable?(content, call)
       tool = @tools_by_name[call.name]
-      return unless @scratchpad && !(tool.respond_to?(:save_result?) && !tool.save_result?)
-      return content if content.is_a?(String)
+      return false unless @scratchpad && !(tool.respond_to?(:save_result?) && !tool.save_result?)
 
       blocks = Array(content)
-      blocks.map(&:text).join("\n") if blocks.any? && blocks.all?(Content::Text)
+      content.is_a?(String) || (blocks.any? && blocks.all?(Content::Text))
     end
 
     def answer_results(calls, results, executed:, signal:, spent: 0, &emit)
@@ -1378,14 +1378,13 @@ module Mistri
       @result_limit.turn(sizes, spent:)
     end
 
-    # What a result holds when it has the turn to itself. One the scratchpad
-    # takes holds its start, not its limit.
+    # What a result holds with the turn to itself, and what it holds once the
+    # scratchpad has taken it, which is nil for a result that can only be cut.
     def kept(call, content)
       size = ResultLimit.size(content)
       own = own_limit(call)
-      return size if size <= own
-
-      saveable_text(content, call) ? ResultLimit::SHOWN_BYTES : own
+      saved = ResultLimit::SAVED_BYTES if saveable?(content, call)
+      [size <= own ? size : saved || own, saved]
     end
 
     # After an approval the rest of a turn's results are answered in a later

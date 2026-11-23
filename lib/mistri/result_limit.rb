@@ -9,6 +9,8 @@ module Mistri
     DEFAULT_TURN_BYTES = 200_000
     SHARED_FLOOR_BYTES = 2_000
     SHOWN_BYTES = 2_000
+    # The start of a saved result with its line, as a turn counts it.
+    SAVED_BYTES = SHOWN_BYTES + 300
 
     OWN = "[This result was %<bytes>d bytes in %<lines>d lines. Only its start is above. The " \
           "rest was not kept. If the tool can page or filter its results, call it again for " \
@@ -29,14 +31,14 @@ module Mistri
     # results are stored. left is tracked as well, because a hook can make a
     # result larger than the tool returned it.
     class Turn
-      def initialize(level, left)
-        @level = level
+      def initialize(levels, left)
+        @cut, @saved = levels
         @left = left
       end
 
-      def limit(own_limit)
+      def limit(own_limit, saved: false)
         left = [@left, SHARED_FLOOR_BYTES].max
-        [own_limit, @level || own_limit, left].min
+        [own_limit, (saved ? @saved : @cut) || own_limit, left].min
       end
 
       def spend(bytes)
@@ -73,9 +75,11 @@ module Mistri
       [[turn_bytes - spent, 0].max / count, SHARED_FLOOR_BYTES].max
     end
 
+    # sizes pairs, for each result, the bytes it holds with the turn to itself
+    # and the bytes it holds once saved, nil for a result that can only be cut.
     def turn(sizes, spent: 0)
       left = turn_bytes - spent
-      Turn.new(sizes.sum <= left ? nil : level(sizes, [left, 0].max), left)
+      Turn.new(sizes.sum(&:first) <= left ? nil : level(sizes, [left, 0].max), left)
     end
 
     def bound(content, limit = bytes, shared: false, unsaved: false)
@@ -100,17 +104,23 @@ module Mistri
 
     private
 
-    # The largest results give way first, down to one level for all of them,
-    # so a small result stays whole beside a large one.
+    # The largest results give way first, so a small result stays whole beside
+    # a large one. The results that can only be cut give way to one level. A
+    # result that can be saved gives way to its start, and so does every one
+    # of its size or more: hence a level of their own, under the smallest.
     def level(sizes, left)
-      remaining = sizes.length
-      sizes.sort.each do |size|
-        break if size * remaining > left
+      rest = sizes.sort_by(&:first)
+      while (whole, = rest.first)
+        larger = rest.drop(1).sum { |_bytes, saved| [saved || whole, whole].min }
+        break if whole + larger > left
 
-        left -= size
-        remaining -= 1
+        left -= whole
+        rest.shift
       end
-      [left / remaining, SHARED_FLOOR_BYTES].max
+      saved, cut = rest.partition(&:last)
+      left -= saved.sum(&:min)
+      [(left / cut.length if cut.any?), (saved.first.first - 1 if saved.any?)]
+        .map { |bytes| bytes && [bytes, SHARED_FLOOR_BYTES].max }
     end
 
     def cut_to(content, limit, notice)

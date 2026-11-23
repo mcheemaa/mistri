@@ -72,6 +72,23 @@ class TestScratchpad < Minitest::Test
     assert_equal ROW * 1_300, results.last.text
   end
 
+  def test_the_largest_result_is_saved_and_the_others_that_fit_stay_whole
+    lines = -> { integer :lines, "Lines" }
+    page = Mistri::Tool.define("page", "A page.", schema: lines) { |given| ROW * given["lines"] }
+    never = Mistri::Tool.define("feed", "The feed.", save_result: false) { ROW * 1_400 }
+    calls = [1_364, 1_361, 1_363, 1_362].map { |lines| { name: "page", arguments: { lines: } } }
+    provider = Mistri::Providers::Fake.new(turns: [{ tool_calls: calls + [{ name: "feed" }] },
+                                                   { text: "done" }])
+    agent = Mistri::Agent.new(provider:, tools: [page, never], scratchpad: @workspace)
+
+    agent.run("go")
+    pages = agent.session.messages.select(&:tool?)
+
+    assert_equal([true, false, false, false, false], pages.map { |result| !result.cut.nil? })
+    assert_equal ROW * 1_364, @workspace.read(pages.first.cut["path"])
+    assert_operator pages.sum { |result| result.text.bytesize }, :<=, 200_000
+  end
+
   def test_a_tool_that_is_never_saved_is_cut
     feed = Mistri::Tool.define("feed", "The feed.", save_result: false) { ROWS }
     provider = Mistri::Providers::Fake.new(turns: [{ tool_calls: [{ name: "feed" }] },
