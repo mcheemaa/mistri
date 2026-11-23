@@ -116,6 +116,15 @@ class TestRunCode < Minitest::Test
     assert_equal ["scratchpad/notes.md"], @workspace.list
   end
 
+  def test_one_run_stores_its_first_hundred_calls_and_emits_every_one
+    search = ["tool", { "name" => "search", "arguments" => {} }]
+
+    agent, events = run_code(Array.new(105) { search })
+
+    assert_equal(100, agent.session.entries.count { |entry| entry["type"] == "code_call" })
+    assert_equal 105, events.count("result:search")
+  end
+
   def test_one_run_of_code_writes_five_megabytes_at_most
     large = "x" * 3_000_000
     script = [["write", { "path" => "scratchpad/a.txt", "content" => large }],

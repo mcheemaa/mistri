@@ -187,11 +187,12 @@ module Mistri
     FILES_FROM_CODE = { "read" => "read_file", "write" => "write_file", "list" => "list_files",
                         "delete" => "delete_file" }.freeze
     SHORT_COPY = ResultLimit.new(bytes: ResultLimit::SHOWN_BYTES)
-    private_constant :FILES_FROM_CODE, :SHORT_COPY
+    MAX_STORED_CODE_CALLS = 100
+    private_constant :FILES_FROM_CODE, :SHORT_COPY, :MAX_STORED_CODE_CALLS
 
     def from_code(operation, payload, context, run)
       raise Error, "the run was stopped" if context.signal&.aborted?
-      return tool_from_code(payload, context) if operation == "tool"
+      return tool_from_code(payload, context, run) if operation == "tool"
 
       name = FILES_FROM_CODE[operation]
       raise Error, "the code asked for #{operation}, which does not exist" unless name
@@ -200,7 +201,7 @@ module Mistri
       call = ToolCall.new(id: "code_#{SecureRandom.hex(8)}", name:,
                           arguments: payload.slice("path", "prefix", "content").compact)
       call, refusal = prepare_call(call, normalize: true, signal: context.signal)
-      settle_from_code(call, context, refusal:) do
+      settle_from_code(call, context, run, refusal:) do
         file_from_code(workspace, operation, call, context, run)
       end
     end
@@ -262,13 +263,13 @@ module Mistri
       end
     end
 
-    def tool_from_code(payload, context)
+    def tool_from_code(payload, context, run)
       name = payload["name"].to_s
       raise Error, "run_code cannot be called from code" if name == "run_code"
 
       call = ToolCall.new(id: "code_#{SecureRandom.hex(8)}", name:, arguments: payload["arguments"])
       call, refusal = prepare_call(call, normalize: true, signal: context.signal)
-      settle_from_code(call, context, refusal:) do
+      settle_from_code(call, context, run, refusal:) do
         whole = context.with(result_limit: nil)
         result, = ToolExecutor.invoke_one(@tools_by_name.fetch(call.name), call, whole)
         rewritten_from_code(call, result, context)
@@ -277,7 +278,7 @@ module Mistri
 
     # A call from code is stored as an entry beside the messages, not as a
     # message, because the model reads its result in the code.
-    def settle_from_code(call, context, refusal: nil, &)
+    def settle_from_code(call, context, run, refusal: nil, &)
       refusal ||= refused_from_code(call, context)
       call = short_copy(call)
       value, result, seconds = refusal ? [nil, refusal, nil] : run_from_code(call, context, &)
@@ -290,13 +291,23 @@ module Mistri
       content, cut = SHORT_COPY.bound(content)
       message = Message.tool(content:, tool_call_id: call.id, tool_name: call.name, ui:,
                              tool_error:, cut:)
-      @session.append("code_call", "call" => call.to_h, "message" => message.to_h)
+      store_from_code(run, call, message)
       context.emit&.call(Event.new(type: :tool_result, tool_call: call, message:, tool_error:,
                                    content: content.is_a?(String) ? content : "[content]",
                                    duration: seconds))
       raise Error, text if tool_error
 
       value
+    end
+
+    # One run can make hundreds of thousands of calls, and a session reads
+    # every entry it holds, so a run stores its first hundred. Every call
+    # still emits its events.
+    def store_from_code(run, call, message)
+      run.calls += 1
+      return if run.calls > MAX_STORED_CODE_CALLS
+
+      @session.append("code_call", "call" => call.to_h, "message" => message.to_h)
     end
 
     def refused_from_code(call, context)

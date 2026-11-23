@@ -20,8 +20,8 @@ module Mistri
     private_constant :RUN_CODE
 
     # What one run of code has done so far: the versions of the documents it
-    # read and the bytes it wrote.
-    CodeRun = Struct.new(:seen, :written)
+    # read, the bytes it wrote and the calls it made.
+    CodeRun = Struct.new(:seen, :written, :calls)
     private_constant :CodeRun
 
     module_function
@@ -33,7 +33,7 @@ module Mistri
                   schema: lambda {
                     string :code, "JavaScript, the body of an async function", required: true
                   }) do |args, context|
-        run = CodeRun.new({}, 0)
+        run = CodeRun.new({}, 0, 0)
         asked = ->(operation, payload) { host.call(operation, payload, context, run) }
         code_result(sandbox.run(args["code"].to_s, host: asked))
       rescue Error => e

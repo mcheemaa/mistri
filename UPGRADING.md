@@ -375,7 +375,8 @@ Nothing changes until you pass `sandbox:` to an agent.
   `Session#entries` by type leaves them out of a transcript for a person, or
   shows them under the `run_code` call they belong to. An entry keeps 2,000
   bytes of the call's arguments, and the first 2,000 bytes of its result with
-  the true size.
+  the true size. One run stores its first 100 calls. The events are emitted
+  for every call.
 - `before_tool` is asked about every call from code, by the name of the tool:
   `read_file`, `write_file`, `list_files` and `delete_file` for the four file
   operations, with what the code passed. The code receives what `after_tool`
