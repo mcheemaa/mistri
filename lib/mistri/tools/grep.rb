@@ -13,9 +13,10 @@ module Mistri
     def grep(workspace, seconds: MAX_SEARCH_SECONDS)
       Tool.define("grep",
                   "Search documents with a regular expression. Returns each match with its " \
-                  "path and line number, or a count. On a very long line, each match comes " \
-                  "with the characters around it and its character offset in the document, " \
-                  "which read_file takes with unit \"characters\".",
+                  "line number, and with its path when a folder is searched, or a count. On " \
+                  "a very long line, each match comes with the characters around it and its " \
+                  "character offset in the document, which read_file takes with unit " \
+                  "\"characters\".",
                   save_result: false,
                   schema: lambda {
                     string :pattern, "Regular expression", required: true
@@ -69,6 +70,7 @@ module Mistri
           return failure("No document at or under #{@path.inspect}. Use list_files to see paths.")
         end
 
+        @named = paths == [@path]
         @deadline = clock + @seconds
         paths.each_with_index do |path, index|
           search(path, regexp)
@@ -146,16 +148,21 @@ module Mistri
       def with_context(path, lines, index)
         from = [index - @context, 0].max
         to = [index + @context, lines.length - 1].min
-        (from..to).map { |n| "#{path}:#{n + 1}: #{lines[n].chomp[0, LONG_LINE_CHARS]}" }.join("\n")
+        (from..to).map do |n|
+          "#{place(path, n + 1)}: #{lines[n].chomp[0, LONG_LINE_CHARS]}"
+        end.join("\n")
       end
 
       def around(line, match)
         text = line.text
         from = [match.begin(0) - MATCH_SIDE_CHARS, 0].max
         to = [match.end(0) + MATCH_SIDE_CHARS, text.length].min
-        "#{line.path}:#{line.index + 1}: [character #{line.offset + match.begin(0)}] " \
+        "#{place(line.path, line.index + 1)}: [character #{line.offset + match.begin(0)}] " \
           "#{"..." if from.positive?}#{text[from...to].chomp}#{"..." if to < text.length}"
       end
+
+      # The path of the one document searched is the argument, so no line repeats it.
+      def place(path, number) = @named ? number.to_s : "#{path}:#{number}"
 
       def report
         return "#{@matches} matches in #{@lines} lines#{left_out}" if @count_only
@@ -175,9 +182,9 @@ module Mistri
       end
 
       def wider
-        return "pass a path" if @full
+        return "raise head_limit" if !@full && @limit < MAX_HEAD_LIMIT
 
-        "raise head_limit" if @limit < MAX_HEAD_LIMIT
+        "pass a path" unless @named
       end
 
       def left_out

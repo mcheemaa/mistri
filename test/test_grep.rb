@@ -15,10 +15,12 @@ class TestGrep < Minitest::Test
 
     found = @tools["grep"].call({ "pattern" => "refund \\d+", "path" => "notes", "context" => 1 })
     count = @tools["grep"].call({ "pattern" => "refund", "output_mode" => "count" })
+    one = @tools["grep"].call({ "pattern" => "refund", "path" => "notes/a.md", "context" => 1 })
 
     assert_equal "notes/a.md:1: alpha\nnotes/a.md:2: refund 12\nnotes/a.md:3: omega\n--\n" \
                  "notes/b.md:1: refund 7", found
     assert_equal "3 matches in 3 lines", count
+    assert_equal "1: alpha\n2: refund 12\n3: omega", one
   end
 
   def test_grep_shows_a_match_on_a_long_line_with_what_is_around_it
@@ -75,15 +77,20 @@ class TestGrep < Minitest::Test
     assert_operator many.bytesize, :<, 20_500
   end
 
-  def test_grep_advises_a_higher_head_limit_only_below_its_cap
+  def test_grep_advises_only_what_would_show_more
     @workspace.write("rows.txt", "r\n" * 300)
+    grep = @tools["grep"]
 
-    below = @tools["grep"].call({ "pattern" => "r", "head_limit" => 199 })
-    at_cap = @tools["grep"].call({ "pattern" => "r", "head_limit" => 1_000 })
+    below = grep.call({ "pattern" => "r", "head_limit" => 199 })
+    at_cap = grep.call({ "pattern" => "r", "head_limit" => 1_000 })
+    named = grep.call({ "pattern" => "r", "path" => "rows.txt", "head_limit" => 200 })
 
     assert_match(/\[300 matches in all, 199 shown\. Narrow the pattern or raise head_limit\.\]\z/,
                  below)
-    assert_match(/\[300 matches in all, 200 shown\. Narrow the pattern\.\]\z/, at_cap)
+    assert_match(/\[300 matches in all, 200 shown\. Narrow the pattern or pass a path\.\]\z/,
+                 at_cap)
+    assert_match(/\A1: r\n--\n2: r\n.*\[300 matches in all, 200 shown\. Narrow the pattern\.\]\z/m,
+                 named)
   end
 
   def test_grep_cuts_a_block_too_large_to_show_and_stops_after_its_bytes
@@ -111,6 +118,7 @@ class TestGrep < Minitest::Test
 
     assert_equal "200000 matches in 1 lines", count
     assert_equal 3, shown.scan("[character ").length
+    assert_match(/\A1: \[character 0\] x/, shown)
     assert_match(/\[200000 matches in all, 3 shown\./, shown)
   end
 
