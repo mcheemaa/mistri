@@ -26,7 +26,7 @@ module Mistri
     # reads a document to measure it.
     def listing(workspace, prefix, bytes = MAX_READ_BYTES)
       lines = if workspace.respond_to?(:sizes)
-                workspace.sizes(prefix).map { |path, bytes| "#{path} (#{bytes} bytes)" }
+                workspace.sizes(prefix).map { |path, size| "#{path} (#{size} bytes)" }
               else
                 workspace.list(prefix)
               end

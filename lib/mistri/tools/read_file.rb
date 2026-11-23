@@ -47,8 +47,7 @@ module Mistri
       return "#{title}, empty." if content.empty?
       return "#{title}, #{content.bytesize} bytes that are not text." unless content.valid_encoding?
       if unit == "characters"
-        return character_window(title, content, offset.to_i, limit.to_i,
-                                bytes)
+        return character_window(title, content, offset.to_i, limit.to_i, bytes)
       end
 
       line_window(title, content.lines, [offset.to_i, 1].max, limit.to_i, bytes)

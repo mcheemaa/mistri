@@ -107,8 +107,8 @@ module Mistri
                    "write would pass that. Write the rest in another run_code call."
     end
 
-    # tools.write_file in code is the built-in tool that files.write goes
-    # through, so it counts against the same budget.
+    # tools.write_file in code writes where files.write does, so it counts
+    # against the same budget.
     def within_budget(run, tool, arguments)
       built_in = tool.name == "write_file" && bound_workspace(tool)
       bytes = built_in ? arguments["content"].to_s.bytesize : 0
