@@ -261,7 +261,8 @@ module Mistri
                                   [result, nil, false]
                                 end
       text = ResultLimit.texts(content).join("\n")
-      content, cut = @result_limit.bound(content, own_limit(call)) if @result_limit
+      stored = [own_limit(call), ResultLimit::SHOWN_BYTES].min if @result_limit
+      content, cut = @result_limit.bound(content, stored) if stored
       message = Message.tool(content:, tool_call_id: call.id, tool_name: call.name, ui:,
                              tool_error:, cut:)
       @session.append("code_call", "call" => call.to_h, "message" => message.to_h)

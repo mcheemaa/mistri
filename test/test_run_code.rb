@@ -161,6 +161,21 @@ class TestRunCode < Minitest::Test
     assert_equal "Read scratchpad/notes.md (8 bytes)", stored.dig("message", "content", 0, "text")
   end
 
+  def test_the_entry_of_a_call_from_code_keeps_a_short_copy_of_its_result
+    rows = Mistri::Tool.define("rows", "Returns rows.") { "order 1001 shipped\n" * 2_000 }
+    script = [["tool", { "name" => "rows", "arguments" => {} }]]
+    calls = [{ name: "run_code", arguments: { code: JSON.generate(script) } }]
+    provider = Mistri::Providers::Fake.new(turns: [{ tool_calls: calls }, { text: "done" }])
+    agent = Mistri::Agent.new(provider:, tools: [rows], sandbox: ScriptedSandbox.new)
+
+    agent.run("go")
+    stored = agent.session.entries.find { |entry| entry["type"] == "code_call" }.fetch("message")
+
+    assert_operator agent.session.messages.find(&:tool?).cut["bytes"], :>, 38_000
+    assert_operator stored.dig("content", 0, "text").bytesize, :<=, 2_000
+    assert_equal 38_000, stored.dig("cut", "bytes")
+  end
+
   def test_code_writes_over_a_document_only_after_reading_it
     agent, = run_code([["write", { "path" => "scratchpad/notes.md", "content" => "blind" }],
                        ["write", { "path" => "scratchpad/tool-results/x.txt", "content" => "x" }],
