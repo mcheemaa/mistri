@@ -275,9 +275,9 @@ it where it is stored. `after_tool` still receives the whole result.
   them. Its last line states the true size, that the rest was not kept, and
   that the tool can be called again for a narrower part.
 - The results that answer one assistant message share 200,000 bytes. Over
-  that, the largest give way first, down to one size for all of them, and each
-  keeps at least 2,000 bytes. A compaction never makes one turn smaller, so
-  this is what keeps a turn inside the model's window. `after_tool` runs on
+  that, the largest give way first, down to one size for all of them, which is
+  never under 2,000 bytes. A compaction never makes one turn smaller, so this
+  is what keeps a turn inside the model's window. `after_tool` runs on
   each result just before it is stored, in the model's order. When a hook
   changes a result, the bytes are shared again among that result and the ones
   after it, so a result that a hook makes smaller leaves its room to the later
@@ -424,8 +424,8 @@ What the code has:
   `edit_file` is the one exception: code changes a document by reading it and
   writing it with `files.write`.
 - `console.log`, of which the first 100,000 bytes are kept, and the standard
-  JavaScript objects. There is no network, no
-  file system, no timers and no `URL` class. Dates are in UTC.
+  JavaScript objects. There is no network, no file system, no timers and no
+  `URL` class. Dates are in UTC.
 - Text leaves the code as UTF-8. Half of a character that a cut left behind,
   as `slice` can leave of an emoji, arrives as U+FFFD.
 
@@ -433,31 +433,31 @@ A call from code is a tool call. It passes the tool's argument contract, its
 timeout, `before_tool` and `after_tool`, and emits `:tool_started` and
 `:tool_result` with a call id that begins with `code_`. Two runs of code in
 one turn make their calls at once, so the hooks are then called from two
-threads. `before_tool` is given
-what the code passed, the content of a write included, and the code receives
-what `after_tool` returned. For `files.read` that is the document. A tool that
-needs approval for the call, or that ends the turn, is refused in the code with
-a message to call it directly. So is `tool_search`, which loads tools for the
-model. The call is stored as a `code_call` entry beside
-the messages, not as a message: the model reads the result in its code, so it
-is not sent again with later requests. One run stores its first 100 calls,
-and every call emits its events. The result's `ui` travels on the event and
-is not stored. The entry and the two events hold a short copy: 2,000 bytes of the call's arguments and 2,000 bytes of its result.
+threads. `before_tool` is given what the code passed, the content of a write
+included, and the code receives what `after_tool` returned. For `files.read`
+that is the document. A tool that needs approval for the call, or that ends
+the turn, is refused in the code with a message to call it directly. So is
+`tool_search`, which loads tools for the model. The call is stored as a
+`code_call` entry beside the messages, not as a message: the model reads the
+result in its code, so it is not sent again with later requests. One run
+stores its first 100 calls, and every call emits its events. The result's `ui`
+travels on the event and is not stored. The entry and the two events hold a
+short copy: 2,000 bytes of the call's arguments and 2,000 bytes of its result.
 Among the arguments the largest give way first, so a path stays whole beside
 the content of a write, which keeps its start and its true size.
 
 Limits: ten seconds of the code's own computing, five minutes for the whole
 run with the calls it makes, and 64 MB, set with `timeout:`, `total_timeout:`
-and `memory:`. One run writes 5 MB to documents at most, through
-`files` or the built-in `write_file`, and a write past that is an error the
-code can catch. A run that passes the first or the third is stopped and the
-model is told. The time a tool or a document takes to answer the code does not
-count against the first, so a slow tool does not end the run that called it.
-It counts against the second: after the total limit, and once the agent's run
-is stopped, every further call from the code is refused. The result of
-`run_code` keeps 10,000 bytes, and with a scratchpad the whole is saved. The
-tool's description states the limit and tells the model to write a longer
-output to a document.
+and `memory:`. One run writes 5 MB to documents at most, through `files` or
+the built-in `write_file`, and a write past that is an error the code can
+catch. A run that passes the first or the third is stopped and the model is
+told. The time a tool or a document takes to answer the code does not count
+against the first, so a slow tool does not end the run that called it. It
+counts against the second: after the total limit, and once the agent's run is
+stopped, every further call from the code is refused. The result of `run_code`
+keeps 10,000 bytes, and with a scratchpad the whole is saved. The tool's
+description states the limit and tells the model to write a longer output to a
+document.
 
 While code computes it holds Ruby's interpreter lock. The adapter passes the
 lock on each time QuickJS checks for an interrupt, which it does in the code's

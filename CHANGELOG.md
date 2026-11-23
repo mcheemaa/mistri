@@ -21,16 +21,17 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   large result costs a few hundred tokens. `Mistri::Sandbox::QuickJS` runs it
   in QuickJS compiled to WebAssembly inside the host's process, on the
   optional `wasmtime` gem, with no shell and no second machine. A run is
-  stopped at ten seconds of the code's own computing, at five minutes with
-  the calls it makes, and at 64 MB, and writes 5 MB to documents at most. A call from code passes the tool's
-  contract, its timeout, `before_tool`, the approval rule and `after_tool`,
-  emits its events, and is stored as a `code_call` entry with a short copy of
-  its arguments and of its result. A tool that needs approval, or that ends the turn, is refused
-  in the code. `files` in code works through the built-in document tools, so
-  a host's own document tool is reached only as a tool. The result of
-  `run_code` keeps 10,000 bytes, and its description tells the model to write
-  a longer output to a document. The gem keeps zero runtime dependencies: a
-  host that passes no sandbox loads nothing new.
+  stopped at ten seconds of the code's own computing, at five minutes with the
+  calls it makes, and at 64 MB, and writes 5 MB to documents at most. A call
+  from code passes the tool's contract, its timeout, `before_tool`, the
+  approval rule and `after_tool`, emits its events, and is stored as a
+  `code_call` entry with a short copy of its arguments and of its result. A
+  tool that needs approval, or that ends the turn, is refused in the code.
+  `files` in code works through the built-in document tools, so a host's own
+  document tool is reached only as a tool. The result of `run_code` keeps
+  10,000 bytes, and its description tells the model to write a longer output
+  to a document. The gem keeps zero runtime dependencies: a host that passes
+  no sandbox loads nothing new.
 - An agent takes a scratchpad. With `scratchpad:`, a workspace the host
   scopes to the session, the whole of a tool result over its limit is saved
   under `scratchpad/tool-results/` and the stored result is its first 2,000
