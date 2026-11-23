@@ -20,7 +20,8 @@ result.errored?
 result.handed_off?
 ```
 
-`result.text` reads the final assistant message. `result.output` is the parsed,
+`result.text` reads the final assistant message, or the text the model last
+wrote where that message is empty. `result.output` is the parsed,
 validated value from task mode. `result.usage` sums provider attempts and
 compaction calls made during that invocation.
 
@@ -112,7 +113,9 @@ fast. A provider `Retry-After` value is honored within `max_delay`.
 An empty completion is retried only while the model has written no text since
 the user's last message. Once it has, an empty completion ends the turn. A
 model that answers and then calls a tool often adds nothing to the tool's
-result, and the same request gives the same empty answer.
+result, and the same request gives the same empty answer. The final message of
+such a run is empty, so `result.text` reads what the model wrote before the
+tool call, which `result.said` holds.
 
 Each retry sends unchanged durable history. Failed attempts are not appended as
 conversation messages, but their usage and retry record remain available for

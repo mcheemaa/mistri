@@ -156,6 +156,8 @@ class TestAgentRetry < Minitest::Test
     assert_predicate result, :completed?
     assert_equal 2, provider.requests.length
     refute(agent.session.entries.any? { |e| e["type"] == "retry" })
+    assert_equal "Here is my pick.", result.text
+    assert_equal "", result.message.text
   end
 
   def test_an_empty_completion_after_a_silent_tool_call_still_retries

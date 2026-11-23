@@ -469,7 +469,7 @@ module Mistri
           reason = @budget.exceeded(turns:, usage:, elapsed: monotonic_now - started)
           return stop_for_budget(reason, usage, &emit) if reason
         end
-        last, turn_usage = run_turn(signal, output_schema, &emit)
+        last, turn_usage, said = run_turn(signal, output_schema, &emit)
         turns += 1
         usage += turn_usage
 
@@ -477,7 +477,10 @@ module Mistri
         # transcript is unpairable and replay fails.
         parked, ended = last.tool_calls? ? run_tools(last, signal, &emit) : [[], false]
         return suspended(last, parked, usage) if parked.any?
-        return finished(last, usage, signal, handed_off: ended) if ended || done?(last, signal)
+        next unless ended || done?(last, signal)
+
+        said = nil unless last.stop_reason == StopReason::STOP && last.text.to_s.strip.empty?
+        return finished(last, usage, signal, handed_off: ended, said:)
       end
     end
 
@@ -553,7 +556,7 @@ module Mistri
     # walks back. Only the accepted attempt persists and terminates.
     def run_turn(signal, output_schema = nil, &emit)
       replayed = @session.messages
-      answered = answered?(replayed)
+      said = said_since_user(replayed)
       history = noting_scratchpad(sending_instructions(listing_deferred_tools(replayed)))
       history = @transform_context.reduce(history) do |messages, transform|
         transform.call(messages)
@@ -573,7 +576,7 @@ module Mistri
         validate_usage!(attempt_usage, message:, kind: "turn", &emit)
         usage += attempt_usage
         attempt += 1
-        error = attempt_error(message, answered)
+        error = attempt_error(message, said)
         if retry_turn?(error, attempt, signal)
           pause = @retries.delay(attempt, error["retry_after"])
           record_retry(message, error, attempt, pause, &emit)
@@ -583,7 +586,7 @@ module Mistri
         emit&.call(held) if held
         @session.append_message(message)
         reserve_tool_call_ids(message.tool_calls)
-        return [message, usage]
+        return [message, usage, said]
       end
     end
 
@@ -695,17 +698,17 @@ module Mistri
 
     # Once the model has written to the user in this exchange, an empty
     # completion is its end of turn: the same request answers the same way.
-    def attempt_error(message, answered)
+    def attempt_error(message, said)
       error = @retries&.error_for(message)
-      error unless answered && error.equal?(RetryPolicy::EMPTY_COMPLETION)
+      error unless said && error.equal?(RetryPolicy::EMPTY_COMPLETION)
     end
 
-    def answered?(messages)
+    def said_since_user(messages)
       messages.reverse_each do |message|
-        return false if message.user?
-        return true if message.assistant? && !message.text.to_s.strip.empty?
+        return nil if message.user?
+        return message.text if message.assistant? && !message.text.to_s.strip.empty?
       end
-      false
+      nil
     end
 
     def retry_turn?(error, attempt, signal)
@@ -1426,12 +1429,12 @@ module Mistri
     # the signal is what knows the user stopped it. handed_off marks a run
     # an ends_turn tool ended, and only a genuinely completed one: a run
     # aborted during that same tool phase handed nothing to anyone.
-    def finished(message, usage, signal = nil, handed_off: false)
+    def finished(message, usage, signal = nil, handed_off: false, said: nil)
       status = { StopReason::ABORTED => :aborted, StopReason::BUDGET => :budget,
                  StopReason::ERROR => :error }.fetch(message.stop_reason, :completed)
       status = :aborted if status == :completed && signal&.aborted?
       Result.new(message: message, status: status, usage: usage,
-                 handed_off: handed_off && status == :completed)
+                 handed_off: handed_off && status == :completed, said:)
     end
 
     def suspended(message, parked, usage)
