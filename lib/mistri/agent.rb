@@ -211,7 +211,7 @@ module Mistri
       call = ToolCall.new(id: "code_#{SecureRandom.hex(8)}", name:, arguments: payload["arguments"])
       call, refusal = prepare_call(call, normalize: true, signal: context.signal)
       settle_from_code(call, context, refusal:) do
-        result = @tools_by_name.fetch(call.name).call(call.arguments, context)
+        result, = ToolExecutor.invoke_one(@tools_by_name.fetch(call.name), call, context)
         text = ResultLimit.texts(result.is_a?(ToolResult) ? result.content : result).join("\n")
         [text, result]
       end

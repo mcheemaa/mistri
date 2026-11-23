@@ -76,6 +76,24 @@ class TestRunCode < Minitest::Test
     refute result.handed_off
   end
 
+  def test_a_call_from_code_runs_under_the_tools_own_timeout
+    slow = Mistri::Tool.define("slow", "Takes a while.", timeout: 0.05) do
+      sleep 2
+      "finished"
+    end
+    script = [["tool", { "name" => "slow", "arguments" => {} }]]
+    calls = [{ name: "run_code", arguments: { code: JSON.generate(script) } }]
+    provider = Mistri::Providers::Fake.new(turns: [{ tool_calls: calls }, { text: "done" }])
+    agent = Mistri::Agent.new(provider:, tools: [slow], sandbox: ScriptedSandbox.new)
+    started = Process.clock_gettime(Process::CLOCK_MONOTONIC)
+
+    agent.run("go")
+
+    assert_operator Process.clock_gettime(Process::CLOCK_MONOTONIC) - started, :<, 1
+    assert_match(/Error running tool \\"slow\\": timed out after 0.05s/,
+                 agent.session.messages.find(&:tool?).text)
+  end
+
   def test_code_writes_over_a_document_only_after_reading_it
     agent, = run_code([["write", { "path" => "scratchpad/notes.md", "content" => "blind" }],
                        ["write", { "path" => "scratchpad/tool-results/x.txt", "content" => "x" }],
