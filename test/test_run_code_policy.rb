@@ -157,6 +157,18 @@ class TestRunCodePolicy < Minitest::Test
     assert_equal "the socket closed", error.message
   end
 
+  def test_a_tool_called_from_code_is_told_that_its_result_is_not_cut
+    told = []
+    rows = Mistri::Tool.define("rows", "Returns rows.") do |_arguments, context|
+      told << context.result_limit
+      "rows"
+    end
+
+    answers([["tool", { "name" => "rows", "arguments" => {} }]], tools: [rows])
+
+    assert_equal [nil], told
+  end
+
   def test_code_cannot_load_a_tool_for_the_model
     hidden = Mistri::Tool.define("lookup", "Looks up a customer.", deferred: true) { "found" }
     search = { "name" => "tool_search", "arguments" => { "query" => "select:lookup" } }

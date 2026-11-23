@@ -50,6 +50,7 @@ module Mistri
     # Agent prepares model arguments before approval and execution. This
     # lower-level form preserves that boundary and exposes commitment so hooks
     # cannot run for queued calls that an abort prevented from starting.
+    # result_limit is a callable that gives the bytes the result of a call keeps.
     def call_with_outcomes(calls, tools_by_name, signal: nil, max_concurrency: 4, session: nil,
                            emit: nil, app: nil, result_limit: nil, prepared_arguments: false)
       return [] if calls.empty?
@@ -57,12 +58,13 @@ module Mistri
       delivery = EventDelivery.wrap(emit, passthrough: [InvocationTimeout])
       context_class = prepared_arguments ? PreparedContext : ToolContext
       context = context_class.new(session: session, signal: signal,
-                                  emit: thread_safe(delivery, signal), app: app,
-                                  result_limit: result_limit)
+                                  emit: thread_safe(delivery, signal), app: app)
       results = Array.new(calls.length)
       queue = Queue.new
       errors = Queue.new
-      calls.each_with_index { |call, index| queue << [call, index] }
+      calls.each_with_index do |call, index|
+        queue << [call, index, context.with(result_limit: result_limit&.call(call))]
+      end
       workers = max_concurrency.clamp(1, calls.length)
       Array.new(workers) { worker(queue, results, tools_by_name, context, errors) }.each(&:join)
       unless errors.empty?
@@ -83,7 +85,7 @@ module Mistri
         loop do
           break unless errors.empty?
 
-          call, index = begin
+          call, index, own = begin
             queue.pop(true)
           rescue ThreadError
             break
@@ -93,7 +95,7 @@ module Mistri
             next
           end
 
-          results[index] = run_one(call, index, results, tools_by_name, context)
+          results[index] = run_one(call, index, results, tools_by_name, own)
         end
       rescue StandardError => e
         errors << e

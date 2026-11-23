@@ -74,6 +74,23 @@ class TestResultLimit < Minitest::Test
     assert_raises(ArgumentError) { Mistri::Message.new(role: :user, content: "x", cut: {}) }
   end
 
+  def test_a_tool_is_told_the_bytes_the_result_of_its_call_keeps
+    told = {}
+    tool = lambda do |name, **options|
+      Mistri::Tool.define(name, "Reports.", **options) do |_arguments, context|
+        told[name] = context.result_limit
+        "ok"
+      end
+    end
+    calls = [{ name: "paged" }] + Array.new(9) { { name: "plain" } }
+    provider = Mistri::Providers::Fake.new(turns: [{ tool_calls: calls }, { text: "done" }])
+
+    Mistri::Agent.new(provider:, tools: [tool.call("paged", result_limit: 5_000),
+                                         tool.call("plain")]).run("go")
+
+    assert_equal({ "paged" => 5_000, "plain" => 20_000 }, told)
+  end
+
   def test_a_tools_own_limit_is_a_positive_number_of_bytes
     [false, 0, "200000", 1.5].each do |limit|
       error = assert_raises(ArgumentError) do

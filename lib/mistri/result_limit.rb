@@ -67,6 +67,12 @@ module Mistri
       @turn_bytes = turn_bytes
     end
 
+    # What each of the results of one turn can keep whatever the others hold.
+    # The level of a turn is never under it.
+    def share(count, spent: 0)
+      [[turn_bytes - spent, 0].max / count, SHARED_FLOOR_BYTES].max
+    end
+
     def turn(sizes, spent: 0)
       left = turn_bytes - spent
       Turn.new(sizes.sum <= left ? nil : level(sizes, [left, 0].max), left)

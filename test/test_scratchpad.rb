@@ -43,7 +43,7 @@ class TestScratchpad < Minitest::Test
                  Mistri.const_get(:Scratchpad, false).new(@workspace).note)
   end
 
-  def test_a_document_tool_reads_a_saved_result_without_saving_another
+  def test_parts_of_a_saved_result_read_together_fit_their_share_and_save_no_other
     @workspace.write("scratchpad/tool-results/saved.txt", ROWS)
     read_saved = { name: "read_file", arguments: { path: "scratchpad/tool-results/saved.txt" } }
     limit = Mistri::ResultLimit.new(bytes: 4_000, turn_bytes: 4_000)
@@ -52,9 +52,23 @@ class TestScratchpad < Minitest::Test
     agent.run("go")
     reads = agent.session.messages.select(&:tool?)
 
-    assert(reads.all? { |read| read.cut && read.cut["path"].nil? })
+    assert reads.none?(&:cut)
+    assert(reads.all? { |read| read.text.match?(/Continue with offset \d+\.\]\z/) })
     assert_equal ["scratchpad/tool-results/saved.txt"], @workspace.list
-    assert_match(/share one limit.*not kept/, reads.first.text.lines.last)
+  end
+
+  def test_a_tool_that_is_never_saved_is_cut
+    feed = Mistri::Tool.define("feed", "The feed.", save_result: false) { ROWS }
+    provider = Mistri::Providers::Fake.new(turns: [{ tool_calls: [{ name: "feed" }] },
+                                                   { text: "done" }])
+    agent = Mistri::Agent.new(provider:, tools: [feed], scratchpad: @workspace)
+
+    agent.run("go")
+    result = agent.session.messages.find(&:tool?)
+
+    assert_nil result.cut["path"]
+    assert_match(/The rest was not kept/, result.text.lines.last)
+    assert_empty @workspace.list
   end
 
   def test_a_result_the_scratchpad_cannot_take_is_cut_and_says_so

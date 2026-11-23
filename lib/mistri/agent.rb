@@ -268,7 +268,8 @@ module Mistri
       call = ToolCall.new(id: "code_#{SecureRandom.hex(8)}", name:, arguments: payload["arguments"])
       call, refusal = prepare_call(call, normalize: true, signal: context.signal)
       settle_from_code(call, context, refusal:) do
-        result, = ToolExecutor.invoke_one(@tools_by_name.fetch(call.name), call, context)
+        whole = context.with(result_limit: nil)
+        result, = ToolExecutor.invoke_one(@tools_by_name.fetch(call.name), call, whole)
         rewritten_from_code(call, result, context)
       end
     end
@@ -773,7 +774,7 @@ module Mistri
     def complete_tool_batch(source_calls, prepared, batch, signal, provider:, &emit)
       batch = protect_gemini_result_order(prepared, batch) if provider == :gemini
       invalid, blocked, parked, free, rejected = batch
-      executed = execute(free, signal, &emit)
+      executed = execute(free, signal, among: prepared.length - parked.length, &emit)
       if signal&.aborted?
         uncommitted = [*invalid, *blocked, *rejected].map(&:first) + parked
         results = [*executed, *interrupted_results(uncommitted)]
@@ -837,7 +838,8 @@ module Mistri
       cleared, blocked = screen(valid, signal, &)
       return interrupt_settlement(open, approved_calls, denied, signal, &) if signal&.aborted?
 
-      executed = execute(cleared, signal, &)
+      spent = stored_for_turn
+      executed = execute(cleared, signal, among: open.length, spent:, &)
       denials = denial_results(denied)
       results = if signal&.aborted?
                   uncommitted = [*invalid, *blocked].map(&:first)
@@ -846,7 +848,7 @@ module Mistri
                   [*invalid, *blocked, *executed, *denials]
                 end
       answer_results(open.map { |approval| approval[:call] },
-                     results, executed:, signal:, spent: stored_for_turn, &)
+                     results, executed:, signal:, spent:, &)
       executed.map(&:first)
     end
 
@@ -1208,15 +1210,24 @@ module Mistri
 
     # Runs calls without persisting them; the caller commits and rewrites
     # settled results in the model's original call order.
-    def execute(calls, signal, &emit)
+    def execute(calls, signal, among:, spent: 0, &emit)
       return [] if calls.empty?
 
       ToolExecutor.call_with_outcomes(calls, @tools_by_name, signal: signal,
                                                              max_concurrency: @max_concurrency,
                                                              session: @session, emit: emit,
                                                              app: @context,
-                                                             result_limit: @result_limit&.bytes,
+                                                             result_limit: limits(among, spent),
                                                              prepared_arguments: true)
+    end
+
+    # A call is told the bytes its result will keep: its own limit, or its
+    # share of the turn's bytes among the results answered with it.
+    def limits(among, spent)
+      return unless @result_limit
+
+      share = @result_limit.share(among, spent:)
+      ->(call) { [own_limit(call), share].min }
     end
 
     def interrupt_tool_turn(calls, signal, &)
