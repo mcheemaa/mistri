@@ -289,7 +289,7 @@ module Mistri
                                   [result, nil, false]
                                 end
       text = ResultLimit.texts(content).join("\n")
-      content, cut = SHORT_COPY.bound(content)
+      content, cut = SHORT_COPY.bound(stored_form(content))
       message = Message.tool(content:, tool_call_id: call.id, tool_name: call.name, ui:,
                              tool_error:, cut:)
       store_from_code(run, call, message)
@@ -349,7 +349,8 @@ module Mistri
     # The code receives what after_tool returned, as the model would.
     def rewritten_from_code(call, result, context)
       result = rewrite(call, result, hook_context(context.signal, context.emit)) if @after_tool
-      [ResultLimit.texts(result.is_a?(ToolResult) ? result.content : result).join("\n"), result]
+      content = stored_form(result.is_a?(ToolResult) ? result.content : result)
+      [ResultLimit.texts(content).join("\n"), result]
     end
 
     def install_tools(tools)
@@ -1320,7 +1321,7 @@ module Mistri
                                          [result, nil, false, nil]
                                        end
       loads = nil if tool_error
-      content, cut = bound(content, turn, call)
+      content, cut = bound(stored_form(content), turn, call)
       message = @session.append_message(Message.tool(content: content, tool_call_id: call.id,
                                                      tool_name: call.name, ui: ui,
                                                      tool_error: tool_error, loads: loads,
@@ -1329,6 +1330,10 @@ module Mistri
       emit&.call(Event.new(type: :tool_result, tool_call: call, content: text,
                            message: message, duration: duration, tool_error: tool_error))
     end
+
+    # A hook can return rows where a tool returns text. They are bounded in
+    # the blocks a message stores them as, so what is counted is what is kept.
+    def stored_form(content) = content.is_a?(String) ? content : Content.wrap(content)
 
     def bound(content, turn, call)
       return [content, nil] unless @result_limit

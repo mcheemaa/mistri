@@ -74,6 +74,19 @@ class TestResultLimit < Minitest::Test
     assert_raises(ArgumentError) { Mistri::Message.new(role: :user, content: "x", cut: {}) }
   end
 
+  def test_a_result_that_a_hook_returns_as_rows_is_cut_like_any_other
+    rows = Array.new(5_000) { |id| { "id" => id, "note" => "x" * 60 } }
+
+    [rows, { "rows" => rows }].each do |returned|
+      agent = agent_for([{ name: "count" }], after_tool: ->(_call, _result, _context) { returned })
+      agent.run("go")
+      stored = agent.session.messages.find(&:tool?)
+
+      assert_operator stored.content.sum { |block| block.text.bytesize }, :<=, 50_000
+      assert_operator stored.cut["bytes"], :>, 300_000
+    end
+  end
+
   def test_a_tool_is_told_the_bytes_the_result_of_its_call_keeps
     told = {}
     tool = lambda do |name, **options|
