@@ -407,7 +407,8 @@ is told. The time a tool or a document takes to answer the code does not
 count, so a slow tool does not end the run that called it. Once the agent's
 run is stopped, every further call from the code is refused. The result of
 `run_code` keeps 10,000 bytes, and with a scratchpad the whole is saved. The
-tool's description states the limit, so the model sizes what its code returns.
+tool's description states the limit and tells the model to write a longer
+output to a document.
 
 While code computes it holds Ruby's interpreter lock, so the other threads of
 the process wait until it calls out or is stopped. Keep the timeout short on a

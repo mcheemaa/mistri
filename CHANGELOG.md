@@ -11,8 +11,9 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   tool had run, and its result was lost. A call from code after the agent's
   run is stopped is now refused, so a stop still ends a script at its next
   call.
-- The description of `run_code` states its result limit, so the model sizes
-  what its code returns.
+- The description of `run_code` states its result limit and tells the model
+  to write a longer output to a document, so the model sizes what its code
+  returns.
 - A child takes `sandbox:` as an agent option, so a worker can run code over
   the scratchpad it shares.
 - The `:retry` event's note and the run log name what failed, as in

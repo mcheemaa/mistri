@@ -13,7 +13,9 @@ module Mistri
                "one of your other tools with the arguments it takes and returns its result as " \
                "a string. Standard JavaScript is there (JSON, RegExp, Math, Date, Map, Set). " \
                "There is no network, no Node.js, no require, no timers and no URL class. Return " \
-               "only what you need: a result over #{MAX_CODE_RESULT_BYTES} bytes is cut.".freeze
+               "only what you need to read: a result over #{MAX_CODE_RESULT_BYTES} bytes is " \
+               "cut. Write a longer output to a document with files.write and return its " \
+               "path.".freeze
     private_constant :RUN_CODE
 
     module_function
