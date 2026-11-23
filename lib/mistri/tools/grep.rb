@@ -4,11 +4,12 @@ module Mistri
   module Tools
     MAX_PATTERN_CHARS = 500
     MAX_SEARCHED_BYTES = 5_000_000
+    MAX_SEARCH_SECONDS = 5
     MATCH_SIDE_CHARS = 150
 
     module_function
 
-    def grep(workspace)
+    def grep(workspace, seconds: MAX_SEARCH_SECONDS)
       Tool.define("grep",
                   "Search documents with a regular expression. Returns each match with its " \
                   "path and line number, or a count. On a very long line, each match comes " \
@@ -23,14 +24,15 @@ module Mistri
                     integer :context, "Lines to show around each match (default 0)"
                     integer :head_limit, "Matches to show at most (default 50)"
                   }) do |args|
-        Search.new(workspace, args).call
+        Search.new(workspace, args, seconds).call
       end
     end
 
     # One grep call: the documents under a path, searched line by line.
     class Search
-      def initialize(workspace, args)
+      def initialize(workspace, args, seconds)
         @workspace = workspace
+        @seconds = seconds
         @path = args["path"]
         @pattern = args["pattern"].to_s
         @count_only = args["output_mode"] == "count"
@@ -57,7 +59,8 @@ module Mistri
           return failure("No document at or under #{@path.inspect}. Use list_files to see paths.")
         end
 
-        paths.each { |path| break if search(path, regexp) > MAX_SEARCHED_BYTES }
+        @deadline = clock + @seconds
+        paths.each { |path| break if search(path, regexp) > MAX_SEARCHED_BYTES || @late }
         report
       rescue RegexpError => e
         failure("The pattern could not be used: #{e.message}")
@@ -79,6 +82,8 @@ module Mistri
         content = @workspace.read(path).to_s
         lines = content.lines
         lines.each_with_index do |line, index|
+          break @late = true if clock > @deadline
+
           found = line.enum_for(:scan, regexp).map { Regexp.last_match }
           next if found.empty?
 
@@ -130,11 +135,19 @@ module Mistri
         "#{text}#{more}#{stopped}"
       end
 
+      # The timeout of the pattern is for one match, so the whole search has
+      # a deadline of its own.
       def stopped
-        return unless @searched > MAX_SEARCHED_BYTES
-
-        "\n[The search stopped after #{MAX_SEARCHED_BYTES} bytes. Pass a path to search the rest.]"
+        if @late
+          "\n[The search stopped after #{@seconds} seconds. Pass a path or a simpler pattern " \
+            "to search the rest.]"
+        elsif @searched > MAX_SEARCHED_BYTES
+          "\n[The search stopped after #{MAX_SEARCHED_BYTES} bytes. Pass a path to search the " \
+            "rest.]"
+        end
       end
+
+      def clock = Process.clock_gettime(Process::CLOCK_MONOTONIC)
     end
     private_constant :Search
   end

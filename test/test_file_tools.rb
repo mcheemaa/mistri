@@ -102,6 +102,14 @@ class TestFileTools < Minitest::Test
     assert_operator found.length, :<, 400
   end
 
+  def test_grep_stops_a_search_that_takes_too_long
+    @workspace.write("slow.txt", "#{"a" * 22}!\n" * 40)
+
+    result = Mistri::Tools.grep(@workspace, seconds: 0.01).call({ "pattern" => '^(a+)+\1$' })
+
+    assert_match(/\ANo matches\.\n\[The search stopped after 0\.01 seconds/, result)
+  end
+
   def test_grep_answers_a_pattern_it_cannot_use_as_an_error
     reply = @tools["grep"].call({ "pattern" => "(" })
 
