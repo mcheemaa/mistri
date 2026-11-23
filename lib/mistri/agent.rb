@@ -229,8 +229,8 @@ module Mistri
     def short_copy(call)
       arguments = call.arguments
       limit = ResultLimit::SHOWN_BYTES
-      return call unless arguments.is_a?(Hash)
       return call if ToolArguments.serialized_size_within_limit?(arguments, limit:)
+      return call.with(arguments: short_value(arguments, limit)) unless arguments.is_a?(Hash)
 
       sizes = arguments.transform_values { |value| JSON.generate(value).bytesize }
       short = sizes.sort_by(&:last).to_h do |key, size|
@@ -239,6 +239,10 @@ module Mistri
         [key, kept]
       end
       call.with(arguments: arguments.to_h { |key, _value| [key, short[key]] })
+    end
+
+    def short_value(value, limit)
+      short_argument(value, JSON.generate(value).bytesize, limit).first
     end
 
     def short_argument(value, size, left)

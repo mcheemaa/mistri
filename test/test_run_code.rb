@@ -89,6 +89,22 @@ class TestRunCode < Minitest::Test
     assert_operator JSON.generate(stored).bytesize, :<, 2_200
   end
 
+  def test_the_entry_of_a_call_from_code_keeps_a_short_copy_of_arguments_that_are_no_object
+    echo = Mistri::Tool.define("echo", "Echoes.", schema: lambda {
+      string :text, "Text", required: true
+    }) { "ok" }
+
+    replies, agent = answers([["tool", { "name" => "echo", "arguments" => "t" * 5_000 }],
+                              ["tool", { "name" => "echo", "arguments" => (1..900).to_a }]],
+                             tools: [echo])
+    stored = agent.session.entries.select { |entry| entry["type"] == "code_call" }
+                  .map { |entry| entry.dig("call", "arguments") }
+
+    assert_match(/arguments must be a JSON object/, replies[0])
+    assert_match(/\At{2000}\n\[cut at 2000 of 5000 bytes\]\z/, stored[0])
+    assert_match(/\A\[\d+ bytes of JSON\]\z/, stored[1])
+  end
+
   def test_code_is_refused_what_the_agent_does_not_have
     replies, = answers([["bogus", {}],
                         ["write", { "path" => "scratchpad/a.md", "content" => "x" }],
