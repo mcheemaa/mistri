@@ -295,7 +295,7 @@ module Mistri
       content, cut = SHORT_COPY.bound(stored_form(content))
       message = Message.tool(content:, tool_call_id: call.id, tool_name: call.name, ui:,
                              tool_error:, cut:)
-      store_from_code(run, call, message)
+      store_from_code(run, call, message.with(ui: nil))
       context.emit&.call(Event.new(type: :tool_result, tool_call: call, message:, tool_error:,
                                    content: content.is_a?(String) ? content : "[content]",
                                    duration: seconds))
@@ -306,8 +306,9 @@ module Mistri
 
     # One run can make hundreds of thousands of calls, and a session reads
     # every entry it holds, so a run stores its first hundred. Every call
-    # still emits its events. Two runs of one turn store from two threads,
-    # which a store that numbers its entries cannot take at once.
+    # still emits its events, and only the event carries the result's ui,
+    # which can be a page. Two runs of one turn store from two threads, which
+    # a store that numbers its entries cannot take at once.
     def store_from_code(run, call, message)
       run.calls += 1
       return if run.calls > MAX_STORED_CODE_CALLS

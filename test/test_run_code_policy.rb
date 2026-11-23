@@ -157,6 +157,25 @@ class TestRunCodePolicy < Minitest::Test
     assert_equal "the socket closed", error.message
   end
 
+  def test_the_ui_of_a_call_from_code_is_on_its_event_and_not_in_its_entry
+    chart = Mistri::Tool.define("chart", "Draws a chart.") do
+      Mistri::ToolResult.new(content: "drawn", ui: { "rows" => [1, 2] })
+    end
+    script = [["tool", { "name" => "chart", "arguments" => {} }]]
+    calls = [{ name: "run_code", arguments: { code: JSON.generate(script) } }]
+    provider = Mistri::Providers::Fake.new(turns: [{ tool_calls: calls }, { text: "done" }])
+    agent = Mistri::Agent.new(provider:, tools: [chart], sandbox: Mistri::Test::ScriptedSandbox.new)
+    shown = []
+
+    agent.run("go") do |event|
+      shown << event.message.ui if event.type == :tool_result && event.tool_call.name == "chart"
+    end
+    stored = agent.session.entries.find { |entry| entry["type"] == "code_call" }.fetch("message")
+
+    assert_equal [{ "rows" => [1, 2] }], shown
+    assert_nil stored["ui"]
+  end
+
   def test_a_tool_called_from_code_is_told_that_its_result_is_not_cut
     told = []
     rows = Mistri::Tool.define("rows", "Returns rows.") do |_arguments, context|
