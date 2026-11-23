@@ -287,6 +287,11 @@ module Mistri
 
       ToolResult.new(content: "#{call.name} #{reason}, so code cannot make it. Call the tool " \
                               "yourself.", error: true)
+    rescue EventDelivery::Failure
+      raise
+    rescue StandardError => e
+      ToolResult.new(content: "Error evaluating approval policy for tool #{call.name.inspect}: " \
+                              "#{e.class}: #{e.message}. The tool did not run.", error: true)
     end
 
     def run_from_code(call, context)

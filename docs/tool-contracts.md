@@ -432,7 +432,9 @@ within the same timeout.
 
 A sandbox of your own is any object that answers `run(code, host:)` and
 returns a `Mistri::Sandbox::Outcome`. `host` is a callable given an operation
-name and a Hash, and is the only way out of the sandbox.
+name and a Hash, and is the only way out of the sandbox. A `Mistri::Error` that
+`host` raises is the code's to catch. Any other error ends the run, so an
+event subscriber's failure reaches the caller as it does for any tool call.
 
 ## Tools on demand
 

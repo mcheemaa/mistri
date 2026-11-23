@@ -223,7 +223,7 @@ module Mistri
           else return { "value" => asked(operation, request) }
           end
           { "value" => nil }
-        rescue StandardError => e
+        rescue Error => e
           { "error" => e.message }
         end
 

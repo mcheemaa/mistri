@@ -40,6 +40,17 @@ class TestSandboxQuickJS < Minitest::Test
                   ["tool", { "name" => "greet", "arguments" => { "name" => "Ana" } }]], asked
   end
 
+  def test_an_error_that_is_not_the_codes_to_catch_ends_the_run
+    host = ->(_operation, _payload) { raise IOError, "the socket closed" }
+
+    error = assert_raises(IOError) do
+      @sandbox.run('try { files.read("x") } catch (error) { return "caught" }', host:)
+    end
+
+    assert_equal "the socket closed", error.message
+    assert_equal 2, @sandbox.run("return 1 + 1", host:).value
+  end
+
   def test_an_error_from_the_host_is_thrown_in_the_code_and_an_uncaught_one_is_reported
     host = ->(_operation, _payload) { raise Mistri::Error, "No document at \"x\"" }
 
