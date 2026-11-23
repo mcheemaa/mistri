@@ -359,7 +359,6 @@ module Mistri
       [value, result, monotonic_now - started]
     end
 
-    # The code receives what after_tool returned, as the model would.
     def rewritten_from_code(call, result, context)
       result = rewrite(call, result, hook_context(context.signal, context.emit)) if @after_tool
       content = stored_form(result.is_a?(ToolResult) ? result.content : result)
