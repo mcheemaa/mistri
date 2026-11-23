@@ -124,7 +124,7 @@ class TestRunCode < Minitest::Test
     assert_equal ["threw: logo.png is not text, so code cannot read it"], replies
   end
 
-  def test_a_call_from_code_is_stored_whole_where_no_limit_is_in_force
+  def test_the_entry_of_a_call_from_code_is_a_short_copy_where_no_limit_is_in_force
     rows = Mistri::Tool.define("rows", "Returns rows.") do
       Mistri::ToolResult.new(content: [Mistri::Content::Text.new(text: "order\n" * 1_000)])
     end
@@ -138,9 +138,10 @@ class TestRunCode < Minitest::Test
     agent.run("go") { |event| shown << event.content if event.tool_call&.name == "rows" }
     stored = agent.session.entries.find { |entry| entry["type"] == "code_call" }.fetch("message")
 
-    assert_equal 6_000, stored.dig("content", 0, "text").bytesize
-    assert_nil stored["cut"]
+    assert_operator stored["content"].sum { |block| block["text"].bytesize }, :<=, 2_000
+    assert_equal 6_000, stored.dig("cut", "bytes")
     assert_equal "[content]", shown.last
+    assert_nil agent.session.messages.find(&:tool?).cut
   end
 
   def test_a_write_from_code_loses_to_a_writer_that_got_there_first

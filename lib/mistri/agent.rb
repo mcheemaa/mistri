@@ -186,7 +186,8 @@ module Mistri
 
     FILES_FROM_CODE = { "read" => "read_file", "write" => "write_file", "list" => "list_files",
                         "delete" => "delete_file" }.freeze
-    private_constant :FILES_FROM_CODE
+    SHORT_COPY = ResultLimit.new(bytes: ResultLimit::SHOWN_BYTES)
+    private_constant :FILES_FROM_CODE, :SHORT_COPY
 
     def from_code(operation, payload, context, run)
       raise Error, "the run was stopped" if context.signal&.aborted?
@@ -222,7 +223,7 @@ module Mistri
     def short_copy(call)
       arguments = call.arguments
       limit = ResultLimit::SHOWN_BYTES
-      return call unless @result_limit && arguments.is_a?(Hash)
+      return call unless arguments.is_a?(Hash)
       return call if ToolArguments.serialized_size_within_limit?(arguments, limit:)
 
       sizes = arguments.transform_values { |value| JSON.generate(value).bytesize }
@@ -286,8 +287,7 @@ module Mistri
                                   [result, nil, false]
                                 end
       text = ResultLimit.texts(content).join("\n")
-      stored = [own_limit(call), ResultLimit::SHOWN_BYTES].min if @result_limit
-      content, cut = @result_limit.bound(content, stored) if stored
+      content, cut = SHORT_COPY.bound(content)
       message = Message.tool(content:, tool_call_id: call.id, tool_name: call.name, ui:,
                              tool_error:, cut:)
       @session.append("code_call", "call" => call.to_h, "message" => message.to_h)
