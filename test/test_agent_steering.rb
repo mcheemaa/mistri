@@ -100,7 +100,7 @@ class TestAgentSteering < Minitest::Test
     session.steer("add the agenda too")
     session.approve(call.id)
 
-    provider = Mistri::Providers::Fake.new(turns: [{ text: "Sent, wrapped." }])
+    provider = Mistri::Providers::Fake.new(turns: [{ text: "Sent, with the agenda." }])
     result = Mistri::Agent.new(provider:, tools: [gated],
                                session: Mistri::Session.new(store:, id: session.id)).resume
 

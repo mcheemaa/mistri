@@ -245,7 +245,6 @@ class TestSandboxQuickJS < Minitest::Test
 
   def test_an_error_thrown_in_a_queued_job_is_the_codes_error
     code = 'queueMicrotask(() => { throw new Error("late") }); return 5'
-
     host = ->(_operation, _payload) {}
     late = "Promise.resolve().then(() => queueMicrotask(() => { throw 1 })); return 5"
 
