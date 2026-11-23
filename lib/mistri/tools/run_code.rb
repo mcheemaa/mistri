@@ -69,17 +69,22 @@ module Mistri
       [content, "Read #{path} (#{content.bytesize} bytes)"]
     end
 
+    # The version this run read stands in for if_version, so a write from code
+    # is conditional wherever write_file's is.
     def write_from_code(workspace, path, content, seen)
       refuse_read_only(path)
-      current = workspace.read(path)
-      if current && seen[path] != version(current)
+      written = if atomic_workspace?(workspace)
+                  write_atomically(workspace, path, content, seen[path])
+                else
+                  write_legacy(workspace, path, content, seen[path])
+                end
+      if written.is_a?(StaleWrite)
         raise Error, "#{path} holds a document this code has not read, or one that changed " \
                      "since. Read it in this code before writing it."
       end
 
-      workspace.write(path, content)
-      seen[path] = version(content)
-      [nil, "Wrote #{path} (#{content.length} chars), version #{seen[path]}"]
+      seen[path] = version(written)
+      [nil, "Wrote #{path} (#{written.length} chars), version #{seen[path]}"]
     end
 
     def delete_from_code(workspace, path)

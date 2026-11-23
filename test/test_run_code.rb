@@ -231,6 +231,19 @@ class TestRunCode < Minitest::Test
     assert_equal "[content]", shown.last
   end
 
+  def test_a_write_from_code_loses_to_a_writer_that_got_there_first
+    @workspace.define_singleton_method(:compare_and_write) do |*, **|
+      raise Mistri::WorkspaceConflictError, "another writer got there first"
+    end
+
+    replies, = answers([["read", { "path" => "scratchpad/notes.md" }],
+                        ["write", { "path" => "scratchpad/notes.md", "content" => "mine" }]],
+                       scratchpad: @workspace)
+
+    assert_match(/changed since\. Read it in this code before writing it/, replies[1])
+    assert_equal "old", @workspace.read("scratchpad/notes.md")
+  end
+
   def test_code_writes_over_a_document_only_after_reading_it
     agent, = run_code([["write", { "path" => "scratchpad/notes.md", "content" => "blind" }],
                        ["write", { "path" => "scratchpad/tool-results/x.txt", "content" => "x" }],
