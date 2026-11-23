@@ -2,6 +2,7 @@
 
 require "digest"
 require "json"
+require "securerandom"
 require "wasmtime"
 require_relative "../sandbox"
 
@@ -148,8 +149,6 @@ module Mistri
           @call[:wasm_free].call(name)
         end
 
-        # The clock and the random source answer constants, so the code learns
-        # nothing about the host from them.
         def linker(engine)
           linker = Wasmtime::Linker.new(engine)
           system_imports(linker)
@@ -171,12 +170,14 @@ module Mistri
         end
 
         def system_imports(linker)
-          linker.func_new(WASI, "clock_time_get", %i[i32 i64 i32], [:i32]) do |caller, *values|
-            memory_of(caller).write(values.last, [1_700_000_000_000_000_000].pack("Q<"))
+          linker.func_new(WASI, "clock_time_get", %i[i32 i64 i32], [:i32]) do |caller, id, *values|
+            clock = id.zero? ? Process::CLOCK_REALTIME : Process::CLOCK_MONOTONIC
+            time = Process.clock_gettime(clock, :nanosecond)
+            memory_of(caller).write(values.last, [time].pack("Q<"))
             0
           end
           linker.func_new(WASI, "random_get", %i[i32 i32], [:i32]) do |caller, pointer, length|
-            memory_of(caller).write(pointer, "\x2A".b * length)
+            memory_of(caller).write(pointer, SecureRandom.random_bytes(length))
             0
           end
           linker.func_new(WASI, "fd_write", %i[i32 i32 i32 i32], [:i32]) do |caller, *values|

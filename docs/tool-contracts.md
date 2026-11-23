@@ -399,7 +399,7 @@ What the code has:
   the result's text, and a failed result is thrown as an error.
 - `console.log`, of which the first 100,000 bytes are kept, and the standard
   JavaScript objects. There is no network, no
-  file system, no clock of the host, no timers and no `URL` class.
+  file system, no timers and no `URL` class. Dates are in UTC.
 
 A call from code is a tool call. It passes the tool's argument contract, its
 timeout, `before_tool` and `after_tool`, and emits `:tool_started` and

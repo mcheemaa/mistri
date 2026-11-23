@@ -80,6 +80,15 @@ class TestSandboxQuickJS < Minitest::Test
                  outcome.value
   end
 
+  def test_the_code_has_the_real_time_and_new_random_numbers_in_each_run
+    host = ->(_operation, _payload) {}
+
+    first, second = Array.new(2) { @sandbox.run("return [Date.now(), Math.random()]", host:).value }
+
+    assert_in_delta Time.now.to_f * 1000, first[0], 60_000
+    refute_equal first[1], second[1]
+  end
+
   def test_what_the_code_prints_is_kept_up_to_a_bound
     outcome = @sandbox.run(<<~JS, host: ->(_operation, _payload) {})
       const line = "x".repeat(10000);
