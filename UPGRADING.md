@@ -360,16 +360,22 @@ Nothing changes until you pass `sandbox:` to an agent.
 
 - Add the `wasmtime` gem, require `mistri/sandbox/quickjs`, and keep the file
   `quickjs.wasm` of the npm package `quickjs-wasi` 3.7.0 with your
-  application. Build one adapter for the process.
+  application. Build one adapter for the process. On a server that forks its
+  workers, build it before the fork and run code only in the workers.
 - An event subscriber sees `:tool_started` and `:tool_result` for calls the
   code makes. Their call ids begin with `code_`, and their `message` is not
   among the session's messages.
 - A session holds entries of type `code_call`. Code that reads
   `Session#entries` by type leaves them out of a transcript for a person, or
-  shows them under the `run_code` call they belong to.
+  shows them under the `run_code` call they belong to. An entry keeps the
+  first 2,000 bytes of its result and the true size.
 - `before_tool` is asked about every call from code, by the name of the tool:
   `read_file`, `write_file`, `list_files` and `delete_file` for the four file
-  operations.
+  operations, with what the code passed. The code receives what `after_tool`
+  returns, and for `files.read` the hook is given the document.
+- `files` in code works through the built-in document tools. Where a document
+  tool is your own, code calls it as a tool, under its contract and its
+  approval rule.
 - Code computes inside the host's process and shares the CPU with its other
   threads, which keep running. `timeout:` bounds the code's own computing and
   `total_timeout:` the whole run with its calls.

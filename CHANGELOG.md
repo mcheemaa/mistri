@@ -5,37 +5,32 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
-- The time limit of `Mistri::Sandbox::QuickJS` counts the code's own
-  computing. It counted the time a tool took to answer as well, so a call to
-  a slow tool from code ended the run with "wasm trap: interrupt" after the
-  tool had run, and its result was lost. A call from code after the agent's
-  run is stopped is now refused, so a stop still ends a script at its next
-  call.
-- The description of `run_code` states its result limit and tells the model
-  to write a longer output to a document, so the model sizes what its code
-  returns.
-- A child takes `sandbox:` as an agent option, so a worker can run code over
-  the scratchpad it shares.
 - The `:retry` event's note and the run log name what failed, as in
   "attempt 1 failed (OverloadedError 529); retrying in 0.9s".
 - A host's documents and the scratchpad are one path space, and workers share
   it. `files:` on the agent takes the host's workspace: the agent binds the
   document tools itself, a path under `scratchpad/` goes to the scratchpad's
-  workspace and every other path to the host's. A child takes `files:` and
-  `scratchpad:` as agent options. A worker with a scratchpad is told a
-  folder of its own, `scratchpad/agents/<name>-<id>/`, to write what it finds
-  in as it goes. A path from the model is now checked before any workspace is
-  asked: relative, no empty part, `.` or `..`, no backslash.
+  workspace and every other path to the host's. A child takes `files:`,
+  `scratchpad:` and `sandbox:` as agent options. A worker with a scratchpad is
+  told a folder of its own, `scratchpad/agents/<name>-<id>/`, to write what it
+  finds in as it goes. A path from the model is now checked before any
+  workspace is asked: relative, no empty part, `.` or `..`, no backslash.
 - An agent can run code the model writes. With `sandbox:` the agent adds
   `run_code`: JavaScript that reads and writes the agent's documents, calls
   its other tools, and returns only its answer, so a sum or a join over a
   large result costs a few hundred tokens. `Mistri::Sandbox::QuickJS` runs it
   in QuickJS compiled to WebAssembly inside the host's process, on the
-  optional `wasmtime` gem, with no shell and no second machine. A call from
-  code passes the tool's contract, `before_tool`, the approval rule and
-  `after_tool`, emits its events, and is stored as a `code_call` entry. A
-  tool that needs approval is refused in the code. The gem keeps zero runtime
-  dependencies: a host that passes no sandbox loads nothing new.
+  optional `wasmtime` gem, with no shell and no second machine. A run is
+  stopped at ten seconds of the code's own computing, at five minutes with
+  the calls it makes, and at 64 MB. A call from code passes the tool's
+  contract, its timeout, `before_tool`, the approval rule and `after_tool`,
+  emits its events, and is stored as a `code_call` entry with a short copy of
+  its result. A tool that needs approval, or that ends the turn, is refused
+  in the code. `files` in code works through the built-in document tools, so
+  a host's own document tool is reached only as a tool. The result of
+  `run_code` keeps 10,000 bytes, and its description tells the model to write
+  a longer output to a document. The gem keeps zero runtime dependencies: a
+  host that passes no sandbox loads nothing new.
 - An agent takes a scratchpad. With `scratchpad:`, a workspace the host
   scopes to the session, the whole of a tool result over its limit is saved
   under `scratchpad/tool-results/` and the stored result is its first 2,000
