@@ -6,7 +6,7 @@ module Mistri
   class Scratchpad
     ROOT = "scratchpad/"
     RESULTS = "scratchpad/tool-results/"
-    MAX_NAMES = 5
+    MAX_NAMES = 1_000
     MAX_LISTING_BYTES = 4_000
     NOTE = "You have a scratchpad: documents under scratchpad/ for your own work. A " \
            "tool result that is too large to show is saved whole under " \

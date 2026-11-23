@@ -77,6 +77,15 @@ class TestScratchpad < Minitest::Test
     assert_equal paths.sort, @workspace.list
   end
 
+  def test_every_result_of_a_crowded_second_gets_a_document
+    pad = Mistri::Scratchpad.new(@workspace)
+
+    paths = Array.new(12) { pad.save_result(ROW, "fetch") }
+
+    assert_equal 12, paths.uniq.length
+    assert_equal paths.sort, @workspace.list.sort
+  end
+
   def test_the_folder_of_saved_results_is_read_only_to_the_model
     tools = Mistri::Tools.files(@workspace).to_h { |tool| [tool.name, tool] }
     @workspace.write("scratchpad/tool-results/saved.txt", "kept")
