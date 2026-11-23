@@ -414,7 +414,9 @@ What the code has:
   tool is the host's own, code calls it as a tool, as in
   `await tools.write_file({ path, content })`.
 - `await tools.NAME(arguments)` for every other tool of the agent. It returns
-  the result's text, and a failed result is thrown as an error.
+  the result's text, and a failed result is thrown as an error. The built-in
+  `edit_file` is the one exception: code changes a document by reading it and
+  writing it with `files.write`.
 - `console.log`, of which the first 100,000 bytes are kept, and the standard
   JavaScript objects. There is no network, no
   file system, no timers and no `URL` class. Dates are in UTC.
@@ -441,8 +443,8 @@ the content of a write, which keeps its start and its true size.
 Limits: ten seconds of the code's own computing, five minutes for the whole
 run with the calls it makes, and 64 MB, set with `timeout:`, `total_timeout:`
 and `memory:`. One run writes 5 MB to documents at most, through
-`files` or the built-in `write_file` and `edit_file`, and a write past that
-is an error the code can catch. A run that passes the first or the third is stopped and the
+`files` or the built-in `write_file`, and a write past that is an error the
+code can catch. A run that passes the first or the third is stopped and the
 model is told. The time a tool or a document takes to answer the code does not
 count against the first, so a slow tool does not end the run that called it.
 It counts against the second: after the total limit, and once the agent's run

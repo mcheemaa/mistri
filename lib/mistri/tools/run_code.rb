@@ -4,8 +4,6 @@ module Mistri
   module Tools
     MAX_CODE_RESULT_BYTES = 10_000
     MAX_WRITTEN_BYTES = 5_000_000
-    WRITTEN = { "write_file" => "content", "edit_file" => "new_string" }.freeze
-    private_constant :WRITTEN
     RUN_CODE = "Run JavaScript on your documents and tools. The code is the body of an async " \
                "function, so await and return work. Only what the code returns, and what it " \
                "prints with console.log, comes back to you. Use it to search, count, sort, add " \
@@ -109,10 +107,11 @@ module Mistri
                    "write would pass that. Write the rest in another run_code call."
     end
 
-    # tools.write_file and tools.edit_file in code are the built-in tools
-    # that files.write goes through, so they count against the same budget.
+    # tools.write_file in code is the built-in tool that files.write goes
+    # through, so it counts against the same budget.
     def within_budget(run, tool, arguments)
-      bytes = bound_workspace(tool) ? arguments[WRITTEN[tool.name]].to_s.bytesize : 0
+      built_in = tool.name == "write_file" && bound_workspace(tool)
+      bytes = built_in ? arguments["content"].to_s.bytesize : 0
       refuse_over_budget(run, bytes)
       result = yield
       run.written += bytes unless result.is_a?(ToolResult) && result.error?

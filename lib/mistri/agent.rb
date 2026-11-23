@@ -189,7 +189,11 @@ module Mistri
                         "delete" => "delete_file" }.freeze
     SHORT_COPY = ResultLimit.new(bytes: ResultLimit::SHOWN_BYTES)
     MAX_STORED_CODE_CALLS = 100
-    private_constant :FILES_FROM_CODE, :SHORT_COPY, :MAX_STORED_CODE_CALLS
+    # An edit can grow a document by far more than the text it is given, so
+    # a run's budget for writes could not count it.
+    EDIT_FROM_CODE = "edit_file is not called from code. Read the document with files.read, " \
+                     "change the text in the code and write it with files.write."
+    private_constant :FILES_FROM_CODE, :SHORT_COPY, :MAX_STORED_CODE_CALLS, :EDIT_FROM_CODE
 
     def from_code(operation, payload, context, run)
       raise Error, "the run was stopped" if context.signal&.aborted?
@@ -266,12 +270,13 @@ module Mistri
 
     def tool_from_code(payload, context, run)
       name = payload["name"].to_s
+      tool = @tools_by_name[name]
       raise Error, "run_code cannot be called from code" if name == "run_code"
+      raise Error, EDIT_FROM_CODE if name == "edit_file" && Tools.bound_workspace(tool)
 
       call = ToolCall.new(id: "code_#{SecureRandom.hex(8)}", name:, arguments: payload["arguments"])
       call, refusal = prepare_call(call, normalize: true, signal: context.signal)
       settle_from_code(call, context, run, refusal:) do
-        tool = @tools_by_name.fetch(call.name)
         whole = context.with(result_limit: nil)
         result = Tools.within_budget(run, tool, call.arguments) do
           ToolExecutor.invoke_one(tool, call, whole).first

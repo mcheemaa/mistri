@@ -192,6 +192,18 @@ class TestRunCode < Minitest::Test
     assert_equal %w[scratchpad/a.txt scratchpad/notes.md], @workspace.list
   end
 
+  def test_code_changes_a_document_by_writing_it_and_not_through_edit_file
+    edit = { "path" => "scratchpad/notes.md", "old_string" => "old", "new_string" => "new" }
+
+    replies, agent = answers([["tool", { "name" => "edit_file", "arguments" => edit }]],
+                             files: @workspace)
+
+    assert_match(/\Athrew: edit_file is not called from code\. Read the document with files\.read/,
+                 replies[0])
+    assert_equal "old", @workspace.read("scratchpad/notes.md")
+    assert_empty(agent.session.entries.select { |entry| entry["type"] == "code_call" })
+  end
+
   def test_code_is_refused_a_document_that_is_not_text
     @workspace.write("logo.png", "\x89PNG\xFF".dup.force_encoding(Encoding::UTF_8))
 
