@@ -168,6 +168,30 @@ class TestRunCode < Minitest::Test
     assert_equal %w[scratchpad/a.txt scratchpad/c.txt scratchpad/notes.md], @workspace.list
   end
 
+  def test_a_built_in_tool_that_writes_counts_against_the_budget_when_code_calls_it
+    sandbox = Class.new do
+      def run(_code, host:)
+        replies = %w[a b].map do |name|
+          arguments = { "path" => "scratchpad/#{name}.txt", "content" => "x" * 3_000_000 }
+          host.call("tool", { "name" => "write_file", "arguments" => arguments })
+        rescue Mistri::Error => e
+          "threw: #{e.message}"
+        end
+        Mistri::Sandbox::Outcome.new(value: replies)
+      end
+    end.new
+    calls = [{ name: "run_code", arguments: { code: "two writes" } }]
+    provider = Mistri::Providers::Fake.new(turns: [{ tool_calls: calls }, { text: "done" }])
+    agent = Mistri::Agent.new(provider:, sandbox:, files: @workspace)
+
+    agent.run("go")
+    replies = JSON.parse(agent.session.messages.find(&:tool?).text)
+
+    assert_match(%r{\AWrote scratchpad/a\.txt}, replies[0])
+    assert_match(/\Athrew: One run of code writes 5000000 bytes at most/, replies[1])
+    assert_equal %w[scratchpad/a.txt scratchpad/notes.md], @workspace.list
+  end
+
   def test_code_is_refused_a_document_that_is_not_text
     @workspace.write("logo.png", "\x89PNG\xFF".dup.force_encoding(Encoding::UTF_8))
 

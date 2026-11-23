@@ -4,6 +4,8 @@ module Mistri
   module Tools
     MAX_CODE_RESULT_BYTES = 10_000
     MAX_WRITTEN_BYTES = 5_000_000
+    WRITTEN = { "write_file" => "content", "edit_file" => "new_string" }.freeze
+    private_constant :WRITTEN
     RUN_CODE = "Run JavaScript on your documents and tools. The code is the body of an async " \
                "function, so await and return work. Only what the code returns, and what it " \
                "prints with console.log, comes back to you. Use it to search, count, sort, add " \
@@ -81,7 +83,7 @@ module Mistri
     # is conditional wherever write_file's is.
     def write_from_code(workspace, path, content, run)
       refuse_read_only(path)
-      refuse_over_budget(run, content)
+      refuse_over_budget(run, content.bytesize)
       seen = run.seen
       written = if atomic_workspace?(workspace)
                   write_atomically(workspace, path, content, seen[path])
@@ -100,11 +102,21 @@ module Mistri
 
     # A model's own write is bounded by what it can write in a turn. Code is
     # bounded only by the clock, so one run has a budget.
-    def refuse_over_budget(run, content)
-      return if run.written + content.bytesize <= MAX_WRITTEN_BYTES
+    def refuse_over_budget(run, bytes)
+      return if run.written + bytes <= MAX_WRITTEN_BYTES
 
       raise Error, "One run of code writes #{MAX_WRITTEN_BYTES} bytes at most, and this " \
                    "write would pass that. Write the rest in another run_code call."
+    end
+
+    # tools.write_file and tools.edit_file in code are the built-in tools
+    # that files.write goes through, so they count against the same budget.
+    def within_budget(run, tool, arguments)
+      bytes = bound_workspace(tool) ? arguments[WRITTEN[tool.name]].to_s.bytesize : 0
+      refuse_over_budget(run, bytes)
+      result = yield
+      run.written += bytes unless result.is_a?(ToolResult) && result.error?
+      result
     end
 
     def delete_from_code(workspace, path)

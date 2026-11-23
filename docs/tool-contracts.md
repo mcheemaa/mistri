@@ -438,8 +438,9 @@ the content of a write, which keeps its start and its true size.
 
 Limits: ten seconds of the code's own computing, five minutes for the whole
 run with the calls it makes, and 64 MB, set with `timeout:`, `total_timeout:`
-and `memory:`. One run writes 5 MB to documents at most, and a write past
-that is an error the code can catch. A run that passes the first or the third is stopped and the
+and `memory:`. One run writes 5 MB to documents at most, through
+`files` or the built-in `write_file` and `edit_file`, and a write past that
+is an error the code can catch. A run that passes the first or the third is stopped and the
 model is told. The time a tool or a document takes to answer the code does not
 count against the first, so a slow tool does not end the run that called it.
 It counts against the second: after the total limit, and once the agent's run

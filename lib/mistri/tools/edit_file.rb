@@ -14,19 +14,20 @@ module Mistri
     # model's retry is one shot.
     def edit_file(workspace)
       atomic = atomic_workspace?(workspace)
-      Tool.define("edit_file",
-                  "Replace an exact snippet of a document. Copy old_string verbatim from " \
-                  "read_file output including whitespace, without line-number prefixes. " \
-                  "It must match exactly one place; add surrounding lines to make it " \
-                  "unique, or set replace_all to change every occurrence.",
-                  eager_input_streaming: true, save_result: false,
-                  argument_normalizer: Tools.method(:tolerate),
-                  schema: lambda {
-                    string :path, "Document path", required: true
-                    string :old_string, "Exact text to replace (whitespace matters)", required: true
-                    string :new_string, "Replacement text", required: true
-                    boolean :replace_all, "Replace every occurrence instead of exactly one"
-                  }) do |args|
+      tool = Tool.define("edit_file",
+                         "Replace an exact snippet of a document. Copy old_string verbatim from " \
+                         "read_file output including whitespace, without line-number prefixes. " \
+                         "It must match exactly one place; add surrounding lines to make it " \
+                         "unique, or set replace_all to change every occurrence.",
+                         eager_input_streaming: true, save_result: false,
+                         argument_normalizer: Tools.method(:tolerate),
+                         schema: lambda {
+                           string :path, "Document path", required: true
+                           string :old_string, "Exact text to replace (whitespace matters)",
+                                  required: true
+                           string :new_string, "Replacement text", required: true
+                           boolean :replace_all, "Replace every occurrence instead of exactly one"
+                         }) do |args|
         refusal = unusable_path(args["path"]) || read_only(args["path"])
         next refusal if refusal
 
@@ -42,6 +43,7 @@ module Mistri
       rescue EditError, WorkspaceConflictError => e
         ToolResult.new(content: "edit_file failed: #{e.message}", error: true)
       end
+      bind(workspace, tool)
     end
 
     def replace_legacy(workspace, args)

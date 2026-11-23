@@ -271,8 +271,11 @@ module Mistri
       call = ToolCall.new(id: "code_#{SecureRandom.hex(8)}", name:, arguments: payload["arguments"])
       call, refusal = prepare_call(call, normalize: true, signal: context.signal)
       settle_from_code(call, context, run, refusal:) do
+        tool = @tools_by_name.fetch(call.name)
         whole = context.with(result_limit: nil)
-        result, = ToolExecutor.invoke_one(@tools_by_name.fetch(call.name), call, whole)
+        result = Tools.within_budget(run, tool, call.arguments) do
+          ToolExecutor.invoke_one(tool, call, whole).first
+        end
         rewritten_from_code(call, result, context)
       end
     end
