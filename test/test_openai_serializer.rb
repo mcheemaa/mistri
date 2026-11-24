@@ -127,6 +127,16 @@ class TestOpenAISerializer < Minitest::Test
     refute(items.any? { |item| item.key?(:id) })
   end
 
+  def test_a_block_with_no_wire_form_is_refused
+    thinking = Mistri::Content::Thinking.new(thinking: "why")
+
+    error = assert_raises(Mistri::SchemaError) do
+      SERIALIZER.user_item(Mistri::Message.user([thinking]))
+    end
+
+    assert_match(/Thinking for OpenAI input/, error.message)
+  end
+
   def test_images_ride_as_data_urls
     image = Mistri::Content::Image.from_bytes("png!", mime_type: "image/png")
     item = SERIALIZER.user_item(Mistri::Message.user(["see", image]))

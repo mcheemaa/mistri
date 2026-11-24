@@ -68,7 +68,8 @@ class TestAnthropicSerializer < Minitest::Test
     image = Mistri::Content::Image.from_bytes("png!", mime_type: "image/png")
     history = [Mistri::Message.tool(content: ["The camera failed.", image], tool_call_id: "a",
                                     tool_name: "camera", tool_error: true),
-               Mistri::Message.tool(content: ["The page:", image], tool_call_id: "b")]
+               Mistri::Message.tool(content: ["The page:", image], tool_call_id: "b"),
+               Mistri::Message.tool(content: [image], tool_call_id: "c", tool_error: true)]
     picture = { type: "image",
                 source: { type: "base64", media_type: "image/png", data: image.data } }
 
@@ -79,7 +80,11 @@ class TestAnthropicSerializer < Minitest::Test
          content: [{ type: "text", text: "The camera failed." }], is_error: true },
        { type: "tool_result", tool_use_id: "b",
          content: [{ type: "text", text: "The page:" }, picture] },
+       { type: "tool_result", tool_use_id: "c", content: [{ type: "text", text: " " }],
+         is_error: true },
        { type: "text", text: "The failed camera call also returned:" },
+       picture,
+       { type: "text", text: "The failed tool call also returned:" },
        picture],
       blocks
     )
