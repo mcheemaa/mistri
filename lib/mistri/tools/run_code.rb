@@ -36,7 +36,7 @@ module Mistri
                   schema: lambda {
                     string :code, "JavaScript, the body of an async function", required: true
                   }) do |args, context|
-        remembering(context&.session) do |run|
+        remembering(context.session) do |run|
           asked = ->(operation, payload) { host.call(operation, payload, context, run) }
           code_result(sandbox.run(args["code"].to_s, host: asked))
         end
