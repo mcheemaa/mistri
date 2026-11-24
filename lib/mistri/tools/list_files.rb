@@ -9,7 +9,7 @@ module Mistri
     def list_files(workspace)
       tool = Tool.define("list_files",
                          "List documents with their sizes, optionally under a prefix.",
-                         save_result: false,
+                         save_result: false, parallel: true,
                          schema: lambda {
                            string :prefix, "Only paths starting with this"
                          }) do |args, context|

@@ -32,6 +32,42 @@ class TestDocumentsIntegration < Minitest::Test
     assert_includes document, '<p class="tagline">Ship faster.</p>', "collateral damage"
   end
 
+  # A store that is slow to write, as a database is. A read that does not wait
+  # for the write sent ahead of it finds no document. Some models send calls
+  # that depend on each other one turn at a time whatever they are told, and
+  # a run of that shape cannot show the order of a turn's calls.
+  Integration.scenario(self, :reads_back_a_document_written_in_the_same_turn) do |model|
+    note = Integration.marker
+    slow_store = Class.new(Mistri::Workspace::Memory) do
+      def compare_and_write(...)
+        sleep 0.3
+        super
+      end
+    end
+    agent = Mistri::Agent.new(provider: Mistri.provider(model),
+                              tools: Mistri::Tools.files(slow_store.new),
+                              system: "Tool calls you send in one message run one after " \
+                                      "another, in the order you write them, so a later " \
+                                      "call sees what an earlier one did. Do not wait for " \
+                                      "a result before sending the next call.")
+
+    result = agent.run("In one message, send two tool calls: write_file with path " \
+                       "notes/today.md and content #{note}, then read_file for " \
+                       "notes/today.md. Then say done.")
+
+    assert_predicate result, :completed?
+    together = agent.session.messages.find do |message|
+      message.assistant? && message.tool_calls.map(&:name) == %w[write_file read_file]
+    end
+
+    skip "#{model} sent the write and the read in separate turns" unless together
+    read = agent.session.messages.find do |message|
+      message.tool? && message.tool_call_id == together.tool_calls.last.id
+    end
+
+    assert Integration.carried?(read.text, note), "the read ran before the write sent ahead of it"
+  end
+
   Integration.scenario(self, :repairs_a_stale_document_edit) do |model|
     headline = Integration.marker
     document = +<<~HTML

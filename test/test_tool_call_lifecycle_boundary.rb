@@ -156,11 +156,63 @@ class TestToolCallLifecycleBoundary < Minitest::Test # rubocop:disable Metrics/C
     results = agent.session.messages.select(&:tool?)
 
     assert_predicate result, :completed?
-    assert_equal [false], ran
+    assert_empty ran
     assert_empty agent.session.open_approvals
     assert_equal %w[risk safe], results.map(&:tool_call_id)
     assert_predicate results.first, :tool_error?
     assert_includes results.first.text, "retry those calls separately"
+    assert_equal "Not run: the write call before this one failed.", results.last.text
+  end
+
+  def test_gemini_no_id_calls_never_wait_behind_a_same_name_call_that_is_not_run
+    tools = [Mistri::Tool.define("write", "Writes.", needs_approval: true) { flunk "write ran" },
+             Mistri::Tool.define("note", "Notes.") { flunk "note ran" }]
+
+    %w[missing note].each do |between|
+      calls = [Mistri::ToolCall.new(id: "first", name: "write", arguments: {}),
+               Mistri::ToolCall.new(id: "between", name: between, arguments: {}),
+               Mistri::ToolCall.new(id: "second", name: "write", arguments: {})]
+      turn = Mistri::Message.assistant(
+        tool_calls: calls, provider: :gemini, stop_reason: Mistri::StopReason::TOOL_USE
+      )
+      agent = Mistri::Agent.new(provider: ScriptedProvider.new(turn, text_turn("done")), tools:)
+
+      result = agent.run("go")
+      results = agent.session.messages.select(&:tool?)
+
+      assert_predicate result, :completed?
+      assert_empty agent.session.open_approvals
+      assert_equal %w[first between second], results.map(&:tool_call_id)
+      assert_includes results.first.text, "retry those calls separately"
+      assert_equal "Not run: the write call before this one failed.", results.last.text
+    end
+  end
+
+  def test_gemini_no_id_calls_are_checked_again_after_one_of_them_is_refused
+    ran = []
+    read = Mistri::Tool.define(
+      "read", "Reads.", parallel: true, needs_approval: ->(arguments) { arguments["risk"] },
+                        schema: -> { boolean :risk, "Risky", required: true }
+    ) { ran << "read" }
+    note = Mistri::Tool.define("note", "Notes.") { ran << "note" }
+    calls = [Mistri::ToolCall.new(id: "first", name: "read", arguments: { "risk" => true }),
+             Mistri::ToolCall.new(id: "between", name: "note", arguments: {}),
+             Mistri::ToolCall.new(id: "third", name: "read", arguments: { "risk" => true }),
+             Mistri::ToolCall.new(id: "last", name: "read", arguments: { "risk" => false })]
+    turn = Mistri::Message.assistant(
+      tool_calls: calls, provider: :gemini, stop_reason: Mistri::StopReason::TOOL_USE
+    )
+    agent = Mistri::Agent.new(provider: ScriptedProvider.new(turn, text_turn("done")),
+                              tools: [read, note])
+
+    result = agent.run("go")
+    results = agent.session.messages.select(&:tool?)
+
+    assert_predicate result, :completed?
+    assert_empty agent.session.open_approvals
+    assert_equal %w[note read], ran
+    assert_equal %w[first between third last], results.map(&:tool_call_id)
+    assert_equal [true, false, true, false], results.map(&:tool_error?)
   end
 
   def test_gemini_no_id_calls_allow_a_final_same_name_approval
@@ -185,8 +237,9 @@ class TestToolCallLifecycleBoundary < Minitest::Test # rubocop:disable Metrics/C
 
     state = exercise_allowed_gemini_approval(calls)
 
-    assert_equal [false, true], state[:ran]
+    assert_equal [true], state[:ran]
     assert_equal %w[safe risk], state[:results].map(&:tool_call_id)
+    assert_includes state[:results].first.text, "waits for a person's approval"
   end
 
   def test_abort_during_each_pre_execution_phase_interrupts_every_call

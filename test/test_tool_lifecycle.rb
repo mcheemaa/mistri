@@ -199,12 +199,12 @@ class TestToolLifecycle < Minitest::Test
     slow_started = Queue.new
     fast_done = Queue.new
     events = Queue.new
-    slow = Mistri::Tool.define("slow", "Slow.") do
+    slow = Mistri::Tool.define("slow", "Slow.", parallel: true) do
       slow_started << true
       release.pop
       "slow result"
     end
-    fast = Mistri::Tool.define("fast", "Fast.") do
+    fast = Mistri::Tool.define("fast", "Fast.", parallel: true) do
       fast_done << true
       "fast result"
     end

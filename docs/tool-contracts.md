@@ -59,13 +59,78 @@ A completed model call moves through these phases in order:
 9. The result is [bounded](#large-results), persists and emits `:tool_result`.
 
 Malformed or invalid calls do not reach policy or execution. The model receives
-a bounded error result it can correct, while valid sibling calls in the same
-turn continue. Results settle in the model's call order even when handlers run
-concurrently.
+a bounded error result it can correct. Results settle in the model's call
+order. What a refused call means for the calls after it is under
+[The order of a turn's calls](#the-order-of-a-turns-calls).
 
 An approved call is revalidated against the current tool definition and passes
 through `before_tool` again on `resume`. Its normalizer and approval predicate
 do not run again: the human approved the already prepared arguments.
+
+## The order of a turn's calls
+
+A model can send several calls in one turn. They take effect in the order it
+wrote them, so a read written after a write sees the write.
+
+A tool runs alone, in its place, unless it is marked `parallel: true`:
+
+```ruby
+Mistri::Tool.define("search_orders", "Searches orders.", parallel: true,
+                    schema: -> { string :query, "Search text", required: true }) do |args|
+  Orders.search(args.fetch("query"))
+end
+```
+
+- Marked calls that sit next to each other run together, on up to
+  `max_concurrency` threads. Any other call waits for the calls before it, and
+  the calls after it wait for it. A call that is not run does not separate the
+  marked calls around it.
+- Mark a tool that only reads, or that starts work of its own. Its result must
+  not depend on which of its marked neighbours finishes first, and it must
+  change nothing that another call of the turn reads.
+- A call that runs by itself, marked or not, runs on the thread that called
+  the agent, as part of that thread's work. What its handler sets on the
+  thread stays set after the run, and a `throw` to a `catch` around the run
+  ends the run. Inside a Rails job or request it sees the `Current` attributes
+  set there, it uses that thread's database connection and any transaction
+  open on it, and the executor does not report an error it raises. Calls that
+  run together run on worker threads, each in an executor of its own, so a
+  marked tool cannot rely on any of this.
+
+When a call that runs alone does not take effect, the calls after it are not
+run. That covers a handler that raised or timed out, a result with
+`error: true`, refused arguments, an unknown tool, a `before_tool` block and
+an approval rule that raised. Each call after it gets the error result
+`Not run: the edit_page call before this one failed.`, and the model sends it
+again if it still wants it. A call refused for its own arguments keeps its own
+error. A marked call that fails holds back nothing. A call that is not run has
+already passed its checks and `before_tool`, and it never reaches `after_tool`.
+Whether a call took effect is judged on what its handler returned, before
+`after_tool`, so a hook that turns a result into an error holds back nothing.
+
+When the first call of a turn waits for approval, the calls before it have
+run, and no call after it runs before the decision. A later call that needs
+approval waits with it, so a person sees them together. Any other call gets
+`Not run: the send_invite call before this one waits for a person's approval.
+Send this call again once it is decided.` That holds for a marked call too: a
+read written after a write that waits would return what was there before the
+write. Once a call that is not marked has been held back, a later call that
+needs approval is held back as well, because it may rely on that call. A call
+after a refused or blocked call that is not marked gets the failure text
+instead. On `resume` the approved calls run in the order written, and one
+that is not marked and fails holds back the ones after it. A denied call holds
+back nothing.
+
+The gem's own tools are marked where they only read or start a worker:
+`read_file`, `grep`, `list_files`, `find_in_file`, `read_memory`, the skill
+reader, tool search, `spawn_agent` and a named sub-agent. `write_file`,
+`edit_file`, `delete_file`, `update_memory`, `run_code` and the four worker
+console tools run alone. A call that `run_code` makes from code runs when the
+code makes it. `spawn_agent` and a named sub-agent are marked so that workers
+started in one turn work at the same time. What a worker does is not ordered
+against the calls beside it. `list_agents` and `read_agent` only read, and
+still run alone: they read what `spawn_agent` starts, and `read_agent` can
+wait for a worker.
 
 ## Schema forms
 
@@ -451,10 +516,9 @@ What the code has:
 
 A call from code is a tool call. It passes the tool's argument contract, its
 timeout, `before_tool` and `after_tool`, and emits `:tool_started` and
-`:tool_result` with a call id that begins with `code_`. Two runs of code in
-one turn make their calls at once, so the hooks are then called from two
-threads. `before_tool` is given what the code passed, the content of a write
-included, and the code receives what `after_tool` returned. For `files.read`
+`:tool_result` with a call id that begins with `code_`. `before_tool` is given
+what the code passed, the content of a write included, and the code receives
+what `after_tool` returned. For `files.read`
 that is the document. A tool that needs approval for the call, or that ends
 the turn, is refused in the code with a message to call it directly. So is
 `tool_search`, which loads tools for the model. The call is stored as a
@@ -717,7 +781,10 @@ end
 
 `result.handed_off?` reports that the model's floor moved away. It does not
 claim the tool succeeded; inspect the tool result separately. The human answer
-arrives as the next `run` input.
+arrives as the next `run` input. Calls written after it in the same turn still
+take their turn, as [The order of a turn's calls](#the-order-of-a-turns-calls)
+says. One that waits for approval suspends the run instead, and `handed_off?`
+is then false.
 
 ## Resource limits
 

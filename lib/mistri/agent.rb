@@ -62,7 +62,6 @@ module Mistri
       @scratchpad = scratchpad
       @documents = documents(files, scratchpad&.workspace)
       @result_limit = result_limit || nil
-      @storing = Mutex.new
       install_tools(with_own_tools(tools, skills, sandbox))
 
       @budget = budget || Budget.new
@@ -316,15 +315,12 @@ module Mistri
     # One run can make hundreds of thousands of calls, and a session reads
     # every entry it holds, so a run stores its first hundred. Every call
     # still emits its events, and only the event carries the result's ui,
-    # which can be a page. Two runs of one turn store from two threads, which
-    # a store that numbers its entries cannot take at once.
+    # which can be a page.
     def store_from_code(run, call, message)
       run.calls += 1
       return if run.calls > MAX_STORED_CODE_CALLS
 
-      @storing.synchronize do
-        @session.append("code_call", "call" => call.to_h, "message" => message.to_h)
-      end
+      @session.append("code_call", "call" => call.to_h, "message" => message.to_h)
     end
 
     def refused_from_code(call, context)
@@ -780,13 +776,13 @@ module Mistri
       sleep(0.1) while monotonic_now < deadline && !signal&.aborted?
     end
 
-    # Answer or park the assistant's tool calls. Ungated calls execute (only
-    # on a genuine tool_use turn with no abort; otherwise they pair with
-    # interrupted results). Gated calls park as approval requests. Nothing
-    # is left dangling either way. Returns the parked calls and whether an
-    # executed tool ends the turn; a parked call outranks an executed
-    # ends_turn, because a suspension is the stronger stop and the model
-    # regains the floor when the run resumes.
+    # Answer or park the assistant's tool calls, in the order written. A call
+    # runs, parks as an approval request, or is answered as not run (only on
+    # a genuine tool_use turn with no abort; otherwise every call pairs with
+    # an interrupted result). Nothing is left dangling either way. Returns
+    # the parked calls and whether an executed tool ends the turn; a parked
+    # call outranks an executed ends_turn, because a suspension is the
+    # stronger stop and the model regains the floor when the run resumes.
     def run_tools(assistant, signal, &emit)
       calls = assistant.tool_calls
       unless assistant.stop_reason == StopReason::TOOL_USE && !signal&.aborted?
@@ -804,17 +800,23 @@ module Mistri
 
     def complete_tool_batch(source_calls, prepared, batch, signal, provider:, &emit)
       batch = protect_gemini_result_order(prepared, batch) if provider == :gemini
-      invalid, blocked, parked, free, rejected = batch
-      executed = execute(free, signal, among: prepared.length - parked.length, &emit)
+      invalid, blocked, parked, _free, rejected = batch
+      refused = [*invalid, *blocked, *rejected]
+      among = prepared.length - parked.length
+      ran = CallOrder.new(@tools_by_name).run(prepared, refused:, parked:, signal:) do |step|
+        execute(step, signal, among:, &emit)
+      end
+      executed = ran.executed
+      unrun = [*refused, *ran.skipped]
+      parked = ran.parked
       if signal&.aborted?
-        uncommitted = [*invalid, *blocked, *rejected].map(&:first) + parked
+        uncommitted = unrun.map(&:first) + parked
         results = [*executed, *interrupted_results(uncommitted)]
         answer_results(prepared, results, executed:, signal:, &emit)
         return [[], executed_ends_turn?(executed)]
       end
 
-      answer_results(prepared, [*invalid, *blocked, *rejected, *executed],
-                     executed:, signal:, &emit)
+      answer_results(prepared, [*unrun, *executed], executed:, signal:, &emit)
       if signal&.aborted?
         answer_results(prepared, interrupted_results(parked),
                        executed: [], signal:, &emit)
@@ -838,48 +840,66 @@ module Mistri
 
     # Before Gemini 3, same-name parallel calls may have no wire IDs and only
     # order pairs their responses. A later immediate result cannot pass an
-    # earlier parked result without becoming ambiguous.
+    # earlier parked result without becoming ambiguous, and every call that
+    # does not wait is answered at once. Failing one waiting call changes
+    # which others wait, so the check repeats until none is passed.
     def protect_gemini_result_order(prepared, batch)
       invalid, blocked, parked, free, rejected = batch
-      positions = prepared.each_with_index.to_h { |call, index| [call.id, index] }
-      immediate = [*invalid, *blocked, *rejected].map(&:first) + free
-      unsafe, safe = parked.partition do |parked_call|
-        parked_call.provider_call_id.nil? && immediate.any? do |call|
-          call.provider_call_id.nil? && call.name == parked_call.name &&
-            positions.fetch(call.id) > positions.fetch(parked_call.id)
-        end
+      loop do
+        waiting = CallOrder.new(@tools_by_name)
+                           .waiting(prepared, refused: [*invalid, *blocked, *rejected], parked:)
+        unsafe = waiting.select { |call| passed_by_a_later_result?(call, prepared, waiting) }
+        return [invalid, blocked, parked, free, rejected] if unsafe.empty?
+
+        parked = parked.reject { |call| unsafe.any? { |other| other.equal?(call) } }
+        rejected += unsafe.map { |call| [call, gemini_order_failure, nil] }
       end
-      failures = unsafe.map do |call|
-        content = "Gemini returned parallel same-name calls without IDs across an approval " \
-                  "boundary. This tool did not run; retry those calls separately."
-        [call, ToolResult.new(content:, error: true), nil]
+    end
+
+    def gemini_order_failure
+      content = "Gemini returned parallel same-name calls without IDs across an approval " \
+                "boundary. This tool did not run; retry those calls separately."
+      ToolResult.new(content:, error: true)
+    end
+
+    def passed_by_a_later_result?(waiting_call, prepared, waiting)
+      return false if waiting_call.provider_call_id
+
+      later = prepared.drop_while { |call| !call.equal?(waiting_call) }.drop(1)
+      later.any? do |call|
+        call.provider_call_id.nil? && call.name == waiting_call.name &&
+          waiting.none? { |other| other.equal?(call) }
       end
-      [invalid, blocked, safe, free, [*rejected, *failures]]
     end
 
     # Returns the calls that actually executed (denied ones only answer).
     def settle(open, signal, &)
       approved, denied = open.partition { |approval| approval[:decision]["approved"] }
       approved_calls = approved.map { |approval| approval[:call] }
-      _prepared, valid, invalid = prepare_calls(
+      prepared, valid, invalid = prepare_calls(
         approved_calls, normalize: false, signal:
       )
       return interrupt_settlement(open, approved_calls, denied, signal, &) if signal&.aborted?
 
-      cleared, blocked = screen(valid, signal, &)
+      _cleared, blocked = screen(valid, signal, &)
       return interrupt_settlement(open, approved_calls, denied, signal, &) if signal&.aborted?
 
       spent = stored_for_turn
-      executed = execute(cleared, signal, among: open.length, spent:, &)
       denials = denial_results(denied)
+      ready = prepared.each
+      calls = open.map { |approval| approval[:decision]["approved"] ? ready.next : approval[:call] }
+      ran = CallOrder.new(@tools_by_name)
+                     .run(calls, refused: [*invalid, *blocked], denied: denials, signal:) do |step|
+        execute(step, signal, among: open.length, spent:, &)
+      end
+      executed = ran.executed
+      unrun = [*invalid, *blocked, *ran.skipped]
       results = if signal&.aborted?
-                  uncommitted = [*invalid, *blocked].map(&:first)
-                  [*executed, *interrupted_results(uncommitted), *denials]
+                  [*executed, *interrupted_results(unrun.map(&:first)), *denials]
                 else
-                  [*invalid, *blocked, *executed, *denials]
+                  [*unrun, *executed, *denials]
                 end
-      answer_results(open.map { |approval| approval[:call] },
-                     results, executed:, signal:, spent:, &)
+      answer_results(calls, results, executed:, signal:, spent:, &)
       executed.map(&:first)
     end
 
@@ -901,7 +921,7 @@ module Mistri
     # Provider output is untrusted until the call has resolved to a current
     # tool, passed its one allowed normalization, and satisfied both core and
     # host schema checks. Rejections stay paired in band, while valid siblings
-    # continue through policy and execution.
+    # continue through policy. CallOrder decides which of them then run.
     def prepare_calls(calls, normalize:, signal: nil)
       calls.each_with_object([[], [], []]) do |call, (ordered, valid, rejected)|
         if signal&.aborted?

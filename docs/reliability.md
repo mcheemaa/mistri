@@ -27,7 +27,9 @@ compaction calls made during that invocation.
 
 Failures the model can correct stay in band. Unknown tools, invalid arguments,
 policy blocks, expected tool failures, handler exceptions, and timeouts become
-typed tool results. Valid sibling calls may still execute.
+typed tool results. A call that runs alone and fails holds back the calls after
+it in that turn, see
+[The order of a turn's calls](tool-contracts.md#the-order-of-a-turns-calls).
 
 Built-in provider failures, including exhausted retries and provider response
 limits, finish as `result.errored?`. Configuration and Session contract failures,

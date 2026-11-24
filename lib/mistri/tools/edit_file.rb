@@ -18,7 +18,9 @@ module Mistri
                          "Replace an exact snippet of a document. Copy old_string verbatim from " \
                          "read_file output including whitespace, without line-number prefixes. " \
                          "It must match exactly one place; add surrounding lines to make it " \
-                         "unique, or set replace_all to change every occurrence.",
+                         "unique, or set replace_all to change every occurrence. Several " \
+                         "edits in one turn apply in the order you write them, and if one " \
+                         "fails the ones after it are not run.",
                          eager_input_streaming: true, save_result: false,
                          argument_normalizer: Tools.method(:tolerate),
                          schema: lambda {

@@ -37,7 +37,7 @@ module Mistri
     def tool(deferred, loaded: -> { [] })
       documents = nil
       turn = Mutex.new
-      Tool.define(NAME, DESCRIPTION, schema: lambda {
+      Tool.define(NAME, DESCRIPTION, parallel: true, schema: lambda {
         string :query, "Words that describe what you need to do, or select: followed by " \
                        "the exact names of the tools to load, separated by commas",
                required: true

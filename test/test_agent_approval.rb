@@ -113,7 +113,7 @@ class TestAgentApproval < Minitest::Test
     assert_equal [5], sent
   end
 
-  def test_a_raising_approval_policy_fails_closed_per_call
+  def test_a_raising_approval_policy_fails_closed_and_holds_back_the_call_after_it
     ran = []
     broken = Mistri::Tool.define("broken", "B.", needs_approval: lambda { |_args|
       raise "policy unavailable"
@@ -138,16 +138,17 @@ class TestAgentApproval < Minitest::Test
     result = agent.run("go") { |event| events << event }
 
     assert_predicate result, :completed?
-    assert_equal %i[safe_a safe_b], ran
+    assert_equal %i[safe_a], ran
     answers = agent.session.messages.select(&:tool?)
 
     assert_equal %w[safe_a broken safe_b], answers.map(&:tool_name)
-    assert_equal [false, true, false], answers.map(&:tool_error)
+    assert_equal [false, true, true], answers.map(&:tool_error)
     assert_includes answers[1].text, "approval policy"
+    assert_equal "Not run: the broken call before this one failed.", answers[2].text
     starts = events.select { |event| event.type == :tool_started }.map(&:tool_call)
     results = events.select { |event| event.type == :tool_result }.map(&:tool_call)
 
-    assert_equal %w[safe_a safe_b], starts.map(&:name)
+    assert_equal %w[safe_a], starts.map(&:name)
     assert_equal %w[safe_a broken safe_b], results.map(&:name)
     replay = provider.requests.last[:messages].select(&:tool?)
 
