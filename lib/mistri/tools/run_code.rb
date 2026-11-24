@@ -36,15 +36,25 @@ module Mistri
                   schema: lambda {
                     string :code, "JavaScript, the body of an async function", required: true
                   }) do |args, context|
-        session = context&.session
-        known = session ? session.code_documents : {}
-        run = CodeRun.new(known.dup, 0, 0)
-        asked = ->(operation, payload) { host.call(operation, payload, context, run) }
-        code_result(sandbox.run(args["code"].to_s, host: asked))
+        remembering(context&.session) do |run|
+          asked = ->(operation, payload) { host.call(operation, payload, context, run) }
+          code_result(sandbox.run(args["code"].to_s, host: asked))
+        end
       rescue Error => e
         ToolResult.new(content: "The code did not finish: #{e.message}", error: true)
+      end
+    end
+
+    # A run starts from the versions the session holds and leaves the ones it
+    # learned there, also when the code fails or is stopped.
+    def remembering(session)
+      known = session ? session.code_documents : {}
+      run = CodeRun.new(known.dup, 0, 0)
+      begin
+        yield run
       ensure
-        session.remember_code_documents(learned(run.seen, known)) if run && session
+        learned = run.seen.reject { |path, version| known[path] == version }
+        session&.remember_code_documents(learned.to_a)
       end
     end
 
@@ -88,10 +98,6 @@ module Mistri
     def remember(seen, path, content)
       seen.delete(path)
       seen[path] = version(content)
-    end
-
-    def learned(seen, known)
-      seen.reject { |path, version| known[path] == version }.to_a
     end
 
     # The version code last read or wrote stands in for if_version, so a write
@@ -150,6 +156,6 @@ module Mistri
     end
 
     private_class_method :code_result, :read_from_code, :write_from_code, :delete_from_code,
-                         :refuse_read_only, :refuse_over_budget, :remember, :learned
+                         :refuse_read_only, :refuse_over_budget, :remember, :remembering
   end
 end
