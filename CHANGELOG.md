@@ -11,9 +11,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   with `parallel: true`, and marked calls that sit next to each other run
   together. When a call that runs alone fails, is refused or is blocked, the
   calls after it are not run and each answers `Not run: ...`. A call that
-  waits for approval holds back the calls after it, where every call after it
-  used to run at once, and a call that needs approval waits with it unless a
-  call that is not marked and needs no approval comes between them.
+  waits for approval holds back the calls after it that are not marked, where
+  every call after it used to run at once. A call that needs approval waits
+  with it, unless a call that is not marked and needs no approval comes
+  between them.
   `read_file`, `grep`, `list_files`, `find_in_file`, `read_memory`, the skill
   reader, tool search, `spawn_agent` and a named sub-agent are marked.
   `MCP.tools` marks a tool whose server lists it with `readOnlyHint: true`,

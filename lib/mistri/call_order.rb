@@ -6,11 +6,12 @@ module Mistri
   # together; any other call is a step alone, after everything before it.
   #
   # A call that runs alone and does not take effect holds back the rest of
-  # the turn, because a later call may rely on it. A call that waits for a
-  # person holds back the rest as well: a read written after it would return
-  # what was there before it. A call that needs approval waits with it, so a
-  # person sees both, until a held or refused call that is not marked comes
-  # between them: the later one may rely on that call.
+  # the turn, because a later call may rely on it. After a failure nothing
+  # more runs. After a call that waits for a person, the model has no next
+  # turn until that person acts, so marked calls still run and only a call
+  # that changes state is held back. A call that needs approval waits with
+  # the first, so a person sees both, until a held or refused call that is
+  # not marked comes between them: the later one may rely on that call.
   class CallOrder
     FAILED = "Not run: the %<name>s call before this one failed."
     WAITING = "Not run: the %<name>s call before this one waits for a person's approval. " \
@@ -75,16 +76,16 @@ module Mistri
     end
 
     def free(call)
+      return @step << call if parallel?(call) && !failed?
       return hold_back(call) if @held
-      return @step << call if parallel?(call)
 
       alone(call)
     end
 
-    # A later call that needs approval may rely on a call that is not marked,
-    # so none waits once one was held back.
+    # A later call that needs approval may rely on a call that was held
+    # back, so none waits once one was.
     def hold_back(call)
-      @closed ||= !parallel?(call)
+      @closed = true
       skip(call)
     end
 

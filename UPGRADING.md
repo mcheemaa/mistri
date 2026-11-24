@@ -26,12 +26,13 @@ runs alone, in its place, unless it is marked.
   was blocked is no longer run. It answers `Not run: ...`, and the model sends
   it again.
 - A call written after a call that waits for approval is no longer run before
-  the decision, whether it is marked or not. One that needs approval itself
-  waits with it, unless a call that is not marked and needs no approval comes
+  the decision, unless it is marked. A marked call still runs, and it does not
+  see what the waiting call will change. One that needs approval itself waits
+  with it, unless a call that is not marked and needs no approval comes
   between them. Before, every such call ran at once. For a Gemini turn whose
   calls carry no IDs, a call that needs approval does not wait when a later
-  call of the same name is held back: it answers with an error, and the model
-  sends the calls again.
+  call of the same name is answered before it: it answers with an error, and
+  the model sends the calls again.
 - `MCP.tools` marks a tool that its server lists with `readOnlyHint: true`.
   Pass `parallel: false` for a server whose hints you do not trust, or a hash
   by remote name for single tools, such as a tool that only waits.

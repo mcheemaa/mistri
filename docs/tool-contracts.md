@@ -107,13 +107,13 @@ already passed its checks and `before_tool`, and it never reaches `after_tool`.
 Whether a call took effect is judged on what its handler returned, before
 `after_tool`, so a hook that turns a result into an error holds back nothing.
 
-When a call waits for approval, the calls before it have run, and no call
-after it runs before the decision. A later call that needs approval waits with
-it, so a person sees them together. Any other call gets `Not run: the
-send_invite call before this one waits for a person's approval. Send this call
-again once it is decided.` That holds for a marked call too: a read written
-after a write that waits would return what was there before the write. Once a
-call that is not marked has been held back, a later call that needs approval
+When a call waits for approval, the calls before it have run. After it, a
+marked call still runs. It does not see what the waiting call will change: a
+read written after a write that waits returns what was there before the write.
+A later call that needs approval waits with it, so a person sees them
+together. Any other call gets `Not run: the send_invite call before this one
+waits for a person's approval. Send this call again once it is decided.` Once
+a call that is not marked has been held back, a later call that needs approval
 is held back as well, because it may rely on that call. A call after a refused
 or blocked call that is not marked gets the failure text instead. On `resume`
 the approved calls run in the order written, and one that fails holds back the
