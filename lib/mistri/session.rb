@@ -205,7 +205,7 @@ module Mistri
     # document only at the version found here.
     def code_documents
       held = window
-      Log.owned(versions_in(held.entries, carried(held).fetch("code_documents", [])))
+      Log.owned(versions_in(held.entries, carried(held)["code_documents"]))
     end
 
     # What one run of code learned: pairs of a path and the version of the
@@ -261,16 +261,20 @@ module Mistri
                   "reported" => state.fetch("reported", []) | reports_in(before),
                   "approvals" => state.fetch("approvals", []) | legacy_approvals_in(before),
                   "loaded" => (state.fetch("loaded", []) | loads_in(before)) - loads_in(kept),
-                  "code_documents" => versions_in(before, state.fetch("code_documents", [])).to_a)
+                  "code_documents" => versions_in(before, state["code_documents"]).to_a)
     end
 
     # Pairs and not an object, because a store may reorder the keys of one.
-    def versions_in(entries, known)
-      versions = known.to_h
-      entries.each do |entry|
-        next unless entry["type"] == "code_documents"
+    # What is not a pair of two strings is passed over: a document with no
+    # version here is refused, never written.
+    def versions_in(entries, carried)
+      lists = entries.select { |entry| entry["type"] == "code_documents" }
+                     .map { |entry| entry["versions"] }
+      versions = {}
+      [carried, *lists].grep(Array).each do |pairs|
+        pairs.each do |path, version|
+          next unless path.is_a?(String) && version.is_a?(String)
 
-        entry["versions"].to_a.each do |path, version|
           versions.delete(path)
           versions[path] = version
         end

@@ -501,9 +501,9 @@ What the code has:
   workspace that tool is bound to, so the agent needs that tool. A read returns
   the whole document, and of a document that is not text it is an error the
   code can catch. A write replaces a document only when the code has read or
-  written it, in this run or an earlier one of the session, and it has not
-  changed since. `scratchpad/tool-results/` stays read-only. Where a document
-  tool is the host's own, code calls it as a tool, as in
+  written it through `files`, in this run or an earlier one of the session, and
+  it has not changed since. `scratchpad/tool-results/` stays read-only. Where a
+  document tool is the host's own, code calls it as a tool, as in
   `await tools.write_file({ path, content })`.
 - `await tools.NAME(arguments)` for every other tool of the agent. It returns
   the result's text, and a failed result is thrown as an error. The built-in
@@ -535,9 +535,12 @@ What code read or wrote is kept in the session, so the rule for a write holds
 from one run to the next, after a restart and after a compaction. A run whose
 code read or wrote a document at a version the session does not hold yet
 appends one `code_documents` entry when it ends, with the path and the version
-of each. A session keeps the newest 1,000 documents, and a checkpoint carries
-them. `Session#code_documents` returns them. A document that fell out of the
-1,000 is refused until the code reads it again. So is one that another hand
+of each. A read counts once the code has received the document: one that
+`after_tool` refused or rewrote does not. A session keeps 1,000 documents, the
+ones whose version it learned last, and a checkpoint carries them. A read at
+the version the session already holds does not make a document newer.
+`Session#code_documents` returns them. A document that fell out of the 1,000
+is refused until the code reads it again. So is one that another hand
 changed since: another agent, a person, or the model's own `write_file` or
 `edit_file`. So is a document written by a run that the process did not
 finish, because that run left no entry. A read under

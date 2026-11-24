@@ -10,9 +10,10 @@ module Mistri
                "up or join data without reading the data into the conversation. In the code: " \
                "files.read(path) returns the whole text of a document as a string; " \
                "files.write(path, text) writes one; files.list(prefix) returns the paths under " \
-               "a folder; files.delete(path) deletes one. A write replaces a document only " \
-               "if your code has read or written it, in this call or an earlier one, and it " \
-               "has not changed since. await tools.NAME(arguments) calls " \
+               "a folder; files.delete(path) deletes one. files.write replaces a document " \
+               "only if your code read it with files.read or wrote it with files.write, in " \
+               "this call or an earlier one, and it has not changed since. " \
+               "await tools.NAME(arguments) calls " \
                "one of your other tools with the arguments it takes and returns its result as " \
                "a string, or throws an error when the tool fails. Standard JavaScript is there " \
                "(JSON, RegExp, Math, Date, Map, Set). There is no network, no Node.js, no " \
@@ -76,7 +77,7 @@ module Mistri
       raise Error, unusable.content if unusable
 
       case operation
-      when "read" then read_from_code(workspace, path, run.seen)
+      when "read" then read_from_code(workspace, path)
       when "list"
         paths = workspace.list(payload["prefix"])
         [paths, paths.join("\n")]
@@ -85,13 +86,18 @@ module Mistri
       end
     end
 
-    def read_from_code(workspace, path, seen)
+    def read_from_code(workspace, path)
       content = workspace.read(path)
       raise Error, "No document at #{path.inspect}" if content.nil?
       raise Error, "#{path} is not text, so code cannot read it" unless content.valid_encoding?
 
-      remember(seen, path, content) unless read_only(path)
       [content, "Read #{path} (#{content.bytesize} bytes)"]
+    end
+
+    # A read counts once the code has received the document. A host's hook
+    # can refuse a read or rewrite it, so the agent says when that is.
+    def read_by_code(run, path, content)
+      remember(run.seen, path, content) unless read_only(path)
     end
 
     # The newest last, so a table that is full gives up its oldest.
@@ -113,8 +119,8 @@ module Mistri
                 end
       if written.is_a?(StaleWrite)
         raise Error, "#{path} holds a document your code has not read or written, or one " \
-                     "that changed since. Nothing was written. Read it with files.read, " \
-                     "then write it."
+                     "that changed since. Nothing was written. Read it with files.read and " \
+                     "build the new text from what it holds now."
       end
 
       run.written += written.bytesize
