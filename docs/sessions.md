@@ -250,9 +250,8 @@ call = result.pending.first
 session_id = agent.session.id
 ```
 
-The handler has not run. Of the calls written after it in that turn, a marked
-one has run, one that needs approval waits too, and any other answers with an
-error, see
+The handler has not run. A marked call written after it in that turn may have
+run, and the others wait with it or answer with an error, see
 [The order of a turn's calls](tool-contracts.md#the-order-of-a-turns-calls).
 Persist or route `session_id` and `call.id` in the host's own UI. A decision
 needs only a store and Session:

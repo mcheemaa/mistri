@@ -131,22 +131,22 @@ class TestCallOrder < Minitest::Test
     ran = []
     tools = [logging("lookup", ran), logging("send", ran, needs_approval: true),
              logging("read", ran, parallel: true), logging("pay", ran, needs_approval: true),
-             logging("note", ran), logging("ship", ran, needs_approval: true)]
+             logging("note", ran), logging("check", ran, parallel: true),
+             logging("ship", ran, needs_approval: true)]
     provider = Mistri::Providers::Fake.new(
-      turns: [turn("lookup", "send", "read", "pay", "note", "ship")]
+      turns: [turn("lookup", "send", "read", "pay", "note", "check", "ship")]
     )
     agent = Mistri::Agent.new(provider:, tools:)
 
     result = agent.run("go")
-    answers = agent.session.messages.select(&:tool?)
+    held = agent.session.messages.select { |answer| answer.tool? && answer.tool_error? }
 
     assert_predicate result, :awaiting_approval?
     assert_equal %w[send pay], result.pending.map(&:name)
-    assert_equal %w[lookup read], ran
-    assert_equal %w[lookup read note ship], answers.map(&:tool_name)
+    assert_equal %w[lookup read check], ran
+    assert_equal %w[note ship], held.map(&:tool_name)
     assert_equal ["Not run: the send call before this one waits for a person's approval. " \
-                  "Send this call again once it is decided."] * 2, answers.last(2).map(&:text)
-    assert(answers.last(2).all?(&:tool_error?))
+                  "Send this call again once it is decided."] * 2, held.map(&:text)
   end
 
   def test_decided_calls_settle_in_the_order_written_and_only_a_failure_stops_the_rest

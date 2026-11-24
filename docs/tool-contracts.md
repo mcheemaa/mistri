@@ -70,7 +70,8 @@ do not run again: the human approved the already prepared arguments.
 ## The order of a turn's calls
 
 A model can send several calls in one turn. They take effect in the order it
-wrote them, so a read written after a write sees the write.
+wrote them, so a read written after a write sees the write. A write that waits
+for approval is the exception, see below.
 
 A tool runs alone, in its place, unless it is marked `parallel: true`:
 
@@ -83,7 +84,8 @@ end
 
 - Marked calls that sit next to each other run together, on up to
   `max_concurrency` threads. Any other call waits for the calls before it, and
-  the calls after it wait for it.
+  the calls after it wait for it. A call that is not run does not separate the
+  marked calls around it.
 - Mark a tool that only reads, or that starts work of its own. Its result must
   not depend on which of its marked neighbours finishes first, and it must
   change nothing that another call of the turn reads.
