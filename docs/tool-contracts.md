@@ -87,7 +87,12 @@ end
 - Mark a tool that only reads, or that starts work of its own. Its result must
   not depend on which of its marked neighbours finishes first, and it must
   change nothing that another call of the turn reads.
-- A call that runs alone runs on the thread that called the agent.
+- A call that runs by itself, marked or not, runs on the thread that called
+  the agent. Inside a Rails job or request it is part of that unit of work: it
+  sees the `Current` attributes set there, and the executor does not report
+  an error it raises. Calls that run together run on worker threads, each in
+  an executor of its own, so a marked tool cannot rely on what the calling
+  thread has set.
 
 When a call that runs alone does not take effect, the calls after it are not
 run. That covers a handler that raised or timed out, a result with
@@ -95,7 +100,8 @@ run. That covers a handler that raised or timed out, a result with
 an approval rule that raised. Each call after it gets the error result
 `Not run: the edit_page call before this one failed.`, and the model sends it
 again if it still wants it. A call refused for its own arguments keeps its own
-error. A marked call that fails holds back nothing.
+error. A marked call that fails holds back nothing. A call that is not run has
+already passed its checks and `before_tool`, and it never reaches `after_tool`.
 
 When a call waits for approval, the calls before it have run. After it, a
 marked call still runs, a call that needs approval waits with it, and any other
@@ -105,10 +111,11 @@ calls run in the order written, and one that fails holds back the ones after
 it. A denied call holds back nothing.
 
 The gem's own tools are marked where they only read or start a worker:
-`read_file`, `grep`, `list_files`, `read_memory`, the skill reader, tool
-search, `spawn_agent` and a named sub-agent. `write_file`, `edit_file`,
-`delete_file`, `update_memory`, `run_code` and the four worker console tools
-run alone. A call that `run_code` makes from code runs when the code makes it.
+`read_file`, `grep`, `list_files`, `find_in_file`, `read_memory`, the skill
+reader, tool search, `spawn_agent` and a named sub-agent. `write_file`,
+`edit_file`, `delete_file`, `update_memory`, `run_code` and the four worker
+console tools run alone. A call that `run_code` makes from code runs when the
+code makes it.
 
 ## Schema forms
 

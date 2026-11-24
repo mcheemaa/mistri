@@ -66,6 +66,7 @@ class TestCallOrder < Minitest::Test
 
   def test_a_failed_call_stops_the_calls_after_it
     ran = []
+    screened = []
     hooked = []
     started = []
     tools = [logging("first", ran), Mistri::Tool.define("broken", "Raises.") { raise "no" },
@@ -76,12 +77,17 @@ class TestCallOrder < Minitest::Test
       hooked << call.name
       nil
     end
-    agent = Mistri::Agent.new(provider:, tools:, after_tool:)
+    before_tool = lambda do |call, _context|
+      screened << call.name
+      nil
+    end
+    agent = Mistri::Agent.new(provider:, tools:, before_tool:, after_tool:)
 
     agent.run("go") { |event| started << event.tool_call.name if event.type == :tool_started }
     answers = agent.session.messages.select(&:tool?)
 
     assert_equal %w[first], ran
+    assert_equal %w[first broken later reader], screened
     assert_equal %w[first broken], started
     assert_equal %w[first broken], hooked
     assert_equal [false, true, true, true], answers.map(&:tool_error)
@@ -107,14 +113,18 @@ class TestCallOrder < Minitest::Test
     assert_empty ran
   end
 
-  def test_a_failed_marked_call_stops_nothing
+  def test_a_marked_call_that_fails_or_is_refused_stops_nothing
     ran = []
     search = Mistri::Tool.define("search", "Raises.", parallel: true) { raise "offline" }
+    lookup = Mistri::Tool.define("lookup", "Needs a query.",
+                                 parallel: true,
+                                 schema: -> { string :query, "Query", required: true }) { "ok" }
 
-    answers = answers_of(turn("search", "write"), [search, logging("write", ran)])
+    answers = answers_of(turn("search", "write", "lookup", "write"),
+                         [search, lookup, logging("write", ran)])
 
-    assert_equal %w[write], ran
-    assert_equal [true, false], answers.map(&:tool_error)
+    assert_equal %w[write write], ran
+    assert_equal [true, false, true, false], answers.map(&:tool_error)
   end
 
   def test_a_call_that_waits_for_a_person_holds_back_only_what_changes_state
@@ -137,25 +147,30 @@ class TestCallOrder < Minitest::Test
     assert_predicate answers.last, :tool_error?
   end
 
-  def test_approved_calls_run_in_the_order_written_and_a_failure_stops_the_rest
+  def test_decided_calls_settle_in_the_order_written_and_only_a_failure_stops_the_rest
     ran = []
     failing = Mistri::Tool.define("charge", "Raises.", needs_approval: true) do
       ran << "charge"
       raise "declined"
     end
-    tools = [logging("reserve", ran, needs_approval: true), failing,
+    tools = [logging("reserve", ran, needs_approval: true),
+             logging("insure", ran, needs_approval: true), failing,
              logging("ship", ran, needs_approval: true)]
-    provider = Mistri::Providers::Fake.new(turns: [turn("reserve", "charge", "ship"),
+    provider = Mistri::Providers::Fake.new(turns: [turn("reserve", "insure", "charge", "ship"),
                                                    { text: "done" }])
     agent = Mistri::Agent.new(provider:, tools:)
-    agent.run("go").pending.each { |call| agent.session.approve(call.id) }
+    agent.run("go").pending.each do |call|
+      call.name == "insure" ? agent.session.deny(call.id) : agent.session.approve(call.id)
+    end
 
     agent.resume
-    answers = agent.session.messages.select(&:tool?)
+    answers = agent.session.messages.select(&:tool?).to_h { |answer| [answer.tool_name, answer] }
 
     assert_equal %w[reserve charge], ran
-    assert_equal [false, true, true], answers.map(&:tool_error)
-    assert_equal "Not run: the charge call before this one failed.", answers.last.text
+    refute_predicate answers.fetch("reserve"), :tool_error?
+    assert_includes answers.fetch("charge").text, "declined"
+    assert_equal "Not run: the charge call before this one failed.", answers.fetch("ship").text
+    refute_includes answers.fetch("insure").text, "Not run"
   end
 
   def test_a_gated_call_after_a_failed_call_asks_no_one

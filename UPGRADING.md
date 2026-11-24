@@ -28,8 +28,10 @@ runs alone, in its place, unless it is marked.
 - `MCP.tools` marks a tool that its server lists with `readOnlyHint: true`.
   Pass `parallel: false` for a server whose hints you do not trust, or a hash
   by remote name for single tools, such as a tool that only waits.
-- A call that runs alone now runs on the thread that called the agent, not on
-  a thread of its own.
+- A call that runs by itself now runs on the thread that called the agent,
+  not on a thread of its own. Inside a Rails job or request it sees the
+  `Current` attributes set there, and an error it raises is no longer
+  reported to `Rails.error` on its way to becoming a tool result.
 - A host that set `max_concurrency: 1` to get order can drop it.
 
 ### A tool's image reaches GPT and Gemini models

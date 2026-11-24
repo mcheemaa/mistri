@@ -16,7 +16,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   `grep`, `list_files`, `find_in_file`, `read_memory`, the skill reader, tool
   search, `spawn_agent` and a named sub-agent are marked. `MCP.tools` marks a
   tool whose server lists it with `readOnlyHint: true`, and takes `parallel:`
-  to overrule that. A call that runs alone runs on the calling thread. The
+  to overrule that. A call that runs by itself runs on the calling thread. The
   description of `edit_file` says that edits in one turn apply in order.
 - A GPT or Gemini model receives an image a tool returns. The OpenAI and
   Gemini serializers sent the line `[1 non-text block(s) omitted]` in its

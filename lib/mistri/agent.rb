@@ -907,7 +907,7 @@ module Mistri
     # Provider output is untrusted until the call has resolved to a current
     # tool, passed its one allowed normalization, and satisfied both core and
     # host schema checks. Rejections stay paired in band, while valid siblings
-    # continue through policy and execution.
+    # continue through policy. CallOrder decides which of them then run.
     def prepare_calls(calls, normalize:, signal: nil)
       calls.each_with_object([[], [], []]) do |call, (ordered, valid, rejected)|
         if signal&.aborted?
