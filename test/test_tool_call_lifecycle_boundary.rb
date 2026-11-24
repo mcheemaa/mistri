@@ -156,11 +156,12 @@ class TestToolCallLifecycleBoundary < Minitest::Test # rubocop:disable Metrics/C
     results = agent.session.messages.select(&:tool?)
 
     assert_predicate result, :completed?
-    assert_equal [false], ran
+    assert_empty ran
     assert_empty agent.session.open_approvals
     assert_equal %w[risk safe], results.map(&:tool_call_id)
     assert_predicate results.first, :tool_error?
     assert_includes results.first.text, "retry those calls separately"
+    assert_equal "Not run: the write call before this one failed.", results.last.text
   end
 
   def test_gemini_no_id_calls_allow_a_final_same_name_approval
@@ -185,8 +186,9 @@ class TestToolCallLifecycleBoundary < Minitest::Test # rubocop:disable Metrics/C
 
     state = exercise_allowed_gemini_approval(calls)
 
-    assert_equal [false, true], state[:ran]
+    assert_equal [true], state[:ran]
     assert_equal %w[safe risk], state[:results].map(&:tool_call_id)
+    assert_includes state[:results].first.text, "waits for a person's approval"
   end
 
   def test_abort_during_each_pre_execution_phase_interrupts_every_call

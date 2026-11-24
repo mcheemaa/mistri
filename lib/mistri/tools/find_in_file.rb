@@ -8,7 +8,7 @@ module Mistri
       Tool.define("find_in_file",
                   "Find text in a document. Returns line-numbered matches with context, " \
                   "so you can locate a region without reading the whole document.",
-                  save_result: false,
+                  save_result: false, parallel: true,
                   schema: lambda {
                     string :path, "Document path", required: true
                     string :query, "Text to find (plain substring)", required: true

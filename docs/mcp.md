@@ -221,6 +221,20 @@ such a server should raise from the block.
 `needs_approval:` gates every bridged tool. `gates:` sets policy by remote name
 and overrides the shared default.
 
+A bridged tool is marked `parallel` when its server lists it with
+`readOnlyHint: true`, so it runs beside its marked neighbours in a turn. Any
+other tool runs alone, in the order the model wrote, see
+[The order of a turn's calls](tool-contracts.md#the-order-of-a-turns-calls).
+The hint is the server's own word and nothing checks it. `parallel: false`
+runs every tool of the server alone, `parallel: true` marks every tool, and a
+hash by remote name sets single tools and leaves the rest to their hint. A
+tool that only waits is read-only and still has to come before the call after
+it, so set it to false:
+
+```ruby
+Mistri::MCP.tools(client, prefix: "browser", parallel: { "wait_for" => false })
+```
+
 `deferred: true` keeps a server's tools out of the model's sight until a search
 loads them, so the definitions of a server with a long tool list are left out
 of every request until one of its tools is needed. See

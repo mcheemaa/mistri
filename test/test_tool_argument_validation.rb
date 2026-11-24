@@ -185,7 +185,7 @@ class TestToolArgumentValidation < Minitest::Test
     assert_includes answers.last.text, "Unknown tool"
   end
 
-  def test_mixed_valid_and_invalid_calls_keep_model_order
+  def test_a_refused_call_keeps_its_place_and_holds_back_the_call_after_it
     ran = []
     schema = -> { integer :count, "Count", required: true }
     copy_arguments = lambda(&:merge)
@@ -207,12 +207,13 @@ class TestToolArgumentValidation < Minitest::Test
 
     agent.run("go")
 
-    assert_equal %w[first last], ran
+    assert_equal %w[first], ran
     answers = agent.session.messages.select(&:tool?)
 
     assert_equal %w[first middle last], answers.map(&:tool_name)
-    assert_equal ["first", true, "last"],
+    assert_equal ["first", true, "Not run: the middle call before this one failed."],
                  [answers[0].text, answers[1].tool_error?, answers[2].text]
+    assert_includes answers[1].text, "Invalid arguments"
   end
 
   def test_custom_validator_supplements_core_and_errors_are_bounded

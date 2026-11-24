@@ -16,7 +16,7 @@ module Mistri
                          "further. A very long line is shown cut, with the offset to read on " \
                          "from with unit \"characters\". The first line states the document's " \
                          "version, which write_file takes as if_version.",
-                         save_result: false,
+                         save_result: false, parallel: true,
                          schema: lambda {
                            string :path, "Document path", required: true
                            integer :offset, "The line to start at, from 1. With unit characters, " \

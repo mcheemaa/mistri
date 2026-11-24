@@ -38,7 +38,7 @@ module Mistri
                    needs_approval: false, ends_turn: false, timeout: nil, deferred: false,
                    instructions: nil, argument_normalizer: nil, argument_validator: nil,
                    complete_argument_validator: nil, save_result: true, result_limit: nil,
-                   &handler)
+                   parallel: false, &handler)
       raise ArgumentError, "tool #{name.inspect} needs a handler block" unless handler
       unless argument_normalizer.nil? || argument_normalizer.respond_to?(:call)
         raise ArgumentError, "argument_normalizer must be callable"
@@ -67,6 +67,7 @@ module Mistri
       @deferred = deferred
       @instructions = instructions
       @save_result = save_result
+      @parallel = parallel == true
       @result_limit = checked_limit(result_limit)
       @argument_normalizer = argument_normalizer
       @argument_validator = argument_validator
@@ -137,6 +138,15 @@ module Mistri
     # so reading a saved result cannot save another.
     def save_result?
       @save_result
+    end
+
+    # The calls of a turn take effect in the order the model wrote them, so a
+    # tool runs alone, after the calls before it. A parallel tool may run at
+    # the same time as the parallel calls next to it: its result does not
+    # depend on which of them finishes first, and it changes nothing that
+    # another call of the turn reads.
+    def parallel?
+      @parallel
     end
 
     # A deferred tool is not shown to the model until a tool result loads it,

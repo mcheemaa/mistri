@@ -37,7 +37,7 @@ module Mistri
 
     def tool
       spawner = self
-      Tool.define("spawn_agent", description, needs_approval: @needs_approval,
+      Tool.define("spawn_agent", description, needs_approval: @needs_approval, parallel: true,
                                               schema: schema) do |args, context|
         spawner.spawn(args, context)
       end

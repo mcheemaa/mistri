@@ -3,10 +3,12 @@
 require "timeout"
 
 module Mistri
-  # Runs a turn's tool calls and returns their results in the order the model
-  # emitted them, regardless of completion order. Independent calls run
-  # concurrently up to max_concurrency; each runs inside the Rails executor
-  # when Rails is present, so ActiveRecord connections return to the pool.
+  # Runs the calls of one step of a turn together and returns their results
+  # in the order the model emitted them, regardless of completion order.
+  # CallOrder decides which calls share a step. Several calls run on up to
+  # max_concurrency threads, and one call runs on the calling thread; each
+  # runs inside the Rails executor when Rails is present, so ActiveRecord
+  # connections return to the pool.
   #
   # A tool that fails becomes an in-band ToolResult with an explicit error
   # fact. An abort never starts a not-yet-started call: it gets an interrupted
@@ -65,8 +67,8 @@ module Mistri
       calls.each_with_index do |call, index|
         queue << [call, index, context.with(result_limit: result_limit_for&.call(call))]
       end
-      workers = max_concurrency.clamp(1, calls.length)
-      Array.new(workers) { worker(queue, results, tools_by_name, context, errors) }.each(&:join)
+      run_queue(queue, results, tools_by_name, context, errors,
+                workers: max_concurrency.clamp(1, calls.length), alone: calls.length == 1)
       unless errors.empty?
         error = errors.pop
         raise EventDelivery.unwrap(error, delivery)
@@ -80,26 +82,35 @@ module Mistri
       end
     end
 
-    def worker(queue, results, tools_by_name, context, errors)
-      Thread.new do
-        loop do
-          break unless errors.empty?
+    # A thread that waits on a worker holds its share of Rails' load lock
+    # while the worker asks for one, which hangs a reload in development. One
+    # call needs no worker.
+    def run_queue(queue, results, tools_by_name, context, errors, workers:, alone:)
+      return drain(queue, results, tools_by_name, context, errors) if alone
 
-          call, index, own = begin
-            queue.pop(true)
-          rescue ThreadError
-            break
-          end
-          if context.signal&.aborted?
-            results[index] = [failure(INTERRUPTED), nil, false]
-            next
-          end
+      Array.new(workers) do
+        Thread.new { drain(queue, results, tools_by_name, context, errors) }
+      end.each(&:join)
+    end
 
-          results[index] = run_one(call, index, results, tools_by_name, own)
+    def drain(queue, results, tools_by_name, context, errors)
+      loop do
+        break unless errors.empty?
+
+        call, index, own = begin
+          queue.pop(true)
+        rescue ThreadError
+          break
         end
-      rescue StandardError => e
-        errors << e
+        if context.signal&.aborted?
+          results[index] = [failure(INTERRUPTED), nil, false]
+          next
+        end
+
+        results[index] = run_one(call, index, results, tools_by_name, own)
       end
+    rescue StandardError => e
+      errors << e
     end
 
     def run_one(call, index, results, tools_by_name, context)

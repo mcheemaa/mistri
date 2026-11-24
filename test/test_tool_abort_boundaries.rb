@@ -52,6 +52,44 @@ class TestToolAbortBoundaries < Minitest::Test
                  agent.session.messages.select(&:tool?).map(&:text)
   end
 
+  def test_a_queued_call_of_one_step_never_starts_after_an_abort
+    signal = Mistri::AbortSignal.new
+    first = Mistri::Tool.define("first", "First.", parallel: true) do
+      signal.abort!(:test)
+      "done"
+    end
+    second = Mistri::Tool.define("second", "Second.", parallel: true) do
+      flunk "queued handler ran"
+    end
+    agent = Mistri::Agent.new(provider: two_call_fake("first", "second"),
+                              tools: [first, second], max_concurrency: 1)
+
+    result = agent.run("go", signal:)
+
+    assert_predicate result, :aborted?
+    assert_equal ["done", Mistri::ToolExecutor::INTERRUPTED],
+                 agent.session.messages.select(&:tool?).map(&:text)
+  end
+
+  def test_an_abort_while_an_approved_call_runs_interrupts_the_approved_call_after_it
+    signal = Mistri::AbortSignal.new
+    first = Mistri::Tool.define("first", "First.", needs_approval: true) do
+      signal.abort!(:test)
+      "done"
+    end
+    second = Mistri::Tool.define("second", "Second.", needs_approval: true) do
+      flunk "handler ran after the abort"
+    end
+    agent = Mistri::Agent.new(provider: two_call_fake("first", "second"), tools: [first, second])
+    agent.run("go").pending.each { |call| agent.session.approve(call.id) }
+
+    result = agent.resume(signal:)
+
+    assert_predicate result, :aborted?
+    assert_equal ["done", Mistri::ToolExecutor::INTERRUPTED],
+                 agent.session.messages.select(&:tool?).map(&:text)
+  end
+
   private
 
   def two_call_fake(*names)

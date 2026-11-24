@@ -59,13 +59,56 @@ A completed model call moves through these phases in order:
 9. The result is [bounded](#large-results), persists and emits `:tool_result`.
 
 Malformed or invalid calls do not reach policy or execution. The model receives
-a bounded error result it can correct, while valid sibling calls in the same
-turn continue. Results settle in the model's call order even when handlers run
-concurrently.
+a bounded error result it can correct. Results settle in the model's call
+order. What a refused call means for the calls after it is under
+[The order of a turn's calls](#the-order-of-a-turns-calls).
 
 An approved call is revalidated against the current tool definition and passes
 through `before_tool` again on `resume`. Its normalizer and approval predicate
 do not run again: the human approved the already prepared arguments.
+
+## The order of a turn's calls
+
+A model can send several calls in one turn. They take effect in the order it
+wrote them, so a read written after a write sees the write.
+
+A tool runs alone, in its place, unless it is marked `parallel: true`:
+
+```ruby
+Mistri::Tool.define("search_orders", "Searches orders.", parallel: true,
+                    schema: -> { string :query, "Search text", required: true }) do |args|
+  Orders.search(args.fetch("query"))
+end
+```
+
+- Marked calls that sit next to each other run together, on up to
+  `max_concurrency` threads. Any other call waits for the calls before it, and
+  the calls after it wait for it.
+- Mark a tool that only reads, or that starts work of its own. Its result must
+  not depend on which of its marked neighbours finishes first, and it must
+  change nothing that another call of the turn reads.
+- A call that runs alone runs on the thread that called the agent.
+
+When a call that runs alone does not take effect, the calls after it are not
+run. That covers a handler that raised or timed out, a result with
+`error: true`, refused arguments, an unknown tool, a `before_tool` block and
+an approval rule that raised. Each call after it gets the error result
+`Not run: the edit_page call before this one failed.`, and the model sends it
+again if it still wants it. A call refused for its own arguments keeps its own
+error. A marked call that fails holds back nothing.
+
+When a call waits for approval, the calls before it have run. After it, a
+marked call still runs, a call that needs approval waits with it, and any other
+call gets `Not run: the send_invite call before this one waits for a person's
+approval. Send this call again once it is decided.` On `resume` the approved
+calls run in the order written, and one that fails holds back the ones after
+it. A denied call holds back nothing.
+
+The gem's own tools are marked where they only read or start a worker:
+`read_file`, `grep`, `list_files`, `read_memory`, the skill reader, tool
+search, `spawn_agent` and a named sub-agent. `write_file`, `edit_file`,
+`delete_file`, `update_memory`, `run_code` and the four worker console tools
+run alone. A call that `run_code` makes from code runs when the code makes it.
 
 ## Schema forms
 

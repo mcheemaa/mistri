@@ -73,7 +73,7 @@ module Mistri
       sub = self
       blurb = "#{@description} Runs as a focused sub-agent with a clean " \
               "context: give it complete instructions, it starts blank."
-      Tool.define(@name, blurb, needs_approval: @gate,
+      Tool.define(@name, blurb, needs_approval: @gate, parallel: true,
                                 schema: lambda {
                                   string :task, "Complete instructions for the sub-agent",
                                          required: true

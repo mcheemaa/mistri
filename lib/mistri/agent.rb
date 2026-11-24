@@ -62,7 +62,6 @@ module Mistri
       @scratchpad = scratchpad
       @documents = documents(files, scratchpad&.workspace)
       @result_limit = result_limit || nil
-      @storing = Mutex.new
       install_tools(with_own_tools(tools, skills, sandbox))
 
       @budget = budget || Budget.new
@@ -316,15 +315,12 @@ module Mistri
     # One run can make hundreds of thousands of calls, and a session reads
     # every entry it holds, so a run stores its first hundred. Every call
     # still emits its events, and only the event carries the result's ui,
-    # which can be a page. Two runs of one turn store from two threads, which
-    # a store that numbers its entries cannot take at once.
+    # which can be a page.
     def store_from_code(run, call, message)
       run.calls += 1
       return if run.calls > MAX_STORED_CODE_CALLS
 
-      @storing.synchronize do
-        @session.append("code_call", "call" => call.to_h, "message" => message.to_h)
-      end
+      @session.append("code_call", "call" => call.to_h, "message" => message.to_h)
     end
 
     def refused_from_code(call, context)
@@ -804,17 +800,23 @@ module Mistri
 
     def complete_tool_batch(source_calls, prepared, batch, signal, provider:, &emit)
       batch = protect_gemini_result_order(prepared, batch) if provider == :gemini
-      invalid, blocked, parked, free, rejected = batch
-      executed = execute(free, signal, among: prepared.length - parked.length, &emit)
+      invalid, blocked, parked, _free, rejected = batch
+      refused = [*invalid, *blocked, *rejected]
+      among = prepared.length - parked.length
+      ran = CallOrder.new(@tools_by_name).run(prepared, refused:, parked:, signal:) do |step|
+        execute(step, signal, among:, &emit)
+      end
+      executed = ran.executed
+      unrun = [*refused, *ran.skipped]
+      parked = ran.parked
       if signal&.aborted?
-        uncommitted = [*invalid, *blocked, *rejected].map(&:first) + parked
+        uncommitted = unrun.map(&:first) + parked
         results = [*executed, *interrupted_results(uncommitted)]
         answer_results(prepared, results, executed:, signal:, &emit)
         return [[], executed_ends_turn?(executed)]
       end
 
-      answer_results(prepared, [*invalid, *blocked, *rejected, *executed],
-                     executed:, signal:, &emit)
+      answer_results(prepared, [*unrun, *executed], executed:, signal:, &emit)
       if signal&.aborted?
         answer_results(prepared, interrupted_results(parked),
                        executed: [], signal:, &emit)
@@ -866,20 +868,24 @@ module Mistri
       )
       return interrupt_settlement(open, approved_calls, denied, signal, &) if signal&.aborted?
 
-      cleared, blocked = screen(valid, signal, &)
+      _cleared, blocked = screen(valid, signal, &)
       return interrupt_settlement(open, approved_calls, denied, signal, &) if signal&.aborted?
 
       spent = stored_for_turn
-      executed = execute(cleared, signal, among: open.length, spent:, &)
       denials = denial_results(denied)
+      calls = open.map { |approval| approval[:call] }
+      ran = CallOrder.new(@tools_by_name)
+                     .run(calls, refused: [*invalid, *blocked], settled: denials, signal:) do |step|
+        execute(step, signal, among: open.length, spent:, &)
+      end
+      executed = ran.executed
+      unrun = [*invalid, *blocked, *ran.skipped]
       results = if signal&.aborted?
-                  uncommitted = [*invalid, *blocked].map(&:first)
-                  [*executed, *interrupted_results(uncommitted), *denials]
+                  [*executed, *interrupted_results(unrun.map(&:first)), *denials]
                 else
-                  [*invalid, *blocked, *executed, *denials]
+                  [*unrun, *executed, *denials]
                 end
-      answer_results(open.map { |approval| approval[:call] },
-                     results, executed:, signal:, spent:, &)
+      answer_results(calls, results, executed:, signal:, spent:, &)
       executed.map(&:first)
     end
 

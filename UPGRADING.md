@@ -13,6 +13,25 @@ test.
 
 Most hosts need no code change. Read the points that apply to you.
 
+### The calls of a turn run in the order written
+
+A tool used to run at the same time as the other calls of its turn. It now
+runs alone, in its place, unless it is marked.
+
+- Mark each tool of yours that only reads:
+  `Mistri::Tool.define(name, description, parallel: true)`. Until then a turn
+  of several of them runs one call at a time. That is slower and never wrong.
+- A call written after a call that failed, was refused or was blocked is no
+  longer run. It answers `Not run: ...`, and the model sends it again.
+- A call written after a call that waits for approval is no longer run, unless
+  it is marked or needs approval itself. Before, it ran at once.
+- `MCP.tools` marks a tool that its server lists with `readOnlyHint: true`.
+  Pass `parallel: false` for a server whose hints you do not trust, or a hash
+  by remote name for single tools, such as a tool that only waits.
+- A call that runs alone now runs on the thread that called the agent, not on
+  a thread of its own.
+- A host that set `max_concurrency: 1` to get order can drop it.
+
 ### A tool's image reaches GPT and Gemini models
 
 A tool result that holds an image used to reach an OpenAI or Gemini model as

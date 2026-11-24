@@ -129,7 +129,8 @@ class TestFileTools < Minitest::Test
              { name: "write_file", arguments: { path: "logo.png", content: "x" } },
              { name: "edit_file",
                arguments: { path: "logo.png", old_string: "PNG", new_string: "" } }]
-    provider = Mistri::Providers::Fake.new(turns: [{ tool_calls: calls }, { text: "done" }])
+    turns = calls.map { |call| { tool_calls: [call] } }
+    provider = Mistri::Providers::Fake.new(turns: [*turns, { text: "done" }])
     agent = Mistri::Agent.new(provider:, files: @workspace)
 
     agent.run("go")

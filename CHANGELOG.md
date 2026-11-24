@@ -5,6 +5,19 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+- The calls of one turn take effect in the order the model wrote them. They
+  ran on up to four threads in any order, so a read could run before the write
+  sent ahead of it. A tool now runs alone, in its place, unless it is defined
+  with `parallel: true`, and marked calls that sit next to each other run
+  together. When a call that runs alone fails, is refused or is blocked, the
+  calls after it are not run and each answers `Not run: ...`. A call that
+  waits for approval holds back the calls after it that are not marked and
+  need no approval, where every call after it used to run at once. `read_file`,
+  `grep`, `list_files`, `find_in_file`, `read_memory`, the skill reader, tool
+  search, `spawn_agent` and a named sub-agent are marked. `MCP.tools` marks a
+  tool whose server lists it with `readOnlyHint: true`, and takes `parallel:`
+  to overrule that. A call that runs alone runs on the calling thread. The
+  description of `edit_file` says that edits in one turn apply in order.
 - A GPT or Gemini model receives an image a tool returns. The OpenAI and
   Gemini serializers sent the line `[1 non-text block(s) omitted]` in its
   place, so only a Claude model ever saw a screenshot its tool took. A result
