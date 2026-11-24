@@ -127,7 +127,7 @@ class TestCallOrder < Minitest::Test
     assert_equal [true, false, true, false], answers.map(&:tool_error)
   end
 
-  def test_a_call_that_waits_for_a_person_holds_back_only_what_changes_state
+  def test_a_call_that_waits_for_a_person_holds_back_the_calls_after_it
     ran = []
     tools = [logging("lookup", ran), logging("send", ran, needs_approval: true),
              logging("read", ran, parallel: true), logging("pay", ran, needs_approval: true),
@@ -143,10 +143,28 @@ class TestCallOrder < Minitest::Test
 
     assert_predicate result, :awaiting_approval?
     assert_equal %w[send pay], result.pending.map(&:name)
-    assert_equal %w[lookup read check], ran
-    assert_equal %w[note ship], held.map(&:tool_name)
+    assert_equal %w[lookup], ran
+    assert_equal %w[read note check ship], held.map(&:tool_name)
     assert_equal ["Not run: the send call before this one waits for a person's approval. " \
-                  "Send this call again once it is decided."] * 2, held.map(&:text)
+                  "Send this call again once it is decided."] * 4, held.map(&:text)
+  end
+
+  def test_a_read_written_after_a_write_that_waits_does_not_run_before_it
+    document = +"old"
+    write = Mistri::Tool.define("write", "Writes.", needs_approval: true) do
+      document.replace("new")
+      "written"
+    end
+    read = Mistri::Tool.define("read", "Reads.", parallel: true) { document.dup }
+    provider = Mistri::Providers::Fake.new(turns: [turn("write", "read"), { text: "done" }])
+    agent = Mistri::Agent.new(provider:, tools: [write, read])
+    agent.run("go").pending.each { |call| agent.session.approve(call.id) }
+
+    agent.resume
+    answers = agent.session.messages.select(&:tool?).to_h { |answer| [answer.tool_name, answer] }
+
+    assert_equal "written", answers.fetch("write").text
+    assert_includes answers.fetch("read").text, "Not run: the write call before this one waits"
   end
 
   def test_decided_calls_settle_in_the_order_written_and_only_a_failure_stops_the_rest
