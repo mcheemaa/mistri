@@ -5,6 +5,17 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+- A GPT or Gemini model receives an image a tool returns. The OpenAI and
+  Gemini serializers sent the line `[1 non-text block(s) omitted]` in its
+  place, so only a Claude model ever saw a screenshot its tool took. A result
+  with an image is now sent to OpenAI as an array of text and image parts, and
+  to Gemini with the image nested in the function response. A result of text
+  alone is sent as before. Every request that carries such a result now costs
+  the image's tokens on these providers, and a provider that refuses an image
+  refuses the request.
+- A failed tool result that holds an image no longer ends an Anthropic
+  request. The API takes text alone in a failed `tool_result`, so the image
+  is sent after the results of the turn, behind a line that names the tool.
 - The `:retry` event's note and the run log name what failed, as in
   "attempt 1 failed (OverloadedError 529); retrying in 0.9s".
 - A host's documents and the scratchpad are one path space, and workers share

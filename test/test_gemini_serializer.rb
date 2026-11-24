@@ -127,6 +127,61 @@ class TestGeminiSerializer < Minitest::Test
     assert_equal({ "error" => "unavailable" }, response)
   end
 
+  def test_a_tool_result_with_an_image_nests_it_in_the_function_response
+    calls = [Mistri::ToolCall.new(id: "c1", name: "screenshot", arguments: {}),
+             Mistri::ToolCall.new(id: "c2", name: "search", arguments: {})]
+    image = Mistri::Content::Image.from_bytes("png!", mime_type: "image/png")
+    history = [Mistri::Message.assistant(content: calls, provider: :gemini),
+               Mistri::Message.tool(content: ["The page:", image], tool_call_id: "c1",
+                                    tool_name: "screenshot"),
+               Mistri::Message.tool(content: "found", tool_call_id: "c2", tool_name: "search")]
+
+    parts = SERIALIZER.contents(history).last[:parts]
+
+    assert_equal(
+      [{ functionResponse: {
+        name: "screenshot", response: { "result" => "The page:" },
+        parts: [{ inlineData: { mimeType: "image/png", data: image.data } }]
+      } },
+       { functionResponse: { name: "search", response: { "result" => "found" } } }],
+      parts
+    )
+  end
+
+  def test_a_tool_result_of_an_image_alone_has_an_empty_result_beside_its_part
+    call = Mistri::ToolCall.new(id: "c1", name: "screenshot", arguments: {})
+    image = Mistri::Content::Image.from_bytes("png!", mime_type: "image/png")
+    history = [Mistri::Message.assistant(content: [call], provider: :gemini),
+               Mistri::Message.tool(content: [image], tool_call_id: "c1", tool_name: "screenshot")]
+
+    response = SERIALIZER.contents(history).last[:parts].first[:functionResponse]
+
+    assert_equal({ "result" => "" }, response[:response])
+    assert_equal [{ inlineData: { mimeType: "image/png", data: image.data } }], response[:parts]
+  end
+
+  def test_each_foreign_tool_result_keeps_its_image_after_its_own_text
+    calls = [Mistri::ToolCall.new(id: "f1", name: "desktop", arguments: {}),
+             Mistri::ToolCall.new(id: "f2", name: "phone", arguments: {})]
+    wide = Mistri::Content::Image.from_bytes("wide!", mime_type: "image/png")
+    narrow = Mistri::Content::Image.from_bytes("narrow!", mime_type: "image/jpeg")
+    history = [Mistri::Message.assistant(content: calls, provider: :openai),
+               Mistri::Message.tool(content: ["Wide:", wide], tool_call_id: "f1",
+                                    tool_name: "desktop"),
+               Mistri::Message.tool(content: ["Narrow:", narrow], tool_call_id: "f2",
+                                    tool_name: "phone")]
+
+    parts = SERIALIZER.contents(history).last[:parts]
+
+    assert_equal(
+      [{ text: 'Tool "desktop" result (call "f1"): Wide:' },
+       { inlineData: { mimeType: "image/png", data: wide.data } },
+       { text: 'Tool "phone" result (call "f2"): Narrow:' },
+       { inlineData: { mimeType: "image/jpeg", data: narrow.data } }],
+      parts
+    )
+  end
+
   def test_an_unknown_call_origin_projects_consistently_as_text
     call = Mistri::ToolCall.new(id: "legacy", name: "lookup", arguments: {})
     assistant = Mistri::Message.assistant(content: [call], provider: nil)

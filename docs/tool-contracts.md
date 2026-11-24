@@ -352,10 +352,30 @@ With a scratchpad a lower limit costs little, because the model can still reach
 the whole. `Mistri::ResultLimit.new(bytes: 8_000)` keeps results of middle
 size out of every later request.
 
-Non-text tool-result content remains provider-neutral in the Session. Anthropic
-can receive image blocks in a tool result. The current OpenAI and Gemini
-function-result serializers have no such encoding and send an explicit
-non-text-omission marker alongside the text instead.
+A result can hold images beside its text, and every provider sends them to the
+model:
+
+```ruby
+Mistri::Tool.define("screenshot", "Takes a picture of the page.") do
+  ["The page at 1280 pixels wide.",
+   Mistri::Content::Image.from_bytes(Browser.screenshot, mime_type: "image/png")]
+end
+```
+
+The session stores an image once, in a form no provider owns. Anthropic
+receives it as an image block of the tool result, OpenAI as a part of the
+function call output, and Gemini as inline data nested in the function
+response, which Gemini takes from its 3 series on. Anthropic takes text alone
+in a failed result, so the image of one follows the results of the turn,
+behind a line that names the tool. Every request that carries the result costs
+the image's tokens.
+
+Return PNG, JPEG or WebP, which all three providers take. A provider that
+refuses an image, for its type or its size, refuses the whole request, and the
+result stays in the session, so the requests after it are refused too. Convert
+or drop an image in `after_tool` when a tool the host does not own, such as
+one from an MCP server, may return another type. `transform_context:` does
+the same for a result that is already stored.
 
 Return `error: true` for an expected failure the model should handle:
 

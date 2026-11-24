@@ -70,26 +70,29 @@ module Mistri
         end
 
         def user_item(msg)
-          { role: "user", content: msg.content.map { |block| user_block(block) } }
+          { role: "user", content: msg.content.map { |block| input_part(block) } }
         end
 
-        def user_block(block)
+        def input_part(block)
           case block
           when Content::Text then { type: "input_text", text: block.text }
           when Content::Image
             { type: "input_image", image_url: "data:#{block.mime_type};base64,#{block.data}" }
           else
-            raise SchemaError, "cannot serialize #{block.class} for OpenAI user input"
+            raise SchemaError, "cannot serialize #{block.class} for OpenAI input"
           end
         end
 
-        # Non-text blocks in a tool result have no function_call_output
-        # encoding; note the omission rather than dropping it silently.
+        # The output is a string, or an array of parts when the result holds
+        # an image. Text alone stays a string, so a stored session replays as
+        # the request it sent before.
         def tool_result_item(msg)
-          omitted = msg.content.count { |block| !block.is_a?(Content::Text) }
-          text = msg.text.to_s
-          text = "#{text}\n[#{omitted} non-text block(s) omitted]".strip if omitted.positive?
-          { type: "function_call_output", call_id: msg.tool_call_id, output: text }
+          output = if msg.content.any?(Content::Image)
+                     msg.content.map { |block| input_part(block) }
+                   else
+                     msg.text.to_s
+                   end
+          { type: "function_call_output", call_id: msg.tool_call_id, output: }
         end
 
         def assistant_items(msg, declared = {})
