@@ -229,7 +229,7 @@ The hint is the server's own word and nothing checks it. `parallel: false`
 runs every tool of the server alone, `parallel: true` marks every tool, and a
 hash by remote name sets single tools and leaves the rest to their hint. A
 key that names no tool of the server raises `Mistri::ConfigurationError`. The
-check is made against what the server lists each time, so a server that drops
+check is made against the tools the client has listed, so a server that drops
 or renames that tool makes `MCP.tools` raise until the hash is changed. A
 tool that only waits is read-only and still has to come before the call after
 it, so set it to false:

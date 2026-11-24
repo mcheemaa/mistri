@@ -114,8 +114,9 @@ send_invite call before this one waits for a person's approval. Send this call
 again once it is decided.` That holds for a marked call too: a read written
 after a write that waits would return what was there before the write. Once a
 call that is not marked has been held back, a later call that needs approval
-is held back as well, because it may rely on that call. On `resume` the
-approved calls run in the order written, and one that fails holds back the
+is held back as well, because it may rely on that call. A call after a refused
+or blocked call that is not marked gets the failure text instead. On `resume`
+the approved calls run in the order written, and one that fails holds back the
 ones after it. A denied call holds back nothing.
 
 The gem's own tools are marked where they only read or start a worker:
@@ -125,7 +126,9 @@ reader, tool search, `spawn_agent` and a named sub-agent. `write_file`,
 console tools run alone. A call that `run_code` makes from code runs when the
 code makes it. `spawn_agent` and a named sub-agent are marked so that workers
 started in one turn work at the same time. What a worker does is not ordered
-against the calls beside it.
+against the calls beside it. `list_agents` and `read_agent` only read, and
+still run alone: they read what `spawn_agent` starts, and `read_agent` can
+wait for a worker.
 
 ## Schema forms
 
@@ -777,7 +780,9 @@ end
 `result.handed_off?` reports that the model's floor moved away. It does not
 claim the tool succeeded; inspect the tool result separately. The human answer
 arrives as the next `run` input. Calls written after it in the same turn still
-run before the run ends, unless it fails.
+take their turn, as [The order of a turn's calls](#the-order-of-a-turns-calls)
+says. One that waits for approval suspends the run instead, and `handed_off?`
+is then false.
 
 ## Resource limits
 
