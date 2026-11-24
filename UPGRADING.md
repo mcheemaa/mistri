@@ -27,7 +27,10 @@ runs alone, in its place, unless it is marked.
   it again.
 - A call written after a call that waits for approval is no longer run before
   the decision, whether it is marked or not. One that needs approval itself
-  waits with it. Before, every such call ran at once.
+  waits with it, unless a call that is not marked comes between them. Before,
+  every such call ran at once. For a Gemini turn whose calls carry no IDs, a
+  call that needs approval does not wait when a later call of the same name
+  is held back: it answers with an error, and the model sends the calls again.
 - `MCP.tools` marks a tool that its server lists with `readOnlyHint: true`.
   Pass `parallel: false` for a server whose hints you do not trust, or a hash
   by remote name for single tools, such as a tool that only waits.

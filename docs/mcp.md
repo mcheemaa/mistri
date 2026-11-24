@@ -228,6 +228,7 @@ other tool runs alone, in the order the model wrote, see
 The hint is the server's own word and nothing checks it. `parallel: false`
 runs every tool of the server alone, `parallel: true` marks every tool, and a
 hash by remote name sets single tools and leaves the rest to their hint. A
+key that names no tool of the server raises `Mistri::ConfigurationError`. A
 tool that only waits is read-only and still has to come before the call after
 it, so set it to false:
 

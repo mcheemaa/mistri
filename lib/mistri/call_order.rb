@@ -9,8 +9,8 @@ module Mistri
   # the turn, because a later call may rely on it. A call that waits for a
   # person holds back the rest as well: a read written after it would return
   # what was there before it. A call that needs approval waits with it, so a
-  # person sees both, until a held call that is not marked comes between
-  # them: the later one may rely on that call.
+  # person sees both, until a held or refused call that is not marked comes
+  # between them: the later one may rely on that call.
   class CallOrder
     FAILED = "Not run: the %<name>s call before this one failed."
     WAITING = "Not run: the %<name>s call before this one waits for a person's approval. " \

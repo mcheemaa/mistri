@@ -241,6 +241,8 @@ class TestCallOrder < Minitest::Test
     assert_equal [true, true, true, true], marks.call(parallel: true)
     assert_equal [true, false, false, true],
                  marks.call(parallel: { "wait" => false, "type" => true })
+    assert_raises(Mistri::ConfigurationError) { marks.call(parallel: { wait: false }) }
+    assert_raises(Mistri::ConfigurationError) { marks.call(parallel: { "wait_for" => false }) }
     assert_predicate Mistri::MCP.bridge(client, listed.first), :parallel?
     refute_predicate Mistri::MCP.bridge(client, listed.first, parallel: false), :parallel?
   end

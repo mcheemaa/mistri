@@ -144,7 +144,8 @@ module Mistri
     # tool runs alone, after the calls before it. A parallel tool may run at
     # the same time as the parallel calls next to it: its result does not
     # depend on which of them finishes first, and it changes nothing that
-    # another call of the turn reads.
+    # another call of the turn reads. A tool that starts a worker is marked
+    # so that workers start together, and what a worker does is not ordered.
     def parallel?
       @parallel
     end

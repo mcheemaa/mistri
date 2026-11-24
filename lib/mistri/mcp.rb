@@ -70,6 +70,7 @@ module Mistri
               parallel: nil)
       taken = {}
       listed = client.tools
+      known_marks!(parallel, listed)
       instructions = instructions_for(client, instructions)
       listed.filter_map do |tool|
         remote = tool["name"] if tool.is_a?(Hash)
@@ -86,6 +87,19 @@ module Mistri
         nil
       end
     end
+
+    # A key that names no tool would leave the tool it was meant for to its
+    # hint, which can mark a tool the host set to run alone.
+    def known_marks!(parallel, listed)
+      return unless parallel.is_a?(Hash)
+
+      unknown = parallel.keys - listed.grep(Hash).map { |tool| tool["name"] }
+      return if unknown.empty?
+
+      names = unknown.map { |name| label(name) }.join(", ")
+      raise ConfigurationError, "parallel: names no tool of this server: #{names}"
+    end
+    private_class_method :known_marks!
 
     def claim(taken, local, remote)
       holder = taken[local]
