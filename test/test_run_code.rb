@@ -258,7 +258,7 @@ class TestRunCode < Minitest::Test
                         ["write", { "path" => "scratchpad/notes.md", "content" => "mine" }]],
                        scratchpad: @workspace)
 
-    assert_match(/changed since\. Read it in this code before writing it/, replies[1])
+    assert_match(/changed since\. Nothing was written\. Read it with files\.read/, replies[1])
     assert_equal "old", @workspace.read("scratchpad/notes.md")
   end
 
