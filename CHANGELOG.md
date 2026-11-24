@@ -13,7 +13,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   calls after it are not run and each answers `Not run: ...`. A call that
   waits for approval holds back the calls after it, marked or not, where every
   call after it used to run at once. A call that needs approval waits with it,
-  unless a call that is not marked and needs no approval comes between them.
+  unless a call that is not marked and does not wait comes between them.
   `read_file`, `grep`, `list_files`, `find_in_file`, `read_memory`, the skill
   reader, tool search, `spawn_agent` and a named sub-agent are marked.
   `MCP.tools` marks a tool whose server lists it with `readOnlyHint: true`,

@@ -28,8 +28,8 @@ runs alone, in its place, unless it is marked.
 - A call written after a call that waits for approval is no longer run before
   the decision, whether it is marked or not. It answers `Not run: ...`, and
   the model sends it again once the person has decided. One that needs
-  approval itself waits with it, unless a call that is not marked and needs no
-  approval comes between them. Before, every such call ran at once. For a
+  approval itself waits with it, unless a call that is not marked and does not
+  wait comes between them. Before, every such call ran at once. For a
   Gemini turn whose calls carry no IDs, a call that needs approval does not
   wait when a later call of the same name is answered before it: it answers
   with an error, and the model sends the calls again.

@@ -149,6 +149,28 @@ class TestCallOrder < Minitest::Test
                   "Send this call again once it is decided."] * 4, held.map(&:text)
   end
 
+  def test_only_a_call_that_is_not_marked_ends_the_wait_for_the_calls_after_it
+    ran = []
+    tools = [logging("send", ran, needs_approval: true), logging("peek", ran, parallel: true),
+             logging("pay", ran, needs_approval: true), logging("ship", ran, needs_approval: true)]
+    provider = Mistri::Providers::Fake.new(
+      turns: [turn("send", "peek", "pay", "missing", "ship")]
+    )
+    before_tool = ->(call, _context) { "not today" if call.name == "peek" }
+    agent = Mistri::Agent.new(provider:, tools:, before_tool:)
+
+    result = agent.run("go")
+    answers = agent.session.messages.select(&:tool?).to_h do |answer|
+      [answer.tool_name, answer.text]
+    end
+
+    assert_equal %w[send pay], result.pending.map(&:name)
+    assert_empty ran
+    assert_equal "Blocked: not today", answers.fetch("peek")
+    assert_includes answers.fetch("missing"), "Unknown tool"
+    assert_equal "Not run: the missing call before this one failed.", answers.fetch("ship")
+  end
+
   def test_a_read_written_after_a_write_that_waits_does_not_run_before_it
     document = +"old"
     write = Mistri::Tool.define("write", "Writes.", needs_approval: true) do
