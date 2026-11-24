@@ -776,13 +776,13 @@ module Mistri
       sleep(0.1) while monotonic_now < deadline && !signal&.aborted?
     end
 
-    # Answer or park the assistant's tool calls. Ungated calls execute (only
-    # on a genuine tool_use turn with no abort; otherwise they pair with
-    # interrupted results). Gated calls park as approval requests. Nothing
-    # is left dangling either way. Returns the parked calls and whether an
-    # executed tool ends the turn; a parked call outranks an executed
-    # ends_turn, because a suspension is the stronger stop and the model
-    # regains the floor when the run resumes.
+    # Answer or park the assistant's tool calls, in the order written. A call
+    # runs, parks as an approval request, or is answered as not run (only on
+    # a genuine tool_use turn with no abort; otherwise every call pairs with
+    # an interrupted result). Nothing is left dangling either way. Returns
+    # the parked calls and whether an executed tool ends the turn; a parked
+    # call outranks an executed ends_turn, because a suspension is the
+    # stronger stop and the model regains the floor when the run resumes.
     def run_tools(assistant, signal, &emit)
       calls = assistant.tool_calls
       unless assistant.stop_reason == StopReason::TOOL_USE && !signal&.aborted?
@@ -840,30 +840,43 @@ module Mistri
 
     # Before Gemini 3, same-name parallel calls may have no wire IDs and only
     # order pairs their responses. A later immediate result cannot pass an
-    # earlier parked result without becoming ambiguous.
+    # earlier parked result without becoming ambiguous, and every call that
+    # does not wait is answered at once. Failing one waiting call changes
+    # which others wait, so the check repeats until none is passed.
     def protect_gemini_result_order(prepared, batch)
       invalid, blocked, parked, free, rejected = batch
-      positions = prepared.each_with_index.to_h { |call, index| [call.id, index] }
-      immediate = [*invalid, *blocked, *rejected].map(&:first) + free
-      unsafe, safe = parked.partition do |parked_call|
-        parked_call.provider_call_id.nil? && immediate.any? do |call|
-          call.provider_call_id.nil? && call.name == parked_call.name &&
-            positions.fetch(call.id) > positions.fetch(parked_call.id)
-        end
+      loop do
+        waiting = CallOrder.new(@tools_by_name)
+                           .waiting(prepared, refused: [*invalid, *blocked, *rejected], parked:)
+        unsafe = waiting.select { |call| passed_by_a_later_result?(call, prepared, waiting) }
+        return [invalid, blocked, parked, free, rejected] if unsafe.empty?
+
+        parked = parked.reject { |call| unsafe.any? { |other| other.equal?(call) } }
+        rejected += unsafe.map { |call| [call, gemini_order_failure, nil] }
       end
-      failures = unsafe.map do |call|
-        content = "Gemini returned parallel same-name calls without IDs across an approval " \
-                  "boundary. This tool did not run; retry those calls separately."
-        [call, ToolResult.new(content:, error: true), nil]
+    end
+
+    def gemini_order_failure
+      content = "Gemini returned parallel same-name calls without IDs across an approval " \
+                "boundary. This tool did not run; retry those calls separately."
+      ToolResult.new(content:, error: true)
+    end
+
+    def passed_by_a_later_result?(waiting_call, prepared, waiting)
+      return false if waiting_call.provider_call_id
+
+      later = prepared.drop_while { |call| !call.equal?(waiting_call) }.drop(1)
+      later.any? do |call|
+        call.provider_call_id.nil? && call.name == waiting_call.name &&
+          waiting.none? { |other| other.equal?(call) }
       end
-      [invalid, blocked, safe, free, [*rejected, *failures]]
     end
 
     # Returns the calls that actually executed (denied ones only answer).
     def settle(open, signal, &)
       approved, denied = open.partition { |approval| approval[:decision]["approved"] }
       approved_calls = approved.map { |approval| approval[:call] }
-      _prepared, valid, invalid = prepare_calls(
+      prepared, valid, invalid = prepare_calls(
         approved_calls, normalize: false, signal:
       )
       return interrupt_settlement(open, approved_calls, denied, signal, &) if signal&.aborted?
@@ -873,7 +886,8 @@ module Mistri
 
       spent = stored_for_turn
       denials = denial_results(denied)
-      calls = open.map { |approval| approval[:call] }
+      ready = prepared.each
+      calls = open.map { |approval| approval[:decision]["approved"] ? ready.next : approval[:call] }
       ran = CallOrder.new(@tools_by_name)
                      .run(calls, refused: [*invalid, *blocked], settled: denials, signal:) do |step|
         execute(step, signal, among: open.length, spent:, &)

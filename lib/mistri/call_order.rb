@@ -6,36 +6,45 @@ module Mistri
   # together; any other call is a step alone, after everything before it.
   #
   # A call that runs alone and does not take effect holds back the rest of
-  # the turn, because a later call may rely on it. After a failure nothing
-  # more runs. After a call that waits for a person, the model has no next
-  # turn until that person acts, so parallel calls still run and other
-  # waiting calls still wait with it; only a call that changes state is held.
+  # the turn, because a later call may rely on it. A call that waits for a
+  # person holds back the rest as well: a read written after it would return
+  # what was there before it. A call that needs approval waits with it, so a
+  # person sees both, until a held call that is not marked comes between
+  # them: the later one may rely on that call.
   class CallOrder
     FAILED = "Not run: the %<name>s call before this one failed."
     WAITING = "Not run: the %<name>s call before this one waits for a person's approval. " \
               "Send this call again once it is decided."
 
-    # executed and skipped hold [call, result, seconds] entries; a skipped
-    # call never started. parked holds the calls that still wait.
+    # executed holds the entries the steps returned. skipped holds
+    # [call, result, nil] for a call that never started. parked holds the
+    # calls that still wait.
     Outcome = Data.define(:executed, :skipped, :parked)
 
     def initialize(tools_by_name)
       @tools = tools_by_name
     end
 
-    # refused entries were answered before execution and hold back the rest;
-    # settled ones were answered by a person and hold back nothing. The block
-    # runs one step and returns its entries.
+    # refused entries were answered before execution, and one that is not
+    # marked holds back the rest. settled ones were answered by a person and
+    # hold back nothing. The block runs one step and returns its entries.
     def run(calls, refused: [], settled: [], parked: [], signal: nil, &run_step)
       @run_step = run_step
       @signal = signal
       @held = nil
+      @closed = false
       @step = []
       @outcome = Outcome.new(executed: [], skipped: [], parked: [])
       kinds = kinds_of(refused, settled, parked)
       calls.each { |call| place(call, kinds[call]) }
       flush
       @outcome
+    end
+
+    # The calls that would wait for a person if every call that runs took
+    # effect. A call that fails can only take calls out of them.
+    def waiting(calls, refused: [], parked: [])
+      run(calls, refused:, parked:) { |step| step.map { |call| [call] } }.parked
     end
 
     private
@@ -58,7 +67,7 @@ module Mistri
     end
 
     def park(call)
-      return skip(call) if failed?
+      return skip(call) if failed? || @closed
 
       flush
       @held ||= [WAITING, call]
@@ -66,10 +75,17 @@ module Mistri
     end
 
     def free(call)
-      return @step << call if parallel?(call) && !failed?
-      return skip(call) if @held
+      return hold_back(call) if @held
+      return @step << call if parallel?(call)
 
       alone(call)
+    end
+
+    # A later call that needs approval may rely on a call that is not marked,
+    # so none waits once one was held back.
+    def hold_back(call)
+      @closed ||= !parallel?(call)
+      skip(call)
     end
 
     def alone(call)

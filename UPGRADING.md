@@ -20,18 +20,24 @@ runs alone, in its place, unless it is marked.
 
 - Mark each tool of yours that only reads:
   `Mistri::Tool.define(name, description, parallel: true)`. Until then a turn
-  of several of them runs one call at a time. That is slower and never wrong.
-- A call written after a call that failed, was refused or was blocked is no
-  longer run. It answers `Not run: ...`, and the model sends it again.
-- A call written after a call that waits for approval is no longer run, unless
-  it is marked or needs approval itself. Before, it ran at once.
+  of several of them runs one call at a time, and one that fails holds back
+  the calls after it.
+- A call written after a call that is not marked and failed, was refused or
+  was blocked is no longer run. It answers `Not run: ...`, and the model sends
+  it again.
+- A call written after a call that waits for approval is no longer run before
+  the decision, whether it is marked or not. One that needs approval itself
+  waits with it. Before, every such call ran at once.
 - `MCP.tools` marks a tool that its server lists with `readOnlyHint: true`.
   Pass `parallel: false` for a server whose hints you do not trust, or a hash
   by remote name for single tools, such as a tool that only waits.
 - A call that runs by itself now runs on the thread that called the agent,
-  not on a thread of its own. Inside a Rails job or request it sees the
-  `Current` attributes set there, and an error it raises is no longer
-  reported to `Rails.error` on its way to becoming a tool result.
+  not on a thread of its own. What its handler sets on the thread stays set
+  after the run, and a `throw` to a `catch` around the run now ends the run.
+  Inside a Rails job or request it sees the `Current` attributes set there,
+  it uses that thread's database connection and any transaction open on it,
+  and an error it raises is no longer reported to `Rails.error` on its way to
+  becoming a tool result.
 - A host that set `max_concurrency: 1` to get order can drop it.
 
 ### A tool's image reaches GPT and Gemini models

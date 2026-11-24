@@ -88,11 +88,13 @@ end
   not depend on which of its marked neighbours finishes first, and it must
   change nothing that another call of the turn reads.
 - A call that runs by itself, marked or not, runs on the thread that called
-  the agent. Inside a Rails job or request it is part of that unit of work: it
-  sees the `Current` attributes set there, and the executor does not report
-  an error it raises. Calls that run together run on worker threads, each in
-  an executor of its own, so a marked tool cannot rely on what the calling
-  thread has set.
+  the agent, as part of that thread's work. What its handler sets on the
+  thread stays set after the run, and a `throw` to a `catch` around the run
+  ends the run. Inside a Rails job or request it sees the `Current` attributes
+  set there, it uses that thread's database connection and any transaction
+  open on it, and the executor does not report an error it raises. Calls that
+  run together run on worker threads, each in an executor of its own, so a
+  marked tool cannot rely on any of this.
 
 When a call that runs alone does not take effect, the calls after it are not
 run. That covers a handler that raised or timed out, a result with
@@ -102,20 +104,28 @@ an approval rule that raised. Each call after it gets the error result
 again if it still wants it. A call refused for its own arguments keeps its own
 error. A marked call that fails holds back nothing. A call that is not run has
 already passed its checks and `before_tool`, and it never reaches `after_tool`.
+Whether a call took effect is judged on what its handler returned, before
+`after_tool`, so a hook that turns a result into an error holds back nothing.
 
-When a call waits for approval, the calls before it have run. After it, a
-marked call still runs, a call that needs approval waits with it, and any other
-call gets `Not run: the send_invite call before this one waits for a person's
-approval. Send this call again once it is decided.` On `resume` the approved
-calls run in the order written, and one that fails holds back the ones after
-it. A denied call holds back nothing.
+When a call waits for approval, the calls before it have run, and no call
+after it runs before the decision. A later call that needs approval waits with
+it, so a person sees them together. Any other call gets `Not run: the
+send_invite call before this one waits for a person's approval. Send this call
+again once it is decided.` That holds for a marked call too: a read written
+after a write that waits would return what was there before the write. Once a
+call that is not marked has been held back, a later call that needs approval
+is held back as well, because it may rely on that call. On `resume` the
+approved calls run in the order written, and one that fails holds back the
+ones after it. A denied call holds back nothing.
 
 The gem's own tools are marked where they only read or start a worker:
 `read_file`, `grep`, `list_files`, `find_in_file`, `read_memory`, the skill
 reader, tool search, `spawn_agent` and a named sub-agent. `write_file`,
 `edit_file`, `delete_file`, `update_memory`, `run_code` and the four worker
 console tools run alone. A call that `run_code` makes from code runs when the
-code makes it.
+code makes it. `spawn_agent` and a named sub-agent are marked so that workers
+started in one turn work at the same time. What a worker does is not ordered
+against the calls beside it.
 
 ## Schema forms
 
@@ -501,10 +511,9 @@ What the code has:
 
 A call from code is a tool call. It passes the tool's argument contract, its
 timeout, `before_tool` and `after_tool`, and emits `:tool_started` and
-`:tool_result` with a call id that begins with `code_`. Two runs of code in
-one turn make their calls at once, so the hooks are then called from two
-threads. `before_tool` is given what the code passed, the content of a write
-included, and the code receives what `after_tool` returned. For `files.read`
+`:tool_result` with a call id that begins with `code_`. `before_tool` is given
+what the code passed, the content of a write included, and the code receives
+what `after_tool` returned. For `files.read`
 that is the document. A tool that needs approval for the call, or that ends
 the turn, is refused in the code with a message to call it directly. So is
 `tool_search`, which loads tools for the model. The call is stored as a
@@ -767,7 +776,8 @@ end
 
 `result.handed_off?` reports that the model's floor moved away. It does not
 claim the tool succeeded; inspect the tool result separately. The human answer
-arrives as the next `run` input.
+arrives as the next `run` input. Calls written after it in the same turn still
+run before the run ends.
 
 ## Resource limits
 

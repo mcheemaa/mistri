@@ -164,6 +164,30 @@ class TestToolCallLifecycleBoundary < Minitest::Test # rubocop:disable Metrics/C
     assert_equal "Not run: the write call before this one failed.", results.last.text
   end
 
+  def test_gemini_no_id_calls_never_wait_behind_a_same_name_call_that_is_not_run
+    tools = [Mistri::Tool.define("write", "Writes.", needs_approval: true) { flunk "write ran" },
+             Mistri::Tool.define("note", "Notes.") { flunk "note ran" }]
+
+    %w[missing note].each do |between|
+      calls = [Mistri::ToolCall.new(id: "first", name: "write", arguments: {}),
+               Mistri::ToolCall.new(id: "between", name: between, arguments: {}),
+               Mistri::ToolCall.new(id: "second", name: "write", arguments: {})]
+      turn = Mistri::Message.assistant(
+        tool_calls: calls, provider: :gemini, stop_reason: Mistri::StopReason::TOOL_USE
+      )
+      agent = Mistri::Agent.new(provider: ScriptedProvider.new(turn, text_turn("done")), tools:)
+
+      result = agent.run("go")
+      results = agent.session.messages.select(&:tool?)
+
+      assert_predicate result, :completed?
+      assert_empty agent.session.open_approvals
+      assert_equal %w[first between second], results.map(&:tool_call_id)
+      assert_includes results.first.text, "retry those calls separately"
+      assert_equal "Not run: the write call before this one failed.", results.last.text
+    end
+  end
+
   def test_gemini_no_id_calls_allow_a_final_same_name_approval
     calls = [
       Mistri::ToolCall.new(id: "safe", name: "write", arguments: { "risk" => false }),

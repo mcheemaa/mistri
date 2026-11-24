@@ -232,8 +232,12 @@ tool that only waits is read-only and still has to come before the call after
 it, so set it to false:
 
 ```ruby
-Mistri::MCP.tools(client, prefix: "browser", parallel: { "wait_for" => false })
+Mistri::MCP.tools(browser, parallel: { "browser_wait_for" => false })
 ```
+
+One client sends its requests one at a time, so marked calls to one server
+gain no time beside each other. They gain it beside other servers and other
+marked tools.
 
 `deferred: true` keeps a server's tools out of the model's sight until a search
 loads them, so the definitions of a server with a long tool list are left out
