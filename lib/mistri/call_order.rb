@@ -26,16 +26,16 @@ module Mistri
     end
 
     # refused entries were answered before execution, and one that is not
-    # marked holds back the rest. settled ones were answered by a person and
-    # hold back nothing. The block runs one step and returns its entries.
-    def run(calls, refused: [], settled: [], parked: [], signal: nil, &run_step)
+    # marked holds back the rest. denied ones were answered by a person's no
+    # and hold back nothing. The block runs one step and returns its entries.
+    def run(calls, refused: [], denied: [], parked: [], signal: nil, &run_step)
       @run_step = run_step
       @signal = signal
       @held = nil
       @closed = false
       @step = []
       @outcome = Outcome.new(executed: [], skipped: [], parked: [])
-      kinds = kinds_of(refused, settled, parked)
+      kinds = kinds_of(refused, denied, parked)
       calls.each { |call| place(call, kinds[call]) }
       flush
       @outcome
@@ -49,17 +49,17 @@ module Mistri
 
     private
 
-    def kinds_of(refused, settled, parked)
+    def kinds_of(refused, denied, parked)
       kinds = {}.compare_by_identity
       refused.each { |entry| kinds[entry.first] = :refused }
-      settled.each { |entry| kinds[entry.first] = :settled }
+      denied.each { |entry| kinds[entry.first] = :denied }
       parked.each { |call| kinds[call] = :parked }
       kinds
     end
 
     def place(call, kind)
       case kind
-      when :settled then nil
+      when :denied then nil
       when :refused then fail_at(call) unless parallel?(call)
       when :parked then park(call)
       else free(call)

@@ -253,7 +253,8 @@ session_id = agent.session.id
 The handler has not run, and no call written after it in that turn has run.
 Each of those answers `Not run` unless it needs approval and waits too, see
 [The order of a turn's calls](tool-contracts.md#the-order-of-a-turns-calls).
-Persist or route `session_id` and `call.id` in the host's own UI. A decision needs only a store and Session:
+Persist or route `session_id` and `call.id` in the host's own UI. A decision
+needs only a store and Session:
 
 ```ruby
 session = Mistri::Session.new(store: store, id: session_id)

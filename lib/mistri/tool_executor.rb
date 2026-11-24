@@ -6,9 +6,9 @@ module Mistri
   # Runs the calls of one step of a turn together and returns their results
   # in the order the model emitted them, regardless of completion order.
   # CallOrder decides which calls share a step. Several calls run on up to
-  # max_concurrency threads, and one call runs on the calling thread; each
-  # runs inside the Rails executor when Rails is present, so ActiveRecord
-  # connections return to the pool.
+  # max_concurrency threads, each inside the Rails executor when Rails is
+  # present, so their ActiveRecord connections return to the pool. One call
+  # runs on the calling thread, inside the caller's executor.
   #
   # A tool that fails becomes an in-band ToolResult with an explicit error
   # fact. An abort never starts a not-yet-started call: it gets an interrupted

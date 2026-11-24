@@ -777,7 +777,7 @@ end
 `result.handed_off?` reports that the model's floor moved away. It does not
 claim the tool succeeded; inspect the tool result separately. The human answer
 arrives as the next `run` input. Calls written after it in the same turn still
-run before the run ends.
+run before the run ends, unless it fails.
 
 ## Resource limits
 

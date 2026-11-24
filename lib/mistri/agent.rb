@@ -889,7 +889,7 @@ module Mistri
       ready = prepared.each
       calls = open.map { |approval| approval[:decision]["approved"] ? ready.next : approval[:call] }
       ran = CallOrder.new(@tools_by_name)
-                     .run(calls, refused: [*invalid, *blocked], settled: denials, signal:) do |step|
+                     .run(calls, refused: [*invalid, *blocked], denied: denials, signal:) do |step|
         execute(step, signal, among: open.length, spent:, &)
       end
       executed = ran.executed
