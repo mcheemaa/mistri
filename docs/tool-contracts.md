@@ -537,14 +537,14 @@ code read or wrote a document at a version the session does not hold yet
 appends one `code_documents` entry when it ends, with the path and the version
 of each. A read counts once the code has received the document: one that
 `after_tool` refused or rewrote does not. A session keeps 1,000 documents, the
-ones whose version it learned last, and a checkpoint carries them. A read at
-the version the session already holds does not make a document newer.
-`Session#code_documents` returns them. A document that fell out of the 1,000
-is refused until the code reads it again. So is one that another hand
+ones whose version it learned last, and a checkpoint carries them.
+`Session#code_documents` returns them. A read at the version the session
+already holds does not make a document newer. A document that fell out of the
+1,000 is refused until the code reads it again. So is one that another hand
 changed since: another agent, a person, or the model's own `write_file` or
-`edit_file`. So is a document written by a run that the process did not
-finish, because that run left no entry. A read under
-`scratchpad/tool-results/` is not kept, because nothing is written there.
+`edit_file`. So is a document written by a run that the process did not finish,
+because that run left no entry. A read under `scratchpad/tool-results/` is not
+kept, because nothing is written there.
 
 Limits: ten seconds of the code's own computing, five minutes for the whole
 run with the calls it makes, and 64 MB, set with `timeout:`, `total_timeout:`

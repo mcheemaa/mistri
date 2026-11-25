@@ -259,7 +259,7 @@ module Mistri
     def file_from_code(workspace, operation, call, context, run)
       value, line = Tools.file_from_code(workspace, operation, call.arguments, run)
       seen = operation == "read" ? value : line
-      text, result = @after_tool ? rewritten_from_code(call, seen, context) : seen
+      text, result = @after_tool ? rewritten_from_code(call, seen, context) : [seen, nil]
       return [nil, result] if result.is_a?(ToolResult) && result.error?
 
       whole = text == seen

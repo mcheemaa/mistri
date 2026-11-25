@@ -59,10 +59,9 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   run or an earlier one, and it has not changed since. What code read or wrote
   is kept in the session as `code_documents` entries, for the 1,000 documents
   learned last, so this holds after a restart and after a compaction. The
-  result of `run_code`
-  keeps 10,000 bytes, and its description tells the model to write a longer
-  output to a document. The gem keeps zero runtime dependencies: a host that
-  passes no sandbox loads nothing new.
+  result of `run_code` keeps 10,000 bytes, and its description tells the model
+  to write a longer output to a document. The gem keeps zero runtime
+  dependencies: a host that passes no sandbox loads nothing new.
 - An agent takes a scratchpad. With `scratchpad:`, a workspace the host
   scopes to the session, the whole of a tool result over its limit is saved
   under `scratchpad/tool-results/` and the stored result is its first 2,000
