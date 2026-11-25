@@ -63,20 +63,27 @@ session after it. Both providers are now sent an image by its first bytes: one
 of the four formats with the type its bytes show, and any other image as a
 line of text that says an image was not sent and why.
 
-- A host that converts or drops such an image in `after_tool` or
-  `transform_context:` can stop. An image it converts is sent as before.
+- A host that drops such an image in `after_tool` or `transform_context:`
+  only to keep the session going can stop. A host that converts one should
+  keep doing so: the model sees the converted picture, and only a line of text
+  without it.
 - A session that such an image ended works again from its next request.
   Nothing stored changes.
 - A model on these two providers no longer receives an image whose bytes are
   not one of the four formats, whatever its label says. That holds for every
   origin of the two providers.
-- An image with a wrong label is sent with its real type. Anthropic refused a
-  JPEG labelled `image/png`, which is what an MCP server that names no type
-  for its image produced. OpenAI took it, so a stored request that holds one
-  differs once from the request sent before and can miss the prompt cache
-  once.
-- An image over a provider's size limits is still refused, and the refusal
-  still ends the session. Make such an image smaller in `after_tool`.
+- An image whose label is not the type its bytes show, such as `image/jpg` or
+  a JPEG labelled `image/png`, is sent with its real type. Anthropic refused
+  both. An MCP server that names no type for a JPEG produced the second.
+  OpenAI took both, so a stored request that holds one differs once from the
+  request sent before and can miss the prompt cache once.
+- A session that moves to one of these two providers from a provider that
+  took the image goes on, where it was refused. The model there is not sent
+  the image, and when asked about it can say that an earlier answer about it
+  was a guess.
+- An image over a provider's size limits is still refused, and so is one whose
+  data is broken or whose base64 holds line breaks or spaces. The refusal
+  still ends the session. Make a large image smaller in `after_tool`.
 
 ### Gemini 2.5 models are removed
 

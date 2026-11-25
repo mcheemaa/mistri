@@ -23,24 +23,27 @@ class TestContent < Minitest::Test
     assert_equal "raw bytes", image.bytes
   end
 
-  def test_an_image_knows_its_format_from_its_first_bytes
-    formats = { "\x89PNG\r\n\x1A\n".b => :png, "\xFF\xD8\xFF\xE0".b => :jpeg, "GIF87a" => :gif,
-                "GIF89a" => :gif, "RIFF\x10\x00\x00\x00WEBPVP8 ".b => :webp,
-                "RIFF\x10\x00\x00\x00WAVEfmt ".b => nil, "BM bitmap" => nil, "" => nil }
+  def test_an_image_finds_its_type_in_its_first_bytes
+    types = { "\x89PNG\r\n\x1A\n".b => "image/png", "\xFF\xD8\xFF\xE0".b => "image/jpeg",
+              "GIF87a" => "image/gif", "GIF89a" => "image/gif",
+              "RIFF\x10\x00\x00\x00WEBPVP8 ".b => "image/webp",
+              "RIFF\x10\x00\x00\x00WAVEfmt ".b => nil, "\x89PNG".b => nil, "\xFF\xD8".b => nil,
+              "BM bitmap" => nil, "" => nil }
 
-    formats.each do |bytes, format|
-      found = Mistri::Content::Image.from_bytes(bytes, mime_type: "image/png").format
+    types.each do |bytes, type|
+      found = Mistri::Content::Image.from_bytes(bytes, mime_type: "image/bmp").detected_mime_type
 
-      format ? assert_equal(format, found, bytes.inspect) : assert_nil(found, bytes.inspect)
+      type ? assert_equal(type, found, bytes.inspect) : assert_nil(found, bytes.inspect)
     end
 
-    assert_nil Mistri::Content::Image.new(data: "not base64!", mime_type: "image/png").format
+    assert_nil Mistri::Content::Image.new(data: "not base64!", mime_type: "image/png")
+                                     .detected_mime_type
   end
 
   def test_the_placeholder_of_an_image_names_its_label
     image = Mistri::Content::Image.from_bytes("BM bitmap", mime_type: "image/bmp")
 
-    assert_includes image.placeholder, 'labelled "image/bmp"'
+    assert_includes image.placeholder, 'It is labelled "image/bmp".'
   end
 
   def test_blocks_own_frozen_copies_of_their_strings

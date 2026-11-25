@@ -180,11 +180,10 @@ module Mistri
         # The API refuses a format it does not take and a label that differs
         # from the bytes, so the type sent is the one the bytes show.
         def image_block(image)
-          format = image.format
-          return { type: "text", text: image.placeholder } unless format
+          type = image.detected_mime_type
+          return { type: "text", text: image.placeholder } unless type
 
-          { type: "image",
-            source: { type: "base64", media_type: "image/#{format}", data: image.data } }
+          { type: "image", source: { type: "base64", media_type: type, data: image.data } }
         end
 
         # The API rejects a turn whose text is only whitespace.

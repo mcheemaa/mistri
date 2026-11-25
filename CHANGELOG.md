@@ -14,9 +14,9 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   PNG, JPEG, GIF or WebP with the type its bytes show, and any other image as
   a line of text that says an image was not sent and why. The session keeps
   the image as it was stored, so a session that such an image ended works
-  again. `Content::Image#format` answers the format found. Gemini is sent
-  every image as before, and an image over a provider's size limits is still
-  refused.
+  again. `Content::Image#detected_mime_type` answers the type found. Gemini
+  is sent every image as before. An image over a provider's size limits, or
+  one whose data is broken, is still refused.
 - The calls of one turn take effect in the order the model wrote them. They
   ran on up to four threads in any order, so a read could run before the write
   sent ahead of it. A tool now runs alone, in its place, unless it is defined

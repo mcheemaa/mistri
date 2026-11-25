@@ -75,23 +75,23 @@ module Mistri
 
       def bytes = data.unpack1("m0")
 
-      # The format the first bytes show, of the four that every provider
-      # takes, or nil. A label can be wrong, so a provider that refuses an
-      # image whose label and bytes differ is sent the type found here.
-      def format
+      # The type the first bytes show, of the four that Anthropic and OpenAI
+      # take, or nil. A label can be wrong, and Anthropic refuses an image
+      # whose label and bytes differ, so those two are sent this type.
+      def detected_mime_type
         head = data[0, 24].unpack1("m")
-        if head.start_with?(PNG_START) then :png
-        elsif head.start_with?(JPEG_START) then :jpeg
-        elsif head.start_with?("GIF87a", "GIF89a") then :gif
-        elsif head.start_with?("RIFF") && head[8, 4] == "WEBP" then :webp
+        if head.start_with?(PNG_START) then "image/png"
+        elsif head.start_with?(JPEG_START) then "image/jpeg"
+        elsif head.start_with?("GIF87a", "GIF89a") then "image/gif"
+        elsif head.start_with?("RIFF") && head[8, 4] == "WEBP" then "image/webp"
         end
       end
 
-      # What a provider that takes only those formats is sent in place of an
-      # image of any other.
+      # What those two are sent in place of an image of any other format. It
+      # is built for each request, so it speaks of the model that reads it.
       def placeholder
-        "[An image was not sent: its data is not a PNG, JPEG, GIF or WebP, the formats this " \
-          "model takes. It was labelled #{mime_type.inspect}.]"
+        "[This image is not sent to this model: its data is not a PNG, JPEG, GIF or WebP, the " \
+          "formats this model takes. It is labelled #{mime_type.inspect}.]"
       end
 
       def to_h = { type: :image, data:, mime_type: }
