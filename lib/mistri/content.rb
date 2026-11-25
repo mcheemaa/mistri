@@ -14,6 +14,18 @@ module Mistri
       s.frozen? ? s : s.dup.freeze
     end
 
+    # Strict base64 of what the text decodes to. Providers refuse line breaks,
+    # missing padding, the URL-safe alphabet and pad bits that are not zero,
+    # so Ruby's strict decoder decides whether the text is kept as it is.
+    # Anything else is read the way MIME reads base64 and written again.
+    def self.strict_base64(text)
+      text = text.to_s
+      text.unpack1("m0")
+      freeze_string(text)
+    rescue ArgumentError
+      [text.b.tr("-_", "+/").unpack1("m")].pack("m0").freeze
+    end
+
     # `signature` carries opaque provider metadata that must round-trip, such as
     # the OpenAI Responses message id and output phase.
     Text = Data.define(:text, :signature) do
@@ -52,7 +64,8 @@ module Mistri
     JPEG_START = "\xFF\xD8\xFF".b.freeze
     private_constant :PNG_START, :JPEG_START
 
-    # A base64-encoded image with its MIME type.
+    # An image as strict base64, whatever form of base64 it was given in, with
+    # its MIME type.
     Image = Data.define(:data, :mime_type) do
       # Frozen at the pack site so the initializer's ownership check skips a
       # second copy of what can be a multi-megabyte payload.
@@ -64,12 +77,15 @@ module Mistri
         match = /\Adata:(?<mime>[^;,]+);base64,(?<data>.+)\z/m.match(uri.to_s)
         raise ArgumentError, "not a base64 data: URI" unless match
 
-        new(data: match[:data].delete("\n").freeze, mime_type: match[:mime])
+        new(data: match[:data], mime_type: match[:mime])
       end
 
       def initialize(data:, mime_type:)
-        super(data: Content.freeze_string(data), mime_type: Content.freeze_string(mime_type))
+        super(data: Content.strict_base64(data), mime_type: Content.freeze_string(mime_type))
       end
+
+      # On Ruby 3.2 Data#with skips initialize, and the data must stay strict.
+      def with(data: self.data, mime_type: self.mime_type) = self.class.new(data:, mime_type:)
 
       def type = :image
 

@@ -52,6 +52,16 @@ class TestToolImageLive < Minitest::Test
     end
   end
 
+  # Every provider refuses base64 with line breaks, which is what
+  # Base64.encode64 writes.
+  PROVIDERS.each do |name, (klass, key)|
+    define_method("test_#{name}_sees_an_image_built_from_base64_with_line_breaks") do
+      assert_sees(live(klass, key), encoded: ->(png) { [png].pack("m") }) do |picture|
+        ["The picture:", picture]
+      end
+    end
+  end
+
   # Anthropic refuses an image whose label and bytes differ.
   def test_anthropic_sees_an_image_whose_label_is_wrong
     assert_sees(live(*PROVIDERS.fetch(:anthropic)), mime_type: "image/jpeg") do |picture|
@@ -67,9 +77,10 @@ class TestToolImageLive < Minitest::Test
     klass.new(api_key: ENV.fetch(key))
   end
 
-  def assert_sees(provider, mime_type: "image/png")
+  def assert_sees(provider, mime_type: "image/png", encoded: ->(png) { [png].pack("m0") })
     colors = PALETTE.sample(4)
-    picture = Mistri::Content::Image.from_bytes(Mistri::Test::ColorBands.png(colors), mime_type:)
+    picture = Mistri::Content::Image.new(data: encoded.call(Mistri::Test::ColorBands.png(colors)),
+                                         mime_type:)
     camera = Mistri::Tool.define("take_picture", "Takes a picture and returns it.") do
       yield picture
     end

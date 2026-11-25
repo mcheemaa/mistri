@@ -273,6 +273,11 @@ class TestMcpBridge < Minitest::Test
 
     assert_instance_of Mistri::Content::Image, blocks.first
 
+    # Ruby's lenient decoder drops the two characters of the URL-safe alphabet.
+    urlsafe = Mistri::MCP.answer("content" => [{ "type" => "image", "data" => "-_-_" }]).first
+
+    assert_equal "\xFB\xFF\xBF".b, urlsafe.bytes
+
     structured = { "content" => [], "structuredContent" => { "count" => 3 } }
 
     assert_equal '{"count":3}', Mistri::MCP.answer(structured)
