@@ -435,12 +435,20 @@ in a failed result, so the image of one follows the results of the turn,
 behind a line that names the tool. Every request that carries the result costs
 the image's tokens.
 
-Return PNG, JPEG or WebP, which all three providers take. A provider that
-refuses an image, for its type or its size, refuses the whole request, and the
-result stays in the session, so the requests after it are refused too. Convert
-or drop an image in `after_tool` when a tool the host does not own, such as
-one from an MCP server, may return another type. `transform_context:` does
-the same for a result that is already stored.
+Return PNG, JPEG or WebP, which all three providers take. Anthropic and OpenAI
+also take GIF and refuse every other format, so for those two Mistri reads the
+first bytes of an image. A PNG, JPEG, GIF or WebP is sent with the type its
+bytes show, whatever its label says. Any other image, such as a BMP or an SVG
+from an MCP server, is sent as a line of text that says an image was not sent
+and why, so the model knows a picture was left out. The session keeps the
+image as it was stored. Gemini is sent every image as stored.
+
+An image over a provider's size limits is still refused, and so is one whose
+data is broken or whose base64 holds line breaks or spaces. The provider then
+refuses the whole request, and the result stays in the session, so the
+requests after it are refused too. Make a large image smaller in
+`after_tool`. `transform_context:` does the same for a result that is
+already stored.
 
 Return `error: true` for an expected failure the model should handle:
 

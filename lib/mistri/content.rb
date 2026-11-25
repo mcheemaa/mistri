@@ -48,6 +48,10 @@ module Mistri
       end
     end
 
+    PNG_START = "\x89PNG\r\n\x1A\n".b.freeze
+    JPEG_START = "\xFF\xD8\xFF".b.freeze
+    private_constant :PNG_START, :JPEG_START
+
     # A base64-encoded image with its MIME type.
     Image = Data.define(:data, :mime_type) do
       # Frozen at the pack site so the initializer's ownership check skips a
@@ -70,6 +74,25 @@ module Mistri
       def type = :image
 
       def bytes = data.unpack1("m0")
+
+      # The type the first bytes show, of the four that Anthropic and OpenAI
+      # take, or nil. A label can be wrong, and Anthropic refuses an image
+      # whose label and bytes differ, so those two are sent this type.
+      def detected_mime_type
+        head = data[0, 24].unpack1("m")
+        if head.start_with?(PNG_START) then "image/png"
+        elsif head.start_with?(JPEG_START) then "image/jpeg"
+        elsif head.start_with?("GIF87a", "GIF89a") then "image/gif"
+        elsif head.start_with?("RIFF") && head[8, 4] == "WEBP" then "image/webp"
+        end
+      end
+
+      # What those two are sent in place of an image of any other format. It
+      # is built for each request, so it speaks of the model that reads it.
+      def placeholder
+        "[This image is not sent to this model: its data is not a PNG, JPEG, GIF or WebP, the " \
+          "formats this model takes. It is labelled #{mime_type.inspect}.]"
+      end
 
       def to_h = { type: :image, data:, mime_type: }
     end

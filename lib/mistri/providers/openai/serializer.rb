@@ -76,11 +76,19 @@ module Mistri
         def input_part(block)
           case block
           when Content::Text then { type: "input_text", text: block.text }
-          when Content::Image
-            { type: "input_image", image_url: "data:#{block.mime_type};base64,#{block.data}" }
+          when Content::Image then image_part(block)
           else
             raise SchemaError, "cannot serialize #{block.class} for OpenAI input"
           end
+        end
+
+        # The API refuses a format it does not take and a label that is not a
+        # MIME type, so the type sent is the one the bytes show.
+        def image_part(image)
+          type = image.detected_mime_type
+          return { type: "input_text", text: image.placeholder } unless type
+
+          { type: "input_image", image_url: "data:#{type};base64,#{image.data}" }
         end
 
         # The output is a string, or an array of parts when the result holds

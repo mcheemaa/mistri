@@ -30,6 +30,35 @@ class TestToolImageLive < Minitest::Test
     end
   end
 
+  # Both providers refuse a format they do not take, and the result stays in
+  # the session, so the run after it shows that the session goes on.
+  %i[anthropic openai].each do |name|
+    define_method("test_#{name}_goes_on_after_an_image_it_would_refuse") do
+      provider = live(*PROVIDERS.fetch(name))
+      bitmap = Mistri::Content::Image.from_bytes("BM not a picture", mime_type: "image/bmp")
+      camera = Mistri::Tool.define("take_picture", "Takes a picture and returns it.") do
+        ["The picture:", bitmap]
+      end
+      agent = Mistri::Agent.new(provider:, tools: [camera])
+      first = agent.run("Call take_picture once. Then answer SEEN if you received a picture " \
+                        "and NONE if you did not, and nothing else.")
+      second = agent.run("Reply with the one word OK.")
+
+      assert_equal :stop, first.stop_reason, first.error_message.to_s
+      assert_includes first.text, "NONE"
+      assert_equal :stop, second.stop_reason, second.error_message.to_s
+    ensure
+      provider&.close
+    end
+  end
+
+  # Anthropic refuses an image whose label and bytes differ.
+  def test_anthropic_sees_an_image_whose_label_is_wrong
+    assert_sees(live(*PROVIDERS.fetch(:anthropic)), mime_type: "image/jpeg") do |picture|
+      ["The picture:", picture]
+    end
+  end
+
   private
 
   def live(klass, key)
@@ -38,10 +67,9 @@ class TestToolImageLive < Minitest::Test
     klass.new(api_key: ENV.fetch(key))
   end
 
-  def assert_sees(provider)
+  def assert_sees(provider, mime_type: "image/png")
     colors = PALETTE.sample(4)
-    picture = Mistri::Content::Image.from_bytes(Mistri::Test::ColorBands.png(colors),
-                                                mime_type: "image/png")
+    picture = Mistri::Content::Image.from_bytes(Mistri::Test::ColorBands.png(colors), mime_type:)
     camera = Mistri::Tool.define("take_picture", "Takes a picture and returns it.") do
       yield picture
     end

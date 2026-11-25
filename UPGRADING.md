@@ -52,13 +52,38 @@ its text and the line `[1 non-text block(s) omitted]`. The image is now sent.
 
 - Every request that carries the result costs the image's tokens. A session
   with many screenshots costs more on these providers than it did.
-- OpenAI refuses an image it does not take, such as a BMP or an SVG, and the
-  refusal ends the request. Convert or drop such an image in `after_tool`.
-- A session stored before the upgrade that already holds such an image in a
-  tool result is refused from its next request. `after_tool` does not reach a
-  stored result. `transform_context:` does: convert or drop the image there.
 - Another origin of the OpenAI provider receives the image the same way, as
   an array in the output of the function call, and must take one.
+
+### An image Anthropic or OpenAI would refuse is sent as text
+
+Anthropic and OpenAI take PNG, JPEG, GIF and WebP. An image of another format
+in a tool result or a user turn ended the request, and every request of the
+session after it. Both providers are now sent an image by its first bytes: one
+of the four formats with the type its bytes show, and any other image as a
+line of text that says an image was not sent and why.
+
+- A host that drops such an image in `after_tool` or `transform_context:`
+  only to keep the session going can stop. A host that converts one should
+  keep doing so: the model sees the converted picture, and only a line of text
+  without it.
+- A session that such an image ended works again from its next request.
+  Nothing stored changes.
+- A model on these two providers no longer receives an image whose bytes are
+  not one of the four formats, whatever its label says. That holds for every
+  origin of the two providers.
+- An image whose label is not the type its bytes show, such as `image/jpg` or
+  a JPEG labelled `image/png`, is sent with its real type. Anthropic refused
+  both. An MCP server that names no type for a JPEG produced the second.
+  OpenAI took both, so a stored request that holds one differs once from the
+  request sent before and can miss the prompt cache once.
+- A session that moves to one of these two providers from a provider that
+  took the image goes on, where it was refused. The model there is not sent
+  the image, and when asked about it can say that an earlier answer about it
+  was a guess.
+- An image over a provider's size limits is still refused, and so is one whose
+  data is broken or whose base64 holds line breaks or spaces. The refusal
+  still ends the session. Make a large image smaller in `after_tool`.
 
 ### Gemini 2.5 models are removed
 
