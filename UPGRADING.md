@@ -443,6 +443,11 @@ Nothing changes until you pass `sandbox:` to an agent.
   the true size, and not the result's `ui`, which the `:tool_result` event
   carries. One run stores its first 100 calls. The events are emitted for
   every call.
+- A session also holds entries of type `code_documents`: the paths and the
+  versions of the documents a run of code read or wrote. They let a later run
+  write over a document that code read or wrote before. Where you render
+  `Session#entries` or `Session#transcript` for a person, skip them, as you
+  skip `code_call`.
 - `before_tool` is asked about every call from code, by the name of the tool:
   `read_file`, `write_file`, `list_files` and `delete_file` for the four file
   operations, with what the code passed. The code receives what `after_tool`

@@ -10,7 +10,10 @@ module Mistri
                "up or join data without reading the data into the conversation. In the code: " \
                "files.read(path) returns the whole text of a document as a string; " \
                "files.write(path, text) writes one; files.list(prefix) returns the paths under " \
-               "a folder; files.delete(path) deletes one. await tools.NAME(arguments) calls " \
+               "a folder; files.delete(path) deletes one. files.write replaces a document " \
+               "only if your code read it with files.read or wrote it with files.write, in " \
+               "this call or an earlier one, and it has not changed since. " \
+               "await tools.NAME(arguments) calls " \
                "one of your other tools with the arguments it takes and returns its result as " \
                "a string, or throws an error when the tool fails. Standard JavaScript is there " \
                "(JSON, RegExp, Math, Date, Map, Set). There is no network, no Node.js, no " \
@@ -20,7 +23,8 @@ module Mistri
     private_constant :RUN_CODE
 
     # What one run of code has done so far: the versions of the documents it
-    # read, the bytes it wrote and the calls it made.
+    # and the runs before it read or wrote, the bytes it wrote and the calls
+    # it made.
     CodeRun = Struct.new(:seen, :written, :calls)
     private_constant :CodeRun
 
@@ -33,11 +37,25 @@ module Mistri
                   schema: lambda {
                     string :code, "JavaScript, the body of an async function", required: true
                   }) do |args, context|
-        run = CodeRun.new({}, 0, 0)
-        asked = ->(operation, payload) { host.call(operation, payload, context, run) }
-        code_result(sandbox.run(args["code"].to_s, host: asked))
+        remembering(context.session) do |run|
+          asked = ->(operation, payload) { host.call(operation, payload, context, run) }
+          code_result(sandbox.run(args["code"].to_s, host: asked))
+        end
       rescue Error => e
         ToolResult.new(content: "The code did not finish: #{e.message}", error: true)
+      end
+    end
+
+    # A run starts from the versions the session holds and leaves the ones it
+    # learned there, also when the code fails or is stopped.
+    def remembering(session)
+      known = session ? session.code_documents : {}
+      run = CodeRun.new(known.dup, 0, 0)
+      begin
+        yield run
+      ensure
+        learned = run.seen.reject { |path, version| known[path] == version }
+        session&.remember_code_documents(learned.to_a)
       end
     end
 
@@ -59,7 +77,7 @@ module Mistri
       raise Error, unusable.content if unusable
 
       case operation
-      when "read" then read_from_code(workspace, path, run.seen)
+      when "read" then read_from_code(workspace, path)
       when "list"
         paths = workspace.list(payload["prefix"])
         [paths, paths.join("\n")]
@@ -68,17 +86,28 @@ module Mistri
       end
     end
 
-    def read_from_code(workspace, path, seen)
+    def read_from_code(workspace, path)
       content = workspace.read(path)
       raise Error, "No document at #{path.inspect}" if content.nil?
       raise Error, "#{path} is not text, so code cannot read it" unless content.valid_encoding?
 
-      seen[path] = version(content)
       [content, "Read #{path} (#{content.bytesize} bytes)"]
     end
 
-    # The version this run read stands in for if_version, so a write from code
-    # is conditional wherever write_file's is.
+    # A read counts once the code has received the document. A host's hook
+    # can refuse a read or rewrite it, so the agent says when that is.
+    def read_by_code(run, path, content)
+      remember(run.seen, path, content) unless read_only(path)
+    end
+
+    # The newest last, so a table that is full gives up its oldest.
+    def remember(seen, path, content)
+      seen.delete(path)
+      seen[path] = version(content)
+    end
+
+    # The version code last read or wrote stands in for if_version, so a write
+    # from code is conditional wherever write_file's is.
     def write_from_code(workspace, path, content, run)
       refuse_read_only(path)
       refuse_over_budget(run, content.bytesize)
@@ -89,12 +118,13 @@ module Mistri
                   write_legacy(workspace, path, content, seen[path])
                 end
       if written.is_a?(StaleWrite)
-        raise Error, "#{path} holds a document this code has not read, or one that changed " \
-                     "since. Read it in this code before writing it."
+        raise Error, "#{path} holds a document your code has not read or written, or one " \
+                     "that changed since. Nothing was written. Read it with files.read and " \
+                     "build the new text from what it holds now."
       end
 
       run.written += written.bytesize
-      seen[path] = version(written)
+      remember(seen, path, written)
       [nil, "Wrote #{path} (#{written.length} chars), version #{seen[path]}"]
     end
 
@@ -132,6 +162,6 @@ module Mistri
     end
 
     private_class_method :code_result, :read_from_code, :write_from_code, :delete_from_code,
-                         :refuse_read_only, :refuse_over_budget
+                         :refuse_read_only, :refuse_over_budget, :remember, :remembering
   end
 end

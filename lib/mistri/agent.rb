@@ -254,15 +254,17 @@ module Mistri
     end
 
     # A read gives after_tool the document, because that is what the code
-    # receives.
+    # receives. It counts for a later write only when the code received the
+    # document itself, which the hook can refuse or rewrite.
     def file_from_code(workspace, operation, call, context, run)
       value, line = Tools.file_from_code(workspace, operation, call.arguments, run)
-      return [value, line] unless @after_tool
-
       seen = operation == "read" ? value : line
-      text, result = rewritten_from_code(call, seen, context)
+      text, result = @after_tool ? rewritten_from_code(call, seen, context) : [seen, nil]
       return [nil, result] if result.is_a?(ToolResult) && result.error?
-      return [value, line] if text == seen
+
+      whole = text == seen
+      Tools.read_by_code(run, call.arguments["path"], value) if whole && operation == "read"
+      return [value, line] if whole
 
       case operation
       when "read" then [text, "Read #{call.arguments["path"]} (#{text.bytesize} bytes)"]

@@ -500,9 +500,10 @@ What the code has:
   `files.delete(path)`. Each is the document tool of the same kind, on the
   workspace that tool is bound to, so the agent needs that tool. A read returns
   the whole document, and of a document that is not text it is an error the
-  code can catch. A write over a document that exists needs a read of it in
-  the same run, and `scratchpad/tool-results/` stays read-only. Where a document
-  tool is the host's own, code calls it as a tool, as in
+  code can catch. A write replaces a document only when the code has read or
+  written it through `files`, in this run or an earlier one of the session, and
+  it has not changed since. `scratchpad/tool-results/` stays read-only. Where a
+  document tool is the host's own, code calls it as a tool, as in
   `await tools.write_file({ path, content })`.
 - `await tools.NAME(arguments)` for every other tool of the agent. It returns
   the result's text, and a failed result is thrown as an error. The built-in
@@ -529,6 +530,21 @@ travels on the event and is not stored. The entry and the two events hold a
 short copy: 2,000 bytes of the call's arguments and 2,000 bytes of its result.
 Among the arguments the largest give way first, so a path stays whole beside
 the content of a write, which keeps its start and its true size.
+
+What code read or wrote is kept in the session, so the rule for a write holds
+from one run to the next, after a restart and after a compaction. A run whose
+code read or wrote a document at a version the session does not hold yet
+appends one `code_documents` entry when it ends, with the path and the version
+of each. A read counts once the code has received the document: one that
+`after_tool` refused or rewrote does not. A session keeps 1,000 documents, the
+ones whose version it learned last, and a checkpoint carries them.
+`Session#code_documents` returns them. A read at the version the session
+already holds does not make a document newer. A document that fell out of the
+1,000 is refused until the code reads it again. So is one that another hand
+changed since: another agent, a person, or the model's own `write_file` or
+`edit_file`. So is a document written by a run that the process did not finish,
+because that run left no entry. A read under `scratchpad/tool-results/` is not
+kept, because nothing is written there.
 
 Limits: ten seconds of the code's own computing, five minutes for the whole
 run with the calls it makes, and 64 MB, set with `timeout:`, `total_timeout:`
