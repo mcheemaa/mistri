@@ -220,8 +220,7 @@ module Mistri
       case block["type"]
       when "text" then block["text"].to_s
       when "image"
-        Content::Image.from_bytes(block["data"].to_s.unpack1("m"),
-                                  mime_type: block["mimeType"] || "image/png")
+        Content::Image.new(data: block["data"], mime_type: block["mimeType"] || "image/png")
       when "resource" then resource_text(block["resource"] || {})
       when "resource_link" then "[resource: #{block["uri"]}]"
       else "[unsupported #{block["type"]} content]"

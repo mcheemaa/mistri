@@ -82,8 +82,27 @@ line of text that says an image was not sent and why.
   the image, and when asked about it can say that an earlier answer about it
   was a guess.
 - An image over a provider's size limits is still refused, and so is one whose
-  data is broken or whose base64 holds line breaks or spaces. The refusal
-  still ends the session. Make a large image smaller in `after_tool`.
+  data is broken. The refusal still ends the session. Make a large image
+  smaller in `after_tool`.
+
+### An image holds strict base64
+
+`Content::Image` kept the base64 text it was given. Every provider refuses
+base64 with line breaks, which is what `Base64.encode64` writes, and
+Anthropic and OpenAI also refuse base64 without padding or in the URL-safe
+alphabet. One such image ended the session. An image now holds strict base64,
+whatever form it was built from.
+
+- Nothing to change. `Content::Image.new(data: Base64.encode64(bytes), ...)`
+  now works.
+- `image.data` is the strict form, so it can differ from the text the image
+  was built from. `image.bytes` is the same.
+- A session that such an image ended works again when it is read. The stored
+  entry is not rewritten.
+- An image from an MCP server whose data is in the URL-safe alphabet used to
+  be damaged on its way in. It is now read as it is.
+- Building an image, or reading one from a session, checks its data once, at
+  about 0.4 ms for each megabyte. A request costs nothing more.
 
 ### Gemini 2.5 models are removed
 

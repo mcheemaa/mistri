@@ -443,12 +443,17 @@ from an MCP server, is sent as a line of text that says an image was not sent
 and why, so the model knows a picture was left out. The session keeps the
 image as it was stored. Gemini is sent every image as stored.
 
+An image holds strict base64, the form `Base64.strict_encode64` writes and
+the only form every provider takes. `Content::Image.new` takes base64 in any
+form, with line breaks as `Base64.encode64` writes it, without padding or in
+the URL-safe alphabet, and holds it in strict form. `from_bytes`,
+`from_data_uri` and an image from an MCP server go through the same place.
+
 An image over a provider's size limits is still refused, and so is one whose
-data is broken or whose base64 holds line breaks or spaces. The provider then
-refuses the whole request, and the result stays in the session, so the
-requests after it are refused too. Make a large image smaller in
-`after_tool`. `transform_context:` does the same for a result that is
-already stored.
+data is broken. The provider then refuses the whole request, and the result
+stays in the session, so the requests after it are refused too. Make a large
+image smaller in `after_tool`. `transform_context:` does the same for a
+result that is already stored.
 
 Return `error: true` for an expected failure the model should handle:
 

@@ -337,6 +337,10 @@ class TestContent < Minitest::Test
     assert_equal "image/png", image.mime_type
     assert_equal png, image.bytes
 
+    lines = "data:image/png;base64,#{[png * 30].pack("m").gsub("\n", "\r\n")}"
+
+    assert_equal png * 30, Mistri::Content::Image.from_data_uri(lines).bytes
+
     assert_raises(ArgumentError) { Mistri::Content::Image.from_data_uri("https://x/y.png") }
   end
 end
