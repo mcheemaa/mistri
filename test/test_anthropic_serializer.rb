@@ -4,6 +4,8 @@ require_relative "test_helper"
 
 class TestAnthropicSerializer < Minitest::Test
   SERIALIZER = Mistri::Providers::Anthropic::Serializer
+  PNG = "\x89PNG\r\n\x1A\n".b
+  JPEG = "\xFF\xD8\xFF\xE0".b
 
   def test_a_freeform_object_schema_passes_through
     tool = Mistri::Tool.define("render", "d", schema: lambda {
@@ -65,7 +67,7 @@ class TestAnthropicSerializer < Minitest::Test
 
   # The API refuses a failed tool_result that holds anything but text.
   def test_a_failed_result_keeps_its_text_and_its_image_follows_the_results
-    image = Mistri::Content::Image.from_bytes("png!", mime_type: "image/png")
+    image = Mistri::Content::Image.from_bytes(PNG, mime_type: "image/png")
     history = [Mistri::Message.tool(content: ["The camera failed.", image], tool_call_id: "a",
                                     tool_name: "camera", tool_error: true),
                Mistri::Message.tool(content: ["The page:", image], tool_call_id: "b"),
@@ -144,8 +146,36 @@ class TestAnthropicSerializer < Minitest::Test
     refute wire.first[:content].last.key?(:cache_control)
   end
 
+  # The API refuses an image whose label and bytes differ.
+  def test_an_image_is_sent_with_the_type_its_bytes_show
+    image = Mistri::Content::Image.from_bytes(JPEG, mime_type: "image/png")
+
+    source = SERIALIZER.message(Mistri::Message.user(["look", image]))[:content].last[:source]
+
+    assert_equal({ type: "base64", media_type: "image/jpeg", data: image.data }, source)
+  end
+
+  # The API takes four formats, and text alone in a failed tool_result.
+  def test_an_image_of_another_format_is_sent_as_text_inside_its_result
+    image = Mistri::Content::Image.from_bytes("BM bitmap", mime_type: "image/bmp")
+    history = [Mistri::Message.tool(content: ["The logo:", image], tool_call_id: "a"),
+               Mistri::Message.tool(content: ["No logo.", image], tool_call_id: "b",
+                                    tool_error: true)]
+    line = { type: "text", text: image.placeholder }
+
+    blocks = SERIALIZER.messages(history).first[:content]
+
+    assert_equal(
+      [{ type: "tool_result", tool_use_id: "a",
+         content: [{ type: "text", text: "The logo:" }, line] },
+       { type: "tool_result", tool_use_id: "b",
+         content: [{ type: "text", text: "No logo." }, line], is_error: true }],
+      blocks
+    )
+  end
+
   def test_images_and_eager_tools_take_their_wire_shapes
-    image = Mistri::Content::Image.from_bytes("png!", mime_type: "image/png")
+    image = Mistri::Content::Image.from_bytes(PNG, mime_type: "image/png")
     wire = SERIALIZER.message(Mistri::Message.user(["look", image]))
 
     assert_equal "base64", wire[:content].last[:source][:type]

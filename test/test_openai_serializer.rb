@@ -5,6 +5,8 @@ require_relative "test_helper"
 
 class TestOpenAISerializer < Minitest::Test
   SERIALIZER = Mistri::Providers::OpenAI::Serializer
+  PNG = "\x89PNG\r\n\x1A\n".b
+  JPEG = "\xFF\xD8\xFF\xE0".b
 
   def test_a_freeform_object_schema_passes_through
     tool = Mistri::Tool.define("render", "d", schema: lambda {
@@ -64,7 +66,7 @@ class TestOpenAISerializer < Minitest::Test
   end
 
   def test_a_tool_result_with_an_image_is_an_array_of_parts
-    image = Mistri::Content::Image.from_bytes("png!", mime_type: "image/png")
+    image = Mistri::Content::Image.from_bytes(PNG, mime_type: "image/png")
     result = Mistri::Message.tool(content: ["The page:", image], tool_call_id: "call_1")
 
     item = SERIALIZER.input_items([result]).first
@@ -78,13 +80,26 @@ class TestOpenAISerializer < Minitest::Test
   end
 
   def test_a_tool_result_of_an_image_alone_is_an_array_of_one_part
-    image = Mistri::Content::Image.from_bytes("png!", mime_type: "image/png")
+    image = Mistri::Content::Image.from_bytes(PNG, mime_type: "image/png")
     result = Mistri::Message.tool(content: [image], tool_call_id: "call_1")
 
     output = SERIALIZER.input_items([result]).first[:output]
 
     assert_equal [{ type: "input_image", image_url: "data:image/png;base64,#{image.data}" }],
                  output
+  end
+
+  # The API refuses a label that is not a MIME type, and a format it does not
+  # take.
+  def test_an_image_is_sent_by_its_bytes_and_another_format_as_text
+    jpeg = Mistri::Content::Image.from_bytes(JPEG, mime_type: "jpg")
+    bitmap = Mistri::Content::Image.from_bytes("BM bitmap", mime_type: "image/bmp")
+    result = Mistri::Message.tool(content: [jpeg, bitmap], tool_call_id: "call_1")
+
+    output = SERIALIZER.input_items([result]).first[:output]
+
+    assert_equal [{ type: "input_image", image_url: "data:image/jpeg;base64,#{jpeg.data}" },
+                  { type: "input_text", text: bitmap.placeholder }], output
   end
 
   def test_invalid_or_non_object_tool_arguments_replay_as_objects
@@ -138,7 +153,7 @@ class TestOpenAISerializer < Minitest::Test
   end
 
   def test_images_ride_as_data_urls
-    image = Mistri::Content::Image.from_bytes("png!", mime_type: "image/png")
+    image = Mistri::Content::Image.from_bytes(PNG, mime_type: "image/png")
     item = SERIALIZER.user_item(Mistri::Message.user(["see", image]))
 
     assert_equal "input_text", item[:content].first[:type]

@@ -5,6 +5,18 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+- An image that Anthropic or OpenAI would refuse no longer ends the session.
+  A tool result or a user turn with a BMP, an SVG or another format the two
+  do not take got a 400 for the whole request, and the image stayed in the
+  session, so every later request was refused too. On Anthropic so did a JPEG
+  labelled as a PNG, which is what an MCP server that names no type for its
+  image produced. Both providers are now sent an image by its first bytes: a
+  PNG, JPEG, GIF or WebP with the type its bytes show, and any other image as
+  a line of text that says an image was not sent and why. The session keeps
+  the image as it was stored, so a session that such an image ended works
+  again. `Content::Image#format` answers the format found. Gemini is sent
+  every image as before, and an image over a provider's size limits is still
+  refused.
 - The calls of one turn take effect in the order the model wrote them. They
   ran on up to four threads in any order, so a read could run before the write
   sent ahead of it. A tool now runs alone, in its place, unless it is defined

@@ -168,15 +168,23 @@ module Mistri
           case block
           when Content::Text then text_block(block)
           when Content::Thinking then thinking_block(block, own:)
-          when Content::Image
-            { type: "image",
-              source: { type: "base64", media_type: block.mime_type, data: block.data } }
+          when Content::Image then image_block(block)
           when ToolCall
             { type: "tool_use", id: block.id, name: block.name,
               input: ToolArguments.replay_object(block) }
           else
             raise SchemaError, "cannot serialize #{block.class} for Anthropic"
           end
+        end
+
+        # The API refuses a format it does not take and a label that differs
+        # from the bytes, so the type sent is the one the bytes show.
+        def image_block(image)
+          format = image.format
+          return { type: "text", text: image.placeholder } unless format
+
+          { type: "image",
+            source: { type: "base64", media_type: "image/#{format}", data: image.data } }
         end
 
         # The API rejects a turn whose text is only whitespace.
