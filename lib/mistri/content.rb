@@ -84,7 +84,7 @@ module Mistri
         super(data: Content.strict_base64(data), mime_type: Content.freeze_string(mime_type))
       end
 
-      # Data#with bypasses custom initializers, and the data must stay strict.
+      # On Ruby 3.2 Data#with skips initialize, and the data must stay strict.
       def with(data: self.data, mime_type: self.mime_type) = self.class.new(data:, mime_type:)
 
       def type = :image

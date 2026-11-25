@@ -28,6 +28,20 @@ class TestImageData < Minitest::Test
                                                 "mime_type" => "image/png").data
   end
 
+  def test_a_stored_image_is_read_strict_and_its_entry_is_left_as_it_was
+    store = Mistri::Stores::Memory.new
+    lines = ["a picture of some length, long enough for a second line".b * 2].pack("m")
+    store.append("s", { "type" => "message", "message" => {
+                   "role" => "user",
+                   "content" => [{ "type" => "image", "data" => lines, "mime_type" => "image/png" }]
+                 } })
+
+    image = Mistri::Session.new(store:, id: "s").messages.first.content.first
+
+    assert_equal lines.delete("\n"), image.data
+    assert_equal lines, store.load("s").first.dig("message", "content", 0, "data")
+  end
+
   def test_an_image_stays_strict_through_with_and_never_raises_on_other_text
     image = Mistri::Content::Image.from_bytes("picture", mime_type: "image/png")
 

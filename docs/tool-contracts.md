@@ -441,7 +441,7 @@ first bytes of an image. A PNG, JPEG, GIF or WebP is sent with the type its
 bytes show, whatever its label says. Any other image, such as a BMP or an SVG
 from an MCP server, is sent as a line of text that says an image was not sent
 and why, so the model knows a picture was left out. The session keeps the
-image as it was stored. Gemini is sent every image as stored.
+image. Gemini is sent every image.
 
 An image holds strict base64, the form `Base64.strict_encode64` writes and
 the only form every provider takes. `Content::Image.new` takes base64 in any

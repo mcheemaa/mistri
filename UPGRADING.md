@@ -96,13 +96,16 @@ whatever form it was built from.
 - Nothing to change. `Content::Image.new(data: Base64.encode64(bytes), ...)`
   now works.
 - `image.data` is the strict form, so it can differ from the text the image
-  was built from. `image.bytes` is the same.
+  was built from. `image.bytes` used to raise for those forms and now works.
 - A session that such an image ended works again when it is read. The stored
   entry is not rewritten.
 - An image from an MCP server whose data is in the URL-safe alphabet used to
-  be damaged on its way in. It is now read as it is.
-- Building an image, or reading one from a session, checks its data once, at
-  about 0.4 ms for each megabyte. A request costs nothing more.
+  be damaged on its way in. It is now read as the server meant it.
+- Building an image checks its data, at about 0.4 ms for each megabyte. A
+  session builds its messages again from the stored entries for each request,
+  so a request costs about 1 ms more for each megabyte of images the session
+  holds. An image stored in another form is written again each time, at about
+  4 ms for each megabyte.
 
 ### Gemini 2.5 models are removed
 

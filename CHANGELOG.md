@@ -16,8 +16,9 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   bridge go through it: an image from an MCP server is no longer decoded and
   encoded on its way in, and one in the URL-safe alphabet is no longer
   damaged. A session that such an image ended works again when it is read.
-  Building an image or reading one from a session costs about 0.4 ms for each
-  megabyte, and a request costs nothing more.
+  Building an image costs about 0.4 ms for each megabyte. A session builds its
+  messages again for each request, so a request costs about 1 ms more for
+  each megabyte of images the session holds.
 - An image that Anthropic or OpenAI would refuse no longer ends the session.
   A tool result or a user turn with a BMP, an SVG or another format the two
   do not take got a 400 for the whole request, and the image stayed in the
