@@ -513,6 +513,21 @@ class TestMcpOauthChecks < Minitest::Test # rubocop:disable Metrics/ClassLength 
     end
   end
 
+  def test_a_client_bound_to_another_issuer_is_not_handed_to_a_servers_origin
+    kept = { client_id: "kept", client_secret: "kept-secret",
+             token_auth_method: "client_secret_post", tolerant: true }
+    with_server(challenge_header: false, path_metadata: false) do |server|
+      assert_raises(OAUTH::IssuerChanged) do
+        start_flow(server, issuer: "https://trusted.example", **kept)
+      end
+      assert_raises(OAUTH::IssuerChanged) do
+        OAUTH.discover(url: server.url, issuer: "https://trusted.example", tolerant: true,
+                       allow_non_public: Mistri::Test::ALLOW_LOOPBACK)
+      end
+      assert_equal server.origin, start_flow(server, issuer: "#{server.origin}/", **kept)["issuer"]
+    end
+  end
+
   def test_a_server_that_takes_a_request_with_no_token_has_no_sign_in_to_read
     with_server(sign_in: false, path_metadata: false, oauth_metadata_status: 404) do |server|
       error = assert_raises(Mistri::MCP::Error) do

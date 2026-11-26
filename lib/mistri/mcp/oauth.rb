@@ -201,7 +201,7 @@ module Mistri
         authority = if document
                       authorization_server(document, issuer:, tolerant:)
                     else
-                      Egress.origin(URI(resource))
+                      origin_as_issuer(resource, issuer)
                     end
         metadata = server_metadata(authority, allow_non_public:, tolerant:, defaults: document.nil?)
         validate_endpoints(metadata, allow_non_public: allow_non_public)
@@ -210,6 +210,16 @@ module Mistri
         { "resource" => resource, "issuer" => metadata["issuer"],
           "scope" => resolve_scope(scope, challenge_scope, document || {}),
           "resource_metadata" => document, "server_metadata" => metadata }
+      end
+
+      # A client that was registered with another issuer is not handed to the
+      # origin of a server that names no authorization server.
+      def origin_as_issuer(resource, issuer)
+        origin = Egress.origin(URI(resource))
+        return origin if issuer.nil? || same_issuer?(origin, issuer)
+
+        raise IssuerChanged, "the server's origin stands for its authorization server, " \
+                             "and it is not the configured issuer"
       end
 
       # RFC 9728: a 401's WWW-Authenticate names the resource metadata URL;

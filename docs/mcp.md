@@ -979,9 +979,10 @@ accepts three things:
 
 The third applies only when the documents are not published. A server that
 could not be reached, or that answered 429 or a 5xx, ends the sign-in with its
-error. None of the three lets a token be asked for another origin. A host
-that starts a sign-in tolerantly passes `tolerant: true` to every later step
-of it.
+error. None of the three lets a token be asked for another origin, and a
+client that was registered with another issuer is refused with
+`IssuerChanged`, as it is exactly. A host that starts a sign-in tolerantly
+passes `tolerant: true` to every later step of it.
 
 ## Optional Rails connection generator
 
