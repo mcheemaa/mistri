@@ -49,7 +49,7 @@ class TestMcpHttpStreams < Minitest::Test
   TOOLS = { "echo" => ECHO, "lingers" => LINGERS, "chatters" => CHATTERS, "floods" => FLOODS,
             "ends" => ENDS,
             "leaves" => LEAVES.call(100), "leaves_long" => LEAVES.call(5000),
-            "leaves_mid_event" => LEAVES.call(50, "id: bad\0\n\nid: e2\n") }.freeze
+            "leaves_mid_event" => LEAVES.call(50, "id: bad\0\n\nid: so\rX: y\n\nid: e2\n") }.freeze
   # Answers the call the client came back for, on the stream of the GET.
   RESUMES = lambda do |server, socket, _request|
     server.open(socket)

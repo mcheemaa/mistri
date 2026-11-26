@@ -47,7 +47,7 @@ module Mistri
               @last_event_id = @event_id if @event_id
             elsif line.start_with?("id:")
               id = line.delete_prefix("id:").delete_prefix(" ")
-              @event_id = id unless id.include?("\0")
+              @event_id = id unless id.match?(/[\0\r]/)
             elsif line.start_with?("retry:")
               wait = line.delete_prefix("retry:").strip
               @retry_after = wait.to_i / 1000.0 if wait.match?(/\A\d+\z/)
