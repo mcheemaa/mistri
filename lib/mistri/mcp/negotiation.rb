@@ -99,6 +99,7 @@ module Mistri
           @resources = offers_resources?(result)
           @described = true
           @version = PROTOCOL_VERSION
+          @tools = usable(@tools) if @tools
           :newest
         end
       end

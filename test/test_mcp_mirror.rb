@@ -85,11 +85,13 @@ class TestMcpMirror < Minitest::Test
                              "protocolVersion" => "2026-07-28" })
     end
     older = build.call({ "tools" => [broken] })
-    older.call_tool("query", { "region" => "eu" })
+    _out, later = capture_io { older.call_tool("query", { "region" => "eu" }) }
     sent = server.requests("POST").last[:headers]
 
     assert_equal(["echo"], current.tools.map { |tool| tool["name"] })
     assert_match(/the MCP tool "query" was left out: x-mcp-header is not a header name/, warned)
+    assert_match(/the MCP tool "query" was left out/, later, "once the revision is known")
+    assert_empty older.tools
     assert_equal "query", sent["mcp-name"]
     assert_empty sent.keys.grep(/mcp-param|injected/)
     assert_empty MIRROR.headers(broken["inputSchema"], { "region" => "eu" })

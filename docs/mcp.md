@@ -208,10 +208,12 @@ the form of 2026-07-28 its first request is the call itself.
 
 A server can move from one form to the other after the answer was kept. When
 a server refuses the handshake of a remembered older revision, or refuses a
-request in the form of 2026-07-28 with an HTTP status, the client asks it
-again. A request is sent a second time only to a server that turned out to
-speak the other form, which refused the first for its form. A server that
-still speaks the same form gave its answer, and that is raised.
+request in the form of 2026-07-28 in a way that may be about its form, the
+client asks it again. A refused sign-in, a timeout, a limit and a server
+error are not about its form. A request is sent a second time only to a
+server that turned out to speak the other form, which refused the first for
+its form. A server that still speaks the same form gave its answer, and that
+is raised.
 
 In the form of 2026-07-28:
 
@@ -223,8 +225,10 @@ In the form of 2026-07-28:
   `x-mcp-header` is repeated in `Mcp-Param-*`. A direct `call_tool` on a
   client that holds no listing lists the tools first, to learn the marks. A
   tool whose marks break the rules of the revision is left out of the list and
-  named in a warning on standard error. So is one in a stored listing that
-  names 2026-07-28, and no parameter of such a tool is ever repeated.
+  named in a warning on standard error. So is one in a stored listing, once
+  the client knows the server speaks 2026-07-28, and no parameter of such a
+  tool is ever repeated. A tool that was bridged before that stays offered
+  until the host builds its tools again.
 - `close` sends no DELETE, because there is no session.
 - A server may answer a call by asking for input. The client declares no
   capability to give any, so such a call ends as a tool error that says so,
