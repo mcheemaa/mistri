@@ -33,11 +33,14 @@ module Mistri
       end
 
       # A notice goes to the host as the server sent it. What the host's
-      # callable raises is not the server's failure, so the call goes on.
+      # callable raises is not the server's failure, so the call goes on. A
+      # tool's limit that passes while the host is told still ends the call.
       def noticed(record)
         @on_notification&.call(record["method"], record["params"])
         nil
       rescue StandardError => e
+        raise if ToolExecutor.deadline?(e)
+
         warn("mistri: on_notification failed (#{e.class}: #{e.message})")
         nil
       end

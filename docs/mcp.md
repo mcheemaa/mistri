@@ -155,8 +155,9 @@ client = Mistri::MCP::Client.new(
 notification the server sends while the client reads: a changed tool list, a
 progress notice, a log line. It runs inside the call, so it must not use the
 client. What it raises is written to standard error with the prefix
-`mistri:`, and the call goes on. The kept tool list is not changed by a
-notice. The host lists again with `refresh: true` when it decides to.
+`mistri:`, and the call goes on. A bridged tool's `timeout:` still ends the
+call while it runs. The kept tool list is not changed by a notice. The host
+lists again with `refresh: true` when it decides to.
 
 A notice reaches the host when it arrives on a stream the client reads. Over
 stdio that is the next call at the latest. Over HTTP it is the stream of a
@@ -181,7 +182,8 @@ server by the `prefix:` the host gave it: `No connection to the MCP server
 "tracker" could be established, so tracker__search did not run`, or `the MCP
 server "tracker" needs a sign-in before its tools can be used`. A call to a
 server whose connection could not be opened did not run, and is not reported
-as one that may have completed.
+as one that may have completed. A tool whose `timeout:` passes before its
+call is sent says that it did not run, too.
 
 ### Protocol revisions
 

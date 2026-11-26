@@ -276,6 +276,10 @@ module Mistri
                "(#{error.message})."
       end
 
+      if ToolExecutor.deadline?(error)
+        return "#{local} did not run: its time limit passed before the call was sent to #{server}."
+      end
+
       "No connection to #{server} could be established, so #{local} did not run: #{error.message}"
     end
     private_class_method :unreachable

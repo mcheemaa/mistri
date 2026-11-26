@@ -35,6 +35,10 @@ module Mistri
 
     module_function
 
+    # Code that runs inside a tool and keeps a caller's errors from ending the
+    # call lets this one pass, or the call loses its limit.
+    def deadline?(error) = error.is_a?(InvocationTimeout)
+
     def call(calls, tools_by_name, signal: nil, max_concurrency: 4, session: nil, emit: nil,
              app: nil, result_limit_for: nil, scratchpad: nil)
       call_with_outcomes(

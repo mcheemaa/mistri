@@ -25,6 +25,13 @@ class TestMcpHostIsTold < Minitest::Test
       end.join)
       server.finish(socket)
     end,
+    "tells_then_waits" => lambda do |server, socket, id|
+      server.open(socket)
+      server.event(socket, CHANGED)
+      sleep 0.5
+      server.event(socket, server.answer(id, "late"))
+      server.finish(socket)
+    end,
     "works" => lambda do |server, socket, id|
       token = server.sent("tools/call").last.dig("params", "_meta", "progressToken")
       server.open(socket)
@@ -72,6 +79,25 @@ class TestMcpHostIsTold < Minitest::Test
 
     assert_equal "changed", @client.call_tool("changes_late", {}).dig("content", 0, "text")
     assert_equal ["notifications/tools/list_changed"], told
+  end
+
+  def test_a_tools_limit_ends_its_call_while_the_host_is_told
+    listing = { "tools" => [{ "name" => "tells_then_waits" }] }
+    client(listing: listing, on_notification: ->(_method, _params) { sleep 0.3 })
+    tool = Mistri::MCP.tools(@client, timeout: 0.1).first
+    call = Mistri::ToolCall.new(id: "c1", name: tool.name, arguments: {})
+    result = nil
+
+    _out, err = capture_io do
+      _call, result, seconds = Mistri::ToolExecutor.call([call], { tool.name => tool }).first
+
+      assert_operator seconds, :<, 0.3
+    end
+
+    assert_empty err
+    assert result.error
+    assert_match(/timed out after 0.1s/, result.content)
+    assert_equal 1, @server.sent("notifications/cancelled").length
   end
 
   def test_what_the_hosts_callable_raises_is_reported_and_the_call_goes_on
@@ -204,6 +230,24 @@ class TestMcpHostIsTold < Minitest::Test
                  down.content)
     assert_match(/tracker__echo did not run: connection failed: /, down.content)
     assert_equal :failed, @client.state
+  end
+
+  def test_a_limit_that_passes_before_the_call_is_sent_says_the_tool_did_not_run
+    slow = lambda do |server, socket, id|
+      sleep 0.4
+      server.result(socket, id, NEWEST)
+    end
+    listing = { "tools" => [{ "name" => "echo" }] }
+    client(server: { discover: slow }, listing: listing)
+    tool = Mistri::MCP.tools(@client, prefix: "tracker", timeout: 0.1).first
+    call = Mistri::ToolCall.new(id: "c1", name: tool.name, arguments: {})
+
+    _call, result, = Mistri::ToolExecutor.call([call], { tool.name => tool }).first
+
+    assert result.error
+    assert_equal "tracker__echo did not run: its time limit passed before the call was sent to " \
+                 'the MCP server "tracker".', result.content
+    assert_empty @server.sent("tools/call")
   end
 
   def test_a_tool_bridged_with_no_prefix_names_no_server
