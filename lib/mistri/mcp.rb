@@ -188,7 +188,7 @@ module Mistri
     # left out itself, and the tool that reads resources.
     def names_of(client, listed, reader)
       names = listed.grep(Hash).map { |tool| tool["name"] }
-      names += client.left_out if client.respond_to?(:left_out)
+      names.concat(Array(client.left_out)) if client.respond_to?(:left_out)
       reader ? names << READ_RESOURCE : names
     end
 

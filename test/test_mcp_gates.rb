@@ -13,7 +13,10 @@ class TestMcpGates < Minitest::Test
     "type" => "object", "properties" => { "count" => { "type" => "number", "x-mcp-header" => "N" } }
   } }.freeze
 
-  def client = Struct.new(:tools).new([{ "name" => "create", "description" => "Creates." }])
+  # A host's own client. It may name the tools it left out, and this one names none.
+  def client
+    Struct.new(:tools, :left_out).new([{ "name" => "create", "description" => "Creates." }])
+  end
 
   def test_a_key_that_names_no_tool_is_refused
     [{ create: true }, { "creat" => true }].each do |gates|
@@ -29,8 +32,8 @@ class TestMcpGates < Minitest::Test
   end
 
   def test_a_key_may_name_a_tool_the_client_left_out_also_from_a_stored_listing
-    server = Mistri::Test::McpScriptedServer.new(discover: NEWEST,
-                                                 listed: [{ "name" => "search" }, BROKEN])
+    listed = [{ "name" => "search" }, BROKEN]
+    server = Mistri::Test::McpScriptedServer.new(discover: NEWEST, listed: listed)
     build = lambda do |**options|
       Mistri::MCP::Client.new(url: server.url, allow_non_public: Mistri::Test::ALLOW_LOOPBACK,
                               **options)
@@ -48,6 +51,11 @@ class TestMcpGates < Minitest::Test
     assert_equal [%w[purge], %w[purge]], [fresh.left_out, stored.left_out]
     assert_equal %w[search], Mistri::MCP.tools(stored, **keys).map(&:name)
     assert_empty server.sent("tools/call")
+
+    listed.pop
+    fresh.tools(refresh: true)
+
+    assert_empty fresh.left_out, "a fresh listing holds only what the server lists now"
   ensure
     [fresh, stored].each { |built| built&.close }
     server&.stop
