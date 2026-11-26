@@ -41,6 +41,10 @@ module Mistri
         end
       end
 
+      # What an exact refusal adds when tolerant discovery takes the same
+      # answer, so the host can choose it.
+      def tolerable(what) = "; #{what}, which tolerant: true accepts"
+
       # The endpoints of the 2025-03-26 revision, for an authorization server
       # that publishes no metadata. That revision required PKCE.
       def default_metadata(authority)

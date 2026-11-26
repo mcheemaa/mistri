@@ -442,13 +442,25 @@ class TestMcpOauthChecks < Minitest::Test # rubocop:disable Metrics/ClassLength 
 
   def test_a_resource_document_for_the_origin_is_refused_exactly_and_taken_tolerantly
     with_server(resource: lambda(&:origin)) do |server|
-      assert_raises(Mistri::MCP::Error) { start_flow(server) }
+      error = assert_raises(Mistri::MCP::Error) { start_flow(server) }
+
+      assert_equal "protected resource metadata resource does not match #{server.url}; " \
+                   "it names #{server.origin}, which tolerant: true accepts", error.message
 
       flow = start_flow(server, tolerant: true)
 
       assert_equal server.origin, flow["resource"]
       assert_equal server.origin,
                    URI.decode_www_form(URI(flow["authorize_url"]).query).to_h["resource"]
+    end
+  end
+
+  def test_a_resource_document_for_another_origin_is_refused_tolerantly_too
+    with_server(resource: "https://other.example/mcp") do |server|
+      error = assert_raises(Mistri::MCP::Error) { start_flow(server, tolerant: true) }
+
+      assert_equal "protected resource metadata resource does not match #{server.url}",
+                   error.message
     end
   end
 
@@ -474,7 +486,10 @@ class TestMcpOauthChecks < Minitest::Test # rubocop:disable Metrics/ClassLength 
 
   def test_an_issuer_one_slash_apart_is_refused_exactly_and_taken_tolerantly
     with_server(issuer: ->(server) { "#{server.origin}/" }) do |server|
-      assert_raises(Mistri::MCP::Error) { start_flow(server) }
+      error = assert_raises(Mistri::MCP::Error) { start_flow(server) }
+
+      assert_equal "authorization server metadata issuer does not match #{server.origin}; " \
+                   "it differs by one trailing slash, which tolerant: true accepts", error.message
 
       flow = start_flow(server, tolerant: true)
 
@@ -490,7 +505,11 @@ class TestMcpOauthChecks < Minitest::Test # rubocop:disable Metrics/ClassLength 
     with_server do |server|
       stored = { client_id: "registered-earlier", issuer: "#{server.origin}/" }
 
-      assert_raises(OAUTH::IssuerChanged) { start_flow(server, **stored) }
+      error = assert_raises(OAUTH::IssuerChanged) { start_flow(server, **stored) }
+
+      assert_equal "protected resource metadata does not name the configured issuer; " \
+                   "one it names differs by one trailing slash, which tolerant: true accepts",
+                   error.message
 
       flow = start_flow(server, tolerant: true, **stored)
 

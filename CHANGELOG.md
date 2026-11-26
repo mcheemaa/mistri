@@ -5,6 +5,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+- A sign-in that exact discovery refuses says when tolerant discovery accepts
+  the same server. The error ends with `which tolerant: true accepts` for a
+  resource document that names the server's origin or a path above it, and
+  for an issuer one trailing slash apart. Exact discovery stays the default.
 - A call that an MCP server asked to be sent again is not reported as one that
   did not run when a later round fails to reach the server. The server took
   the first round, so `Client#call_tool` raises

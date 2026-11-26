@@ -1019,6 +1019,18 @@ client that was registered with another issuer is refused with
 `IssuerChanged`, as it is exactly. A host that starts a sign-in tolerantly
 passes `tolerant: true` to every later step of it.
 
+Exact discovery is the default. When it refuses a server for the first or the
+second reason, the error says that tolerant discovery accepts it:
+
+```text
+protected resource metadata resource does not match https://mcp.example.com/mcp; it names https://mcp.example.com, which tolerant: true accepts
+authorization server metadata issuer does not match https://auth.example.com/; it differs by one trailing slash, which tolerant: true accepts
+```
+
+A resource document for an origin makes a token good for every server on that
+origin. Keep discovery exact for an origin that holds servers of different
+owners.
+
 ## Optional Rails connection generator
 
 Rails applications can generate an encrypted connection model and migration:
