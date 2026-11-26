@@ -17,7 +17,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   that has, `Mistri::MCP.tools` returns one more tool, `read_resource` under
   the server's prefix, and a resource link in a result names it.
   `resources: false` leaves the tool out, and `resources: true` offers it for
-  a server that declares none. `Client#listing` carries `"resources"`.
+  a server that declares none. `allow:` and `deny:` decide it under the name
+  `read_resource`. `Client#listing` carries `"resources"`.
 - An embedded MCP resource with bytes is no longer dropped. An image is
   shown, bytes of a text type are read as text, and other bytes are saved to
   the agent's scratchpad, with the path in the result.

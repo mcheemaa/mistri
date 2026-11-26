@@ -41,6 +41,8 @@ For a server that declares resources, `Mistri::MCP.tools` now returns one
 more tool than the server lists: `read_resource`, under the server's prefix.
 
 - A host that wants the list as it was passes `resources: false`.
+- A host that passes `allow:` gets the tool only when the list names
+  `read_resource`, and `deny:` leaves it out by the same name.
 - A host that gates a server's tools gates this one with
   `gates: { "read_resource" => true }`, or with `needs_approval: true`.
 - A listing stored before this release has no `"resources"` key, so a client

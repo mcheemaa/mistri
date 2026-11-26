@@ -633,6 +633,9 @@ follow it:
   `[resource: notes://today]`, as before.
 - `resources: true` offers the tool for a server that returns links and
   declares no resources.
+- `allow:` and `deny:` decide it under the name `read_resource`, like any
+  tool the server lists. With `allow: ["search"]` it is left out, and a link
+  is the line `[resource: notes://today]`.
 - `gates: { "read_resource" => true }` makes a read wait for approval. The
   tool follows `deferred:` and `timeout:` like the server's own tools. It is
   marked to run beside other calls, unless `parallel: false` or

@@ -98,7 +98,8 @@ module Mistri
     # A server that has resources gets one more tool, read_resource, which
     # reads one by its URI: a result of the server's tools names them.
     # resources: true offers it for a server that declares none, and false
-    # leaves it out. It is gated by gates: { "read_resource" => true }.
+    # leaves it out. It is gated by gates: { "read_resource" => true }, and
+    # allow and deny take it or leave it out under that name.
     def tools(client, allow: nil, deny: [], prefix: nil, needs_approval: false, gates: {},
               complete_argument_validator: nil, deferred: false, instructions: true,
               parallel: nil, timeout: CALL_TIMEOUT, description_limit: DESCRIPTION_LIMIT,
@@ -108,10 +109,11 @@ module Mistri
       listed = client.tools
       reader = reader_name(client, listed, resources, prefix)
       { parallel:, gates: }.each { |option, keyed| known_keys!(option, keyed, listed, reader) }
+      reader = nil unless allowed?(READ_RESOURCE, allow, deny)
       instructions = instructions_for(client, instructions)
       bridged = listed.filter_map do |tool|
         remote = tool["name"] if tool.is_a?(Hash)
-        next if deny.include?(remote) || (allow && !allow.include?(remote))
+        next unless allowed?(remote, allow, deny)
 
         bridged = bridge(client, tool, prefix: prefix, gate: gates.fetch(remote, needs_approval),
                                        complete_argument_validator: complete_argument_validator,
@@ -179,6 +181,8 @@ module Mistri
     end
     private_class_method :saver
 
+    def allowed?(name, allow, deny) = !deny.include?(name) && (allow.nil? || allow.include?(name))
+
     # A key that names no tool leaves the tool it was meant for without what
     # the host set: without its approval, or to a hint that can mark a tool
     # the host set to run alone. A key may name a tool that allow or deny
@@ -193,7 +197,7 @@ module Mistri
       names = unknown.map { |name| label(name) }.join(", ")
       raise ConfigurationError, "#{option}: names no tool of this server: #{names}"
     end
-    private_class_method :known_keys!
+    private_class_method :allowed?, :known_keys!
 
     def claim(taken, local, remote)
       holder = taken[local]
