@@ -158,21 +158,19 @@ module Mistri
         private
 
         # The headers of a request, resolved before anything of it is written,
-        # so what the host's token callable raises here is tagged NotSent. A
-        # reply and a cancel ask for the token too, after their call was
-        # written, and what it raises then is not tagged.
+        # so what the host's token callable raises here is tagged NotSent.
         def unsent_headers
           request_headers
         rescue StandardError => e
           raise e.clone(freeze: false).extend(NotSent)
         end
 
-        # The headers are resolved first, so an error from the host's token
-        # callable is not taken for the server's answer. A server that was too
-        # slow is kept, as a slow stdio server is. A refusal keeps its class,
-        # status and body, and its message names an MCP server, not a provider.
+        # A reply, a notice and a cancel go out with the token last sent, so no
+        # code of the host runs for them. A server that was too slow is kept,
+        # as a slow stdio server is. A refusal keeps its class, status and
+        # body, and its message names an MCP server, not a provider.
         def post(transport, payload, headers = nil, **, &)
-          headers ||= request_headers
+          headers ||= request_headers(fresh: false)
           begin
             transport.post_either(@path, body: payload, headers: headers, **, &)
           rescue ProviderError => e

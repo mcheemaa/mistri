@@ -36,7 +36,7 @@ class TestMcpNotSent < Minitest::Test
   def test_an_error_before_the_call_is_sent_is_tagged_on_a_copy_of_it
     shared = RuntimeError.new("no token").extend(HostTag).freeze
     resolved = 0
-    token = -> { [1, 5].include?(resolved += 1) ? raise(shared) : "token" }
+    token = -> { [1, 4].include?(resolved += 1) ? raise(shared) : "token" }
     with_server do |server|
       client = remote_client(server, token: token)
       at_the_handshake = assert_raises(RuntimeError) { client.call_tool("echo", {}) }
@@ -47,7 +47,7 @@ class TestMcpNotSent < Minitest::Test
       refute_same shared, at_the_handshake
       assert_kind_of HostTag, at_the_call, "the copy keeps what the host extended its error with"
       assert_kind_of Mistri::MCP::NotSent, at_the_call, "nothing is written before the token"
-      assert_equal 5, resolved
+      assert_equal 4, resolved, "the handshake, then the question, the handshake and the call"
       assert_empty server.calls
       refute_kind_of Mistri::MCP::NotSent, shared
     end

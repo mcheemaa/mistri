@@ -139,7 +139,7 @@ class TestMcpRefusedToken < Minitest::Test
     refute_kind_of Mistri::MCP::NotSent, gone
   end
 
-  def test_a_token_that_fails_after_a_call_was_sent_does_not_say_the_call_did_not_run
+  def test_a_reply_is_sent_with_the_token_last_sent_and_asks_the_host_for_none
     down = false
     pings = lambda do |server, socket, id|
       server.open(socket)
@@ -155,10 +155,11 @@ class TestMcpRefusedToken < Minitest::Test
     result = Mistri::MCP.bridge(@client, { "name" => "charge" }, prefix: "billing").call({})
 
     assert_equal "charged", result
+    assert_equal({}, @server.reply["result"])
     assert_equal 1, @server.sent("tools/call").length
   end
 
-  def test_a_token_that_fails_at_the_cancel_does_not_replace_the_limit_that_ended_the_call
+  def test_a_cancel_is_sent_with_the_token_last_sent_and_asks_the_host_for_none
     down = false
     slow = lambda do |server, socket, id|
       down = true
@@ -172,35 +173,7 @@ class TestMcpRefusedToken < Minitest::Test
     assert result.error
     assert_match(/timed out after 0.2s. The tool may have completed partially/, result.content)
     assert_equal 1, @server.sent("tools/call").length
-  end
-
-  def test_a_limit_that_passes_while_a_reply_is_sent_still_ends_the_call
-    slow = false
-    pings = lambda do |server, socket, id|
-      server.open(socket)
-      slow = true
-      server.event(socket, { "jsonrpc" => "2.0", "id" => "p1", "method" => "ping" })
-      sleep 0.6
-      server.event(socket, server.answer(id, "charged"))
-      server.finish(socket)
-    end
-    client(-> { sleep(slow ? 0.4 : 0) && "new" }, tools: { "charge" => pings }).connect
-
-    assert_match(/timed out after 0.2s/, limited("charge", 0.2).content)
-  end
-
-  def test_a_limit_that_passes_while_a_cancel_is_sent_still_ends_the_call
-    slow = false
-    silent = lambda do |server, socket, _id|
-      server.open(socket)
-      slow = true
-      sleep 1
-      :close
-    end
-    token = -> { sleep(slow ? 0.4 : 0) && "new" }
-    client(token, tools: { "charge" => silent }, read_timeout: 0.2).connect
-
-    assert_match(/timed out after 0.3s/, limited("charge", 0.3).content)
+    assert_equal 1, @server.sent("notifications/cancelled").length
   end
 
   private
