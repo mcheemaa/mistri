@@ -43,7 +43,9 @@ module Mistri
     # tool list. It runs inside the call, so it must not use this client.
     # progress: true asks for progress with each tool call. state says whether
     # the server answered, could not be reached, or needs a sign-in, and
-    # failure says why.
+    # failure says why. left_out names the tools the server lists and this
+    # client does not offer, because their header marks break the rules of
+    # 2026-07-28.
     class Client
       include Negotiation
       include Conversation
@@ -53,7 +55,7 @@ module Mistri
       KEPT = [WireTimeout, ResponseTooLargeError, ResponseTooComplexError].freeze
       DOWN = [ProviderError, WireError, SystemCallError].freeze
       private_constant :KEPT, :DOWN
-      attr_reader :server_info, :state, :failure
+      attr_reader :server_info, :state, :failure, :left_out
 
       def initialize(url: nil, command: nil, env: {}, token: nil, headers: {},
                      client_name: "mistri", open_timeout: 15, read_timeout: 120,
@@ -85,6 +87,7 @@ module Mistri
         @serial = 0
         @connected = false
         @unanswered = false
+        @left_out = []
         @max_tool_pages = max_tool_pages
         @max_tools = max_tools
         keep(listing) unless listing.nil?
@@ -96,8 +99,9 @@ module Mistri
         watched do
           @tools = nil if refresh
           @tools ||= list_tools
-          { "tools" => @tools, "instructions" => @instructions,
-            "protocolVersion" => @version, "resources" => @resources || nil }.compact
+          { "tools" => @tools, "instructions" => @instructions, "protocolVersion" => @version,
+            "resources" => @resources || nil,
+            "leftOut" => (@left_out.dup unless @left_out.empty?) }.compact
         end
       end
 
@@ -315,6 +319,7 @@ module Mistri
       end
 
       def list_tools
+        @left_out = []
         collected = []
         cursor = nil
         seen_cursors = {}
@@ -340,14 +345,17 @@ module Mistri
       end
 
       # Over HTTP the revision of 2026-07-28 has a client leave out a tool
-      # whose header marks it cannot honour, and say why.
+      # whose header marks it cannot honour, and say why. Its name is kept,
+      # so a host's key for it still names a tool of the server.
       def usable(tools)
         return tools unless @wire.mirrors?
 
         tools.reject do |tool|
           reason = Mirror.violation(tool["inputSchema"]) if tool.is_a?(Hash)
-          warn("mistri: the MCP tool #{tool["name"].inspect} was left out: #{reason}") if reason
-          reason
+          next unless reason
+
+          warn("mistri: the MCP tool #{tool["name"].inspect} was left out: #{reason}")
+          @left_out |= [tool["name"]]
         end
       end
 
@@ -359,6 +367,7 @@ module Mistri
         end
 
         @instructions = (text unless text.to_s.empty?)
+        @left_out = Array(listing["leftOut"]).grep(String)
         @resources = listing["resources"] == true
         @described = true
         @version = version if SUPPORTED_VERSIONS.include?(version)

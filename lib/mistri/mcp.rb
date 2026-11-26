@@ -108,7 +108,8 @@ module Mistri
       taken = {}
       listed = client.tools
       reader = reader_name(client, listed, resources, prefix)
-      { parallel:, gates: }.each { |option, keyed| known_keys!(option, keyed, listed, reader) }
+      names = names_of(client, listed, reader)
+      { parallel:, gates: }.each { |option, keyed| known_keys!(option, keyed, names) }
       reader = nil unless allowed?(READ_RESOURCE, allow, deny)
       instructions = instructions_for(client, instructions)
       bridged = listed.filter_map do |tool|
@@ -183,21 +184,28 @@ module Mistri
 
     def allowed?(name, allow, deny) = !deny.include?(name) && (allow.nil? || allow.include?(name))
 
+    # The names a host's key may use: the tools the client lists, the ones it
+    # left out itself, and the tool that reads resources.
+    def names_of(client, listed, reader)
+      names = listed.grep(Hash).map { |tool| tool["name"] }
+      names += client.left_out if client.respond_to?(:left_out)
+      reader ? names << READ_RESOURCE : names
+    end
+
     # A key that names no tool leaves the tool it was meant for without what
     # the host set: without its approval, or to a hint that can mark a tool
     # the host set to run alone. A key may name a tool that allow or deny
     # leaves out.
-    def known_keys!(option, keyed, listed, reader)
+    def known_keys!(option, keyed, names)
       return unless keyed.is_a?(Hash)
 
-      unknown = keyed.keys - listed.grep(Hash).map { |tool| tool["name"] }
-      unknown -= [READ_RESOURCE] if reader
+      unknown = keyed.keys - names
       return if unknown.empty?
 
-      names = unknown.map { |name| label(name) }.join(", ")
-      raise ConfigurationError, "#{option}: names no tool of this server: #{names}"
+      raise ConfigurationError, "#{option}: names no tool of this server: " \
+                                "#{unknown.map { |name| label(name) }.join(", ")}"
     end
-    private_class_method :allowed?, :known_keys!
+    private_class_method :allowed?, :names_of, :known_keys!
 
     def claim(taken, local, remote)
       holder = taken[local]

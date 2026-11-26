@@ -92,8 +92,9 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   offers 2026-07-28 gets requests that carry the revision, the client's name
   and its capabilities in `_meta`, and over HTTP the headers `Mcp-Method`,
   `Mcp-Name` and `Mcp-Param-*` for each parameter a tool marks with
-  `x-mcp-header`. An older server gets the handshake of 2025-11-25 as
-  before. `client.listing` holds the revision as `"protocolVersion"`, so a
+  `x-mcp-header`. A tool whose marks break the rules of the revision is left
+  out of the list, with a warning, and `Client#left_out` names it. An older
+  server gets the handshake of 2025-11-25 as before. `client.listing` holds the revision as `"protocolVersion"`, so a
   client built from a stored listing asks nothing. A call that a 2026-07-28
   server answers by asking for input ends as a tool error that says so,
   because the client declares no elicitation. A call that such a server asks

@@ -229,7 +229,8 @@ In the form of 2026-07-28:
   tool whose marks break the rules of the revision is left out of the list and
   named in a warning on standard error. So is one in a stored listing, once
   the client knows the server speaks 2026-07-28, and no parameter of such a
-  tool is ever repeated. A tool that was bridged before that stays offered
+  tool is ever repeated. `client.left_out` holds the names of the tools that
+  were left out. A tool that was bridged before that stays offered
   until the host builds its tools again.
 - `close` sends no DELETE, because there is no session.
 - A server may answer a call by asking for input. The client declares no
@@ -264,8 +265,8 @@ looping or allocating without bound.
 Listing a server's tools takes a connection, and a stdio server must be
 started first. With many servers that is too slow to repeat each time an
 agent is built. `client.listing` returns the server's tools, its
-`instructions` when it sent any, the revision it speaks, and whether it has
-resources, as plain JSON.
+`instructions` when it sent any, the revision it speaks, whether it has
+resources, and the names of the tools the client left out, as plain JSON.
 Store it, and pass it to the clients built later:
 
 ```ruby
@@ -409,7 +410,9 @@ such a server should raise from the block.
 `needs_approval:` gates every bridged tool. `gates:` sets policy by remote name
 and overrides the shared default. A key of `gates:` that names no tool of the
 server raises `Mistri::ConfigurationError`: a name spelled another way, or a
-symbol, would leave the tool it was meant for to run with no approval.
+symbol, would leave the tool it was meant for to run with no approval. A key
+may name a tool that is not offered: one that `allow:` or `deny:` leaves out,
+or one that the client left out itself.
 
 A bridged tool is marked `parallel` when its server lists it with
 `readOnlyHint: true`, so it runs beside its marked neighbours in a turn. Any
