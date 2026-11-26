@@ -5,6 +5,15 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+- A bridged MCP tool stops after 300 seconds. A server that keeps sending
+  messages and never answers a call restarted the read timeout with each one,
+  so the call, and the run with it, had no end. `Mistri::MCP.tools` and
+  `Mistri::MCP.bridge` now take `timeout:`, the seconds one call may take in
+  all: 300 unless the host passes another number, and `nil` for no limit. The
+  call ends as a tool error that says the tool timed out and may have
+  completed. The server and its session are kept and the next call works. A
+  stdio server whose input holds half a message, because a write to it was cut
+  short, is started again before the next call.
 - An image holds strict base64, whatever form it was built from.
   `Content::Image` kept the text it was given, and every provider refuses
   base64 with line breaks, which is what `Base64.encode64` writes. Anthropic

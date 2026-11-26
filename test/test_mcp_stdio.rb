@@ -1,6 +1,7 @@
 # frozen_string_literal: true
 
 require_relative "test_helper"
+require "timeout"
 require "tmpdir"
 
 # The stdio wire: a real spawned child process speaking line-delimited
@@ -26,6 +27,17 @@ class TestMcpStdio < Minitest::Test
       tool = message.dig("params", "name")
       exit if tool == "die"
       puts "not json at all" if tool == "corrupt"
+      if message["method"] == "tools/call" && tool == "drip"
+        Thread.new do
+          notice = { "jsonrpc" => "2.0", "method" => "notifications/message",
+                     "params" => { "level" => "info", "data" => "still working" } }
+          loop do
+            puts JSON.generate(notice)
+            sleep 0.02
+          end
+        end
+        next
+      end
       if message["method"] == "tools/call" && tool == "eof"
         result = { "content" => [{ "type" => "text", "text" => "tail" }] }
         response = { "jsonrpc" => "2.0", "id" => message["id"], "result" => result }
@@ -71,6 +83,11 @@ class TestMcpStdio < Minitest::Test
         else {}
         end
       puts JSON.generate({ "jsonrpc" => "2.0", "id" => message["id"], "result" => result })
+      stalled = ENV["STUB_STALL_INPUT"]
+      if stalled && message["method"] == "tools/list" && !File.exist?(stalled)
+        File.write(stalled, Process.pid.to_s)
+        sleep 2
+      end
     end
   SCRIPT
 
@@ -129,6 +146,56 @@ class TestMcpStdio < Minitest::Test
     assert_equal "echo: hi", agent.session.messages.select(&:tool?).last.text
   ensure
     stdio.close
+  end
+
+  def test_a_bridged_tool_stops_at_its_limit_while_the_server_keeps_sending
+    Dir.mktmpdir do |directory|
+      trace = File.join(directory, "trace")
+      stdio = client(env: { "STUB_TRACE" => trace })
+      provider = Mistri::Providers::Fake.new(turns: [
+                                               { tool_calls: [{ name: "drip", arguments: {} }] },
+                                               { tool_calls: [{ name: "echo",
+                                                                arguments: { "text" => "hi" } }] },
+                                               { text: "done" }
+                                             ])
+      listed = [*stdio.tools, { "name" => "drip", "description" => "Never answers." }]
+      tools = listed.map { |spec| Mistri::MCP.bridge(stdio, spec, timeout: 0.3) }
+      agent = Mistri::Agent.new(provider:, tools:)
+
+      result = agent.run("go")
+      stuck, later = agent.session.messages.select(&:tool?)
+      pids = File.readlines(trace, chomp: true).map { |line| line.split(":", 2).first }.uniq
+
+      assert_predicate result, :completed?
+      assert_predicate stuck, :tool_error?
+      assert_match(/timed out after 0\.3s/, stuck.text)
+      assert_equal "echo: hi", later.text
+      assert_equal 1, pids.length, "the server was not started again"
+    ensure
+      stdio&.close
+    end
+  end
+
+  def test_a_write_that_was_cut_starts_the_server_again
+    Dir.mktmpdir do |directory|
+      trace = File.join(directory, "trace")
+      stdio = client(env: { "STUB_TRACE" => trace,
+                            "STUB_STALL_INPUT" => File.join(directory, "stalled") })
+      stdio.tools
+      cut = Class.new(StandardError)
+
+      assert_raises(cut) do
+        Timeout.timeout(0.3, cut) { stdio.call_tool("echo", { "text" => "x" * 300_000 }) }
+      end
+
+      result = stdio.call_tool("echo", { "text" => "next" })
+      pids = File.readlines(trace, chomp: true).map { |line| line.split(":", 2).first }.uniq
+
+      assert_equal "echo: next", result.dig("content", 0, "text")
+      assert_equal 2, pids.length, "half a message was left in the first server's input"
+    ensure
+      stdio&.close
+    end
   end
 
   def test_a_dying_server_raises_loudly

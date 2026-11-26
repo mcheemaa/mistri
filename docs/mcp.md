@@ -401,6 +401,28 @@ Byte overflow raises `Mistri::ResponseTooLargeError`. Structural overflow raises
 Either failure resets the wire and negotiated session. The next operation must
 handshake again.
 
+### The time one call may take
+
+`read_timeout:` is the wait for one message. A server that keeps sending
+messages and never answers the call starts that wait again each time, so a
+bridged tool also has a limit for the whole call:
+
+```ruby
+Mistri::MCP.tools(client)                # 300 seconds, Mistri::MCP::CALL_TIMEOUT
+Mistri::MCP.tools(client, timeout: 900)  # the host's number
+Mistri::MCP.tools(client, timeout: nil)  # no limit
+```
+
+`Mistri::MCP.bridge` takes the same option. The limit is the tool's own
+`timeout`, so the tool executor ends the call. The model reads that the tool
+timed out and may have completed, and the agent goes on. The server and its
+session are kept, and the next call works. When the limit cuts a message that
+was still being written to a stdio server, that server is started again before
+the next call. A call that waits behind another call to the same server spends
+its limit waiting.
+
+A direct `Client#call_tool` has no such limit.
+
 ### Ambiguous tool delivery
 
 A response boundary or wire failure after `tools/call` is different from an

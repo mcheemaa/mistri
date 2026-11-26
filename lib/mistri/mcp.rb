@@ -25,6 +25,9 @@ module Mistri
     # underscores and hyphens, 64 at most, not starting with a digit or hyphen.
     NAME_LIMIT = 64
     SAFE_NAME = /\A[A-Za-z_][A-Za-z0-9_-]{0,63}\z/
+    # A server that keeps sending and never answers restarts the read timeout
+    # with every message, so one call is bounded in all.
+    CALL_TIMEOUT = 300
 
     # A protocol-level failure: a JSON-RPC error, a missing response, an
     # unsupported negotiation.
@@ -64,10 +67,12 @@ module Mistri
     # conversation, and a string is sent in their place. parallel says which
     # tools may run beside others in a turn: nil follows each tool's
     # readOnlyHint, true or false sets every tool, and a hash sets tools by
-    # remote name and leaves the rest to their hint.
+    # remote name and leaves the rest to their hint. timeout is the seconds one
+    # call may take in all before the agent stops waiting for it, and nil sets
+    # no limit.
     def tools(client, allow: nil, deny: [], prefix: nil, needs_approval: false, gates: {},
               complete_argument_validator: nil, deferred: false, instructions: true,
-              parallel: nil)
+              parallel: nil, timeout: CALL_TIMEOUT)
       taken = {}
       listed = client.tools
       known_marks!(parallel, listed)
@@ -79,7 +84,8 @@ module Mistri
         bridged = bridge(client, tool, prefix: prefix, gate: gates.fetch(remote, needs_approval),
                                        complete_argument_validator: complete_argument_validator,
                                        deferred: deferred, instructions: instructions,
-                                       parallel: parallel.is_a?(Hash) ? parallel[remote] : parallel)
+                                       parallel: parallel.is_a?(Hash) ? parallel[remote] : parallel,
+                                       timeout: timeout)
         claim(taken, bridged.name, remote)
         bridged
       rescue ConfigurationError => e
@@ -136,7 +142,7 @@ module Mistri
     # the remote name. The server is always called with the remote name.
     def bridge(client, spec, prefix: nil, name: nil, gate: false,
                complete_argument_validator: nil, deferred: false, instructions: nil,
-               parallel: nil)
+               parallel: nil, timeout: CALL_TIMEOUT)
       raise ConfigurationError, "the definition is not an object" unless spec.is_a?(Hash)
 
       remote = spec["name"]
@@ -160,6 +166,7 @@ module Mistri
       Tool.define(local, description,
                   input_schema: input_schema, parallel: marked?(spec, parallel),
                   needs_approval: gate, deferred: deferred, instructions: instructions,
+                  timeout: timeout,
                   complete_argument_validator: complete_argument_validator) do |args|
         answer(client.call_tool(remote, args || {}))
       rescue NotSent => e

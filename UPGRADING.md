@@ -13,6 +13,15 @@ test.
 
 Most hosts need no code change. Read the points that apply to you.
 
+### A bridged MCP tool has a limit of 300 seconds
+
+A tool from `Mistri::MCP.tools` or `Mistri::MCP.bridge` now ends as a tool
+error when one call takes more than 300 seconds in all.
+
+- For a server whose calls rightly take longer, pass the seconds:
+  `Mistri::MCP.tools(client, timeout: 1800)`.
+- For the earlier behaviour, pass `timeout: nil`.
+
 ### The calls of a turn run in the order written
 
 A tool used to run at the same time as the other calls of its turn. It now

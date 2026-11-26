@@ -144,7 +144,7 @@ module Mistri
         end
 
         def call(payload, **)
-          spawn_server unless @pid
+          start
           write(payload)
           loop do
             record = read_record
@@ -155,7 +155,7 @@ module Mistri
         end
 
         def notify(payload)
-          spawn_server unless @pid
+          start
           write(payload)
           nil
         end
@@ -175,10 +175,18 @@ module Mistri
             @pid = nil
           end
           @read_buffer&.clear
+          @cut_write = false
           nil
         end
 
         private
+
+        # A write that was cut short left half a message in the server's input,
+        # and the next message would be read as its end.
+        def start
+          close if @cut_write
+          spawn_server unless @pid
+        end
 
         def spawn_server
           child_in, @stdin = IO.pipe
@@ -193,8 +201,10 @@ module Mistri
         end
 
         def write(payload)
+          @cut_write = true
           @stdin.write("#{JSON.generate(payload)}\n")
           @stdin.flush
+          @cut_write = false
         rescue Errno::EPIPE
           raise WireError, "the MCP server closed its input"
         end
