@@ -44,13 +44,11 @@ module Mistri
       include Negotiation
       include Conversation
 
-      # Times a call is sent again for a server that asks to be called again.
-      STATE_ROUNDS = 3
       # The failures that leave a server as it was, and the ones that say it
       # could not be used.
       KEPT = [WireTimeout, ResponseTooLargeError, ResponseTooComplexError].freeze
       DOWN = [ProviderError, WireError, SystemCallError].freeze
-      private_constant :STATE_ROUNDS, :KEPT, :DOWN
+      private_constant :KEPT, :DOWN
       attr_reader :server_info, :state, :failure
 
       def initialize(url: nil, command: nil, env: {}, token: nil, headers: {},
@@ -139,15 +137,19 @@ module Mistri
       # An error raised before the call is sent is raised as a copy tagged
       # NotSent. The error itself may be frozen, or raised again by a later
       # call that was sent. One client runs one call at a time, so a call
-      # that is ended while it waits for another was not sent either.
+      # that is ended while it waits for another was not sent either. A
+      # server that asks for a call again has taken it, so a later round that
+      # is not delivered leaves the outcome of the call open.
       def call_tool(name, arguments = {})
         waiting = true
         @mutex.synchronize do
           waiting = false
-          @sent = false
+          @sent = @taken = false
           finished(name, arguments, request("tools/call", { name: name, arguments: arguments }))
         rescue StandardError => e
           note(e)
+          raise AmbiguousDeliveryError, unconfirmed(e) if @taken && undelivered?(e)
+
           raise unsent?(e) ? tagged(e) : e
         end
       rescue StandardError => e
@@ -182,6 +184,12 @@ module Mistri
       # A call was not sent when it failed before its request, or when no
       # connection could be opened to send it on.
       def unsent?(error) = !@sent || Transport.unopened?(error.cause)
+
+      # The failures a bridged tool reports as a call that did not run.
+      def undelivered?(error)
+        error.is_a?(NotSent) || error.is_a?(AuthenticationError) ||
+          Transport.unopened?(error.cause)
+      end
 
       # A copy, so the error a host owns is not changed. clone keeps a module
       # the host extended its error with, which dup would drop.
@@ -263,21 +271,6 @@ module Mistri
           listed.is_a?(Hash) && listed["name"] == params[:name]
         end
         { mirror: tool && tool["inputSchema"] }
-      end
-
-      # In the form of 2026-07-28 a server may answer a call by asking for
-      # input. This client declares none it can give, so a call that waits
-      # for some ends as the tool's own error, in words a model can pass on. A
-      # result that asks for nothing and carries state is sent again with it.
-      def finished(name, arguments, result, rounds = STATE_ROUNDS)
-        return result unless result.is_a?(Hash) && result["resultType"] == "input_required"
-
-        asked = result["inputRequests"]
-        return declined(asked) if rounds.zero? || (asked.is_a?(Hash) && !asked.empty?)
-
-        params = { name: name, arguments: arguments }
-        params[:requestState] = result["requestState"] if result.key?("requestState")
-        finished(name, arguments, request("tools/call", params), rounds - 1)
       end
 
       def rpc(method, params, newest: stateless?, **options)

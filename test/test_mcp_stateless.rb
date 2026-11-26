@@ -12,6 +12,7 @@ class TestMcpStateless < Minitest::Test
                                                "params" => { "message" => "Please confirm" } },
                                 "roots" => { "method" => "roots/list" },
                                 "odd" => "not a request" } }.freeze
+  AGAIN = { "resultType" => "input_required", "requestState" => "one" }.freeze
   TOOLS = {
     "asks" => ->(server, socket, id) { server.result(socket, id, ASKS) },
     "strange" => lambda { |server, socket, id|
@@ -87,6 +88,57 @@ class TestMcpStateless < Minitest::Test
     assert_equal 4, @server.sent("tools/call").length
   end
 
+  # The server took the first round of each of these calls. Whatever keeps a
+  # later round from it, the call is not one that did not run.
+  def test_a_later_round_whose_token_fails_leaves_the_outcome_open
+    armed = false
+    tool = lambda do |server, socket, id|
+      armed = true
+      server.result(socket, id, AGAIN)
+    end
+    client({ "turns" => tool }, token: -> { armed ? raise("no token") : "token" })
+
+    error = assert_raises(Mistri::AmbiguousDeliveryError) { @client.call_tool("turns", {}) }
+
+    refute_kind_of Mistri::MCP::NotSent, error
+    assert_match(/its tool outcome could not be confirmed: no token/, error.message)
+    assert_equal 1, @server.sent("tools/call").length
+    assert_equal :connected, @client.state, "an error of the host's own says nothing of the server"
+  end
+
+  def test_a_later_round_with_no_connection_leaves_the_outcome_open
+    tool = lambda do |server, socket, id|
+      server.stop_listening
+      server.json(socket, { "jsonrpc" => "2.0", "id" => id, "result" => AGAIN },
+                  headers: { "Connection" => "close" })
+      :close
+    end
+
+    error = assert_raises(Mistri::AmbiguousDeliveryError) do
+      client({ "turns" => tool }).call_tool("turns", {})
+    end
+
+    refute_kind_of Mistri::MCP::NotSent, error
+    assert_match(/its tool outcome could not be confirmed: connection failed/, error.message)
+  end
+
+  def test_a_later_round_the_server_does_not_authorize_leaves_the_outcome_open
+    rounds = 0
+    tool = lambda do |server, socket, id|
+      next server.json(socket, "", status: 401) if (rounds += 1) > 1
+
+      server.result(socket, id, AGAIN)
+    end
+
+    error = assert_raises(Mistri::AmbiguousDeliveryError) do
+      client({ "turns" => tool }).call_tool("turns", {})
+    end
+
+    assert_match(/could not be confirmed: the MCP server did not authorize the request/,
+                 error.message)
+    assert_equal :needs_sign_in, @client.state
+  end
+
   def test_a_result_of_an_unknown_type_is_refused
     error = assert_raises(Mistri::MCP::Error) { client.call_tool("strange", {}) }
 
@@ -142,9 +194,9 @@ class TestMcpStateless < Minitest::Test
 
   private
 
-  def client(extra = {}, read_timeout: 10)
+  def client(extra = {}, read_timeout: 10, **)
     @server = Mistri::Test::McpScriptedServer.new(tools: TOOLS.merge(extra), discover: NEWEST)
     @client = Mistri::MCP::Client.new(url: @server.url, read_timeout: read_timeout,
-                                      allow_non_public: Mistri::Test::ALLOW_LOOPBACK)
+                                      allow_non_public: Mistri::Test::ALLOW_LOOPBACK, **)
   end
 end

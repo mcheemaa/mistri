@@ -16,8 +16,10 @@ module Mistri
       UNSUPPORTED_VERSION = -32_022
       # A refusal with one of these says nothing about the revision.
       UNRELATED_STATUSES = [401, 403, 408, 429].freeze
+      # Times a call is sent again for a server that asks to be called again.
+      STATE_ROUNDS = 3
       private_constant :HANDSHAKE_VERSIONS, :NEWER_ERRORS, :UNSUPPORTED_VERSION,
-                       :UNRELATED_STATUSES
+                       :UNRELATED_STATUSES, :STATE_ROUNDS
 
       private
 
@@ -175,6 +177,22 @@ module Mistri
         { "io.modelcontextprotocol/protocolVersion" => PROTOCOL_VERSION,
           "io.modelcontextprotocol/clientInfo" => { name: @client_name, version: Mistri::VERSION },
           "io.modelcontextprotocol/clientCapabilities" => {} }
+      end
+
+      # In the form of 2026-07-28 a server may answer a call by asking for
+      # input. This client declares none it can give, so a call that waits
+      # for some ends as the tool's own error, in words a model can pass on. A
+      # result that asks for nothing and carries state is sent again with it.
+      def finished(name, arguments, result, rounds = STATE_ROUNDS)
+        return result unless result.is_a?(Hash) && result["resultType"] == "input_required"
+
+        asked = result["inputRequests"]
+        return declined(asked) if rounds.zero? || (asked.is_a?(Hash) && !asked.empty?)
+
+        params = { name: name, arguments: arguments }
+        params[:requestState] = result["requestState"] if result.key?("requestState")
+        @taken = true
+        finished(name, arguments, request("tools/call", params), rounds - 1)
       end
 
       # What a model reads when a server asked for input to finish a call.

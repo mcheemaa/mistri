@@ -762,6 +762,12 @@ tagged with `Mistri::MCP::NotSent`, of the same class. A bridged tool turns it
 into an error result that states no connection could be established and the
 tool did not run, so the model does not report a partial effect.
 
+A server of 2026-07-28 may ask for a call to be sent again with state. Once it
+has answered one round, the call has reached it. A later round that is not
+delivered, because the token callable raised, no connection could be opened or
+the server did not authorize it, raises `Mistri::AmbiguousDeliveryError`, and
+is never reported as a call that did not run.
+
 ## Remote network policy
 
 Remote MCP and server-side OAuth URLs are untrusted input. By default Mistri:

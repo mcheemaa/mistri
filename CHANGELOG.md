@@ -5,6 +5,12 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+- A call that an MCP server asked to be sent again is not reported as one that
+  did not run when a later round fails to reach the server. The server took
+  the first round, so `Client#call_tool` raises
+  `Mistri::AmbiguousDeliveryError` when a later round's token callable raises,
+  its connection cannot be opened, or the server does not authorize it.
+  `Client#state` is `:needs_sign_in` after such a refusal, as before.
 - A key of `gates:` that names no tool of the server raises
   `Mistri::ConfigurationError`, as a key of a `parallel:` hash does. A name
   spelled another way, or a symbol, matched no tool and said nothing, so the

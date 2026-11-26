@@ -22,8 +22,13 @@ module Mistri
 
       def origin = "http://127.0.0.1:#{@server.addr[1]}"
 
+      # Takes no new connection from here on. The open ones go on.
+      def stop_listening
+        @server.close unless @server.closed?
+      end
+
       def stop
-        @server.close
+        stop_listening
         [@thread, *@handlers].each do |thread|
           thread.kill
           thread.join
