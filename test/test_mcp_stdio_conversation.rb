@@ -130,7 +130,7 @@ class TestMcpStdioConversation < Minitest::Test
 
     assert_match(/timed out waiting for the MCP server/, error.message)
     assert_equal "echo: mine", result.dig("content", 0, "text"), "the late answer was not taken"
-    assert_equal [{ "requestId" => 2, "reason" => "timed out" }], cancels
+    assert_equal [{ "requestId" => called("tools/call"), "reason" => "timed out" }], cancels
     assert_equal 1, pids.length
   end
 
@@ -142,7 +142,7 @@ class TestMcpStdioConversation < Minitest::Test
 
     assert_match(/timed out/, error.message)
     assert_equal(["echo"], stdio.tools.map { |tool| tool["name"] })
-    assert_equal([2], cancels.map { |params| params["requestId"] })
+    assert_equal([called("tools/list")], cancels.map { |params| params["requestId"] })
     assert_equal 1, pids.length
   end
 
@@ -173,8 +173,10 @@ class TestMcpStdioConversation < Minitest::Test
     assert_raises(Timeout::Error) { Timeout.timeout(0.2) { stdio.call_tool("silent", {}) } }
     result = stdio.call_tool("echo", { "text" => "next" })
 
+    stopped = { "requestId" => called("tools/call"), "reason" => "the caller stopped waiting" }
+
     assert_equal "echo: next", result.dig("content", 0, "text")
-    assert_equal [{ "requestId" => 2, "reason" => "the caller stopped waiting" }], cancels
+    assert_equal [stopped], cancels
     assert_equal 1, pids.length
   end
 
@@ -305,6 +307,8 @@ class TestMcpStdioConversation < Minitest::Test
     sent.select { |message| message["method"] == "notifications/cancelled" }
         .map { |message| message["params"] }
   end
+
+  def called(method) = sent.find { |message| message["method"] == method }["id"]
 
   # Only the one call gets the short deadline, never process startup.
   def with_read_timeout(client, seconds)

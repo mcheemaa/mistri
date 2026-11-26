@@ -22,6 +22,24 @@ error when one call takes more than 300 seconds in all.
   `Mistri::MCP.tools(client, timeout: 1800)`.
 - For the earlier behaviour, pass `timeout: nil`.
 
+### The MCP client asks a server which revision it speaks
+
+The client now sends `server/discover` before its first request, and uses the
+2026-07-28 form with a server that offers it.
+
+- A server that speaks only an older revision gets one request more when a
+  client first connects. Store `client.listing` and build clients from it:
+  such a client asks nothing.
+- `client.listing` has a new key, `"protocolVersion"`. A listing stored
+  before this release still works, and its client asks once.
+- A server that offers 2026-07-28 gets no `initialize` and no session. A host
+  that reads `client.server_info` on a client built from a stored listing
+  gets nil, because nothing was asked.
+- Over HTTP in the 2026-07-28 form, a direct `Client#call_tool` on a client
+  that holds no listing lists the tools first.
+- `Mistri::MCP::Client::PROTOCOL_VERSION` is `"2026-07-28"`. The revision the
+  handshake offers is still 2025-11-25.
+
 ### MCP over HTTP keeps a session and ends it
 
 - `Client#close` now sends a DELETE with the session id. A server that counts

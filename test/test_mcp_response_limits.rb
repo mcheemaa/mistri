@@ -112,7 +112,8 @@ class TestMcpResponseLimits < Minitest::Test
 
       methods = server.bodies.map { |body| body["method"] }
 
-      assert_equal %w[initialize initialize notifications/initialized], methods
+      assert_equal %w[server/discover initialize server/discover initialize
+                      notifications/initialized], methods
       assert_nil requests_for(server, "initialize").last[:headers]["mcp-session-id"]
       assert_nil requests_for(server, "initialize").last[:headers]["mcp-protocol-version"]
     end

@@ -26,6 +26,13 @@ class TestMcpHttpStreams < Minitest::Test
     end
     server.finish(socket)
   end
+  FLOODS = lambda do |server, socket, id|
+    server.open(socket)
+    server.event(socket, server.answer(id, "at once"))
+    stop = Process.clock_gettime(Process::CLOCK_MONOTONIC) + 2
+    server.raw(socket, ": again\n\n") while Process.clock_gettime(Process::CLOCK_MONOTONIC) < stop
+    :close
+  end
   # Ends the stream before the answer, as a server that wants the client back.
   LEAVES = lambda do |wait, unfinished = ""|
     lambda do |server, socket, _id|
@@ -39,13 +46,15 @@ class TestMcpHttpStreams < Minitest::Test
     server.event(socket, { "jsonrpc" => "2.0", "method" => "notifications/message" })
     server.finish(socket)
   end
-  TOOLS = { "echo" => ECHO, "lingers" => LINGERS, "chatters" => CHATTERS, "ends" => ENDS,
+  TOOLS = { "echo" => ECHO, "lingers" => LINGERS, "chatters" => CHATTERS, "floods" => FLOODS,
+            "ends" => ENDS,
             "leaves" => LEAVES.call(100), "leaves_long" => LEAVES.call(5000),
             "leaves_mid_event" => LEAVES.call(50, "id: bad\0\n\nid: e2\n") }.freeze
   # Answers the call the client came back for, on the stream of the GET.
   RESUMES = lambda do |server, socket, _request|
     server.open(socket)
-    server.raw(socket, "id: e9\ndata: #{JSON.generate(server.answer(2, "resumed"))}\n\n")
+    answer = JSON.generate(server.answer(server.calling, "resumed"))
+    server.raw(socket, "id: e9\ndata: #{answer}\n\n")
     server.finish(socket)
   end
   SILENT = lambda do |server, socket, _request|
@@ -60,7 +69,7 @@ class TestMcpHttpStreams < Minitest::Test
   end
 
   def test_a_call_returns_at_its_answer_when_the_stream_stays_open
-    %w[lingers chatters].each do |tool|
+    %w[lingers chatters floods].each do |tool|
       client.connect
       started = Process.clock_gettime(Process::CLOCK_MONOTONIC)
       result = @client.call_tool(tool, {})

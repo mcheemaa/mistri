@@ -32,10 +32,11 @@ module Mistri
     # A protocol-level failure: a JSON-RPC error, a missing response, an
     # unsupported negotiation.
     class Error < Mistri::Error
-      attr_reader :code
+      attr_reader :code, :data
 
-      def initialize(message = nil, code: nil)
+      def initialize(message = nil, code: nil, data: nil)
         @code = code
+        @data = data
         super(message)
       end
     end
@@ -245,9 +246,11 @@ module Mistri
 end
 
 require_relative "mcp/egress"
+require_relative "mcp/mirror"
+require_relative "mcp/negotiation"
 require_relative "mcp/wires"
 require_relative "mcp/client"
 require_relative "mcp/oauth"
 
-Mistri::MCP.private_constant :Egress, :WireError, :WireTimeout, :EMPTY_INPUT_SCHEMA, :NAME_LIMIT,
-                             :SAFE_NAME
+Mistri::MCP.private_constant :Egress, :Mirror, :WireError, :WireTimeout, :EMPTY_INPUT_SCHEMA,
+                             :NAME_LIMIT, :SAFE_NAME

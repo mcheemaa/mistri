@@ -23,7 +23,7 @@ class TestMcpNotSent < Minitest::Test
   def test_an_error_before_the_call_is_sent_is_tagged_on_a_copy_of_it
     shared = RuntimeError.new("no token").freeze
     resolved = 0
-    token = -> { [1, 4].include?(resolved += 1) ? raise(shared) : "token" }
+    token = -> { [1, 5].include?(resolved += 1) ? raise(shared) : "token" }
     with_server do |server|
       client = remote_client(server, token: token)
       unsent = assert_raises(RuntimeError) { client.call_tool("echo", {}) }

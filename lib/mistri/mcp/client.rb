@@ -26,11 +26,19 @@ module Mistri
     # One client serializes its calls; parallel tool calls against one
     # server queue rather than interleave.
     #
+    # A server is asked once which revisions of the protocol it speaks. With
+    # one that speaks 2026-07-28 there is no handshake and no session: each
+    # request carries its own version. An older one gets the handshake of
+    # 2025-11-25.
+    #
     # listing: takes the value an earlier client's listing returned. A client
     # built with it sends no request until a tool is called.
     class Client
-      PROTOCOL_VERSION = "2025-11-25"
-      SUPPORTED_VERSIONS = %w[2025-11-25 2025-06-18 2025-03-26 2024-11-05].freeze
+      include Negotiation
+
+      # Times a call is sent again for a server that asks to be called again.
+      STATE_ROUNDS = 3
+      private_constant :STATE_ROUNDS
       attr_reader :server_info
 
       def initialize(url: nil, command: nil, env: {}, token: nil, headers: {},
@@ -69,7 +77,8 @@ module Mistri
         @mutex.synchronize do
           @tools = nil if refresh
           @tools ||= list_tools
-          { "tools" => @tools, "instructions" => @instructions }.compact
+          { "tools" => @tools, "instructions" => @instructions,
+            "protocolVersion" => @version }.compact
         end
       end
 
@@ -96,7 +105,7 @@ module Mistri
       def call_tool(name, arguments = {})
         @mutex.synchronize do
           @sent = false
-          request("tools/call", { name: name, arguments: arguments })
+          finished(name, arguments, request("tools/call", { name: name, arguments: arguments }))
         rescue StandardError => e
           raise @sent ? e : e.dup.extend(NotSent)
         end
@@ -123,57 +132,79 @@ module Mistri
         handshake(refreshed: true)
       end
 
-      def ensure_connected
-        return if @connected && @wire.open?
-
-        result = rpc("initialize", {
-                       protocolVersion: PROTOCOL_VERSION,
-                       capabilities: {},
-                       clientInfo: { name: @client_name, version: Mistri::VERSION }
-                     })
-        version = result["protocolVersion"].to_s
-        unless SUPPORTED_VERSIONS.include?(version)
-          raise Error, "server negotiated unsupported protocol version #{version.inspect}"
-        end
-
-        @wire.protocol_version = version
-        @server_info = result["serverInfo"]
-        text = result["instructions"]
-        @instructions = (text if text.is_a?(String) && !text.empty?)
-        @described = true
-        @wire.notify({ jsonrpc: "2.0", method: "notifications/initialized" })
-        @connected = true
-      rescue Mistri::Error
-        reset_wire
-        raise
-      end
-
-      def request(method, params, reconnected: false, refreshed: false)
+      def request(method, params, reconnected: false, refreshed: false, asked: false)
         ensure_connected
+        options = wire_options(method, params)
         @sent = true
-        rpc(method, params)
+        rpc(method, params, **options)
       rescue AuthenticationError
         raise if refreshed || !@wire.refreshable?
 
         # The token callable resolves fresh on retry; hosts refresh there.
-        request(method, params, reconnected: reconnected, refreshed: true)
+        request(method, params, reconnected: reconnected, refreshed: true, asked: asked)
       rescue SessionExpired
         raise Error, "the server expired the session twice in a row" if reconnected
 
         @connected = false
         @wire.reset_session
-        request(method, params, reconnected: true, refreshed: refreshed)
+        request(method, params, reconnected: true, refreshed: refreshed, asked: asked)
+      rescue Error, ProviderError => e
+        raise if asked || !stateless? || !form_refused?(e)
+
+        # The server no longer takes the form this client remembered. A
+        # request it refused for that did not run, so it is sent again.
+        @version = nil
+        request(method, params, reconnected: reconnected, refreshed: refreshed, asked: true)
       end
 
-      def rpc(method, params)
+      # Over HTTP a call in the form of 2026-07-28 repeats the parameters its
+      # tool marks in headers, so the tool's schema goes with it.
+      def wire_options(method, params)
+        return {} unless method == "tools/call" && @wire.mirrors?
+
+        tool = (@tools ||= list_tools).find do |listed|
+          listed.is_a?(Hash) && listed["name"] == params[:name]
+        end
+        { mirror: tool && tool["inputSchema"] }
+      end
+
+      # In the form of 2026-07-28 a server may answer a call by asking for
+      # input. This client declares none it can give, so a call that waits
+      # for some ends as the tool's own error, in words a model can pass on. A
+      # result that asks for nothing and carries state is sent again with it.
+      def finished(name, arguments, result, rounds = STATE_ROUNDS)
+        return result unless result.is_a?(Hash) && result["resultType"] == "input_required"
+
+        asked = result["inputRequests"]
+        return declined(asked) if rounds.zero? || (asked.is_a?(Hash) && !asked.empty?)
+
+        params = { name: name, arguments: arguments }
+        params[:requestState] = result["requestState"] if result.key?("requestState")
+        finished(name, arguments, request("tools/call", params), rounds - 1)
+      end
+
+      def declined(asked)
+        wanted = (asked.is_a?(Hash) ? asked.values : []).first(3).filter_map do |input|
+          next unless input.is_a?(Hash)
+
+          params = input["params"]
+          [input["method"], (params["message"] if params.is_a?(Hash))].compact.join(": ")
+        end
+        detail = " (#{wanted.join("; ")[0, 300]})" unless wanted.empty?
+        text = "The server asked for input before it would finish this call#{detail}. " \
+               "This client gives a server no input, so the call was not finished."
+        { "isError" => true, "content" => [{ "type" => "text", "text" => text }] }
+      end
+
+      def rpc(method, params, newest: stateless?, **options)
         id = (@serial += 1)
         replayable = method != "tools/call"
+        params = params.merge(_meta: described) if newest
         answer = nil
         # A tool may commit its external side effect before the connection dies.
-        exchange({ jsonrpc: "2.0", id: id, method: method, params: params }, replayable) do |record|
-          answer ||= answer_in(record, id)
-        end
-        return answer["result"] if answer
+        exchange({ jsonrpc: "2.0", id: id, method: method, params: params },
+                 replayable, **options) { |record| answer ||= answer_in(record, id) }
+        return outcome(answer) if answer
 
         raise unanswered(method, replayable)
       rescue WireTimeout => e
@@ -184,7 +215,7 @@ module Mistri
       rescue ResponseTooLargeError, ResponseTooComplexError, WireError => e
         @wire.close
         raise if replayable
-        return answer["result"] if answer
+        return outcome(answer) if answer
 
         raise AmbiguousDeliveryError, unconfirmed(e)
       rescue AmbiguousDeliveryError
@@ -199,9 +230,9 @@ module Mistri
       # The wait for an answer can be ended from outside the gem: by a tool's
       # own limit, or by a Timeout the host put around the call. That cancels
       # the request and keeps the server, as the read timeout does.
-      def exchange(payload, replayable, &)
+      def exchange(payload, replayable, **, &)
         settled = false
-        @wire.call(payload, replayable: replayable, &)
+        @wire.call(payload, replayable: replayable, **, &)
         settled = true
       rescue Mistri::Error
         settled = true
@@ -215,16 +246,24 @@ module Mistri
       def answer_in(record, id)
         return unless record.is_a?(Hash)
         return reply_to(record) if record.key?("method")
-        return unless [id, id.to_s].include?(record["id"])
-        raise rpc_error(record["error"]) if record["error"]
 
-        record
+        record if [id, id.to_s].include?(record["id"])
+      end
+
+      # An error is raised once its response was read to the end, so the
+      # connection it came on is kept.
+      def outcome(answer)
+        raise rpc_error(answer["error"]) if answer["error"]
+
+        typed(answer["result"])
       end
 
       # This client declares no capability, so ping is the one request it
-      # serves. A reply that cannot be delivered does not fail the call.
+      # serves. A reply that cannot be delivered does not fail the call. Since
+      # 2026-07-28 a server sends no request and a client no reply.
       def reply_to(record)
         id = record["id"]
+        return if stateless?
         return unless id.is_a?(Integer) || (id.is_a?(String) && id.valid_encoding?)
 
         reply = if record["method"] == "ping"
@@ -242,8 +281,8 @@ module Mistri
       def cancel(method, id, reason)
         return if method == "initialize"
 
-        @wire.notify({ jsonrpc: "2.0", method: "notifications/cancelled",
-                       params: { requestId: id, reason: reason } }, wait: 0)
+        @wire.cancel({ jsonrpc: "2.0", method: "notifications/cancelled",
+                       params: { requestId: id, reason: reason } })
       rescue Mistri::Error
         nil
       end
@@ -277,7 +316,7 @@ module Mistri
 
           collected.concat(page)
           cursor = result["nextCursor"]
-          return collected if cursor.nil?
+          return usable(collected) if cursor.nil?
           raise Error, "tools/list returned a malformed cursor" unless cursor.is_a?(String)
           raise Error, "tools/list repeated a cursor" if seen_cursors[cursor]
 
@@ -286,8 +325,21 @@ module Mistri
         raise Error, "tool discovery exceeded #{@max_tool_pages} pages"
       end
 
+      # Over HTTP the revision of 2026-07-28 has a client leave out a tool
+      # whose header marks it cannot honour, and say why.
+      def usable(tools)
+        return tools unless @wire.mirrors?
+
+        tools.reject do |tool|
+          reason = Mirror.violation(tool["inputSchema"]) if tool.is_a?(Hash)
+          warn("mistri: the MCP tool #{tool["name"].inspect} was left out: #{reason}") if reason
+          reason
+        end
+      end
+
       def keep(listing)
-        tools, text = listing.values_at("tools", "instructions") if listing.is_a?(Hash)
+        tools, text, version = listing.values_at("tools", "instructions", "protocolVersion") if
+          listing.is_a?(Hash)
         unless tools.is_a?(Array) && (text.nil? || text.is_a?(String))
           raise ConfigurationError, "listing: must be a value that Client#listing returned"
         end
@@ -295,6 +347,7 @@ module Mistri
         @tools = tools
         @instructions = (text unless text.to_s.empty?)
         @described = true
+        @version = version if SUPPORTED_VERSIONS.include?(version)
       end
 
       def validate_limit(name, value)
@@ -311,7 +364,8 @@ module Mistri
       end
 
       def rpc_error(error)
-        Error.new(error["message"] || "MCP request failed", code: error["code"])
+        Error.new(error["message"] || "MCP request failed",
+                  code: error["code"], data: error["data"])
       end
     end
   end

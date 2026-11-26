@@ -118,8 +118,8 @@ one. The discovered tool cache remains available.
 `call_tool` or `tools(refresh: true)` performs a fresh handshake when needed.
 ### Requests from a server
 
-A server may send its own requests while a call waits for its answer. The
-client declares no capability, so it answers `ping` with an empty result and
+In the older form of the protocol a server may send its own requests while a
+call waits for its answer. The client declares no capability, so it answers `ping` with an empty result and
 refuses any other request with JSON-RPC error -32601. Over Streamable HTTP the
 reply is a POST of its own, on a second connection that waits five seconds at
 most, because the first is taken by the stream of the call.
@@ -127,6 +127,45 @@ most, because the first is taken by the stream of the call.
 A request is never taken for the answer to a call, whatever its id. An answer
 is matched by the id of its call, also when the server sends that id back as a
 string.
+
+### Protocol revisions
+
+The client speaks two forms of the protocol. In the form of 2026-07-28 there
+is no handshake and no session: each request carries the revision, the
+client's name and its capabilities. In the older form, 2025-11-25 and three
+revisions before it, a session opens with `initialize`.
+
+Before its first request the client asks the server which revisions it speaks,
+with `server/discover`. A server that offers 2026-07-28 is used in that form.
+An older server does not know the request, and whatever it answers that is not
+an error of the 2026-07-28 revision leads to the handshake. On stdio so does no
+answer within five seconds, or within `read_timeout` when that is shorter. A
+refusal to authorize, a server error and a lost connection say nothing about
+the revision and are raised as they are.
+
+The answer is kept for the life of the client. `client.listing` holds it as
+`"protocolVersion"`, so a client built from a stored listing asks nothing: in
+the form of 2026-07-28 its first request is the call itself.
+
+In the form of 2026-07-28:
+
+- A request from the server gets no reply. The revision allows neither.
+- Over HTTP a call that is given up is cancelled by its closed stream, with no
+  notification, and a stream that ended early is not asked for again.
+- Over HTTP each request repeats its method in `Mcp-Method`, a call repeats
+  its tool in `Mcp-Name`, and each parameter that a tool marks with
+  `x-mcp-header` is repeated in `Mcp-Param-*`. A direct `call_tool` on a
+  client that holds no listing lists the tools first, to learn the marks. A
+  tool whose marks break the rules of the revision is left out of the list and
+  named in a warning on standard error.
+- `close` sends no DELETE, because there is no session.
+- A server may answer a call by asking for input. The client declares no
+  capability to give any, so such a call ends as a tool error that says so,
+  with the server's own message. A result that asks for nothing and carries
+  `requestState` is sent again with it, three times at most.
+- A header that does not match the request is raised as the server's refusal.
+  The spec suggests listing the tools again. The kept listing is the host's
+  pin, so the host decides.
 
 ## Tool discovery
 
@@ -151,9 +190,9 @@ looping or allocating without bound.
 
 Listing a server's tools takes a connection, and a stdio server must be
 started first. With many servers that is too slow to repeat each time an
-agent is built. `client.listing` returns the server's tools, and its
-`instructions` when it sent any, as plain JSON. Store it, and pass it to the
-clients built later:
+agent is built. `client.listing` returns the server's tools, its
+`instructions` when it sent any, and the revision it speaks, as plain JSON.
+Store it, and pass it to the clients built later:
 
 ```ruby
 # Once, in a job.

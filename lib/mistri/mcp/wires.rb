@@ -11,7 +11,10 @@ module Mistri
     # the Client owns those.
     module Wires
       TIMED_OUT = "timed out waiting for the MCP server"
-      private_constant :TIMED_OUT
+      # The first revision with no handshake and no session: each request
+      # carries its own version.
+      STATELESS_SINCE = "2026-07-28"
+      private_constant :TIMED_OUT, :STATELESS_SINCE
 
       # Streamable HTTP: requests POST to one endpoint, responses arrive as
       # JSON or an SSE stream. Sessions and bearer auth live here.
@@ -21,7 +24,7 @@ module Mistri
         RESERVED_HEADERS = %w[host content-length transfer-encoding connection keep-alive
                               proxy-authenticate proxy-authorization proxy-connection te trailer
                               upgrade accept content-type accept-encoding mcp-session-id
-                              mcp-protocol-version last-event-id].freeze
+                              mcp-protocol-version last-event-id mcp-method mcp-name].freeze
         # Seconds before a stream that ended early is asked for again, when
         # the server named none.
         RECONNECT_WAIT = 1
@@ -78,13 +81,18 @@ module Mistri
 
         attr_writer :protocol_version
 
-        # Reads until the block returns what it took for the answer.
-        def call(payload, replayable:)
+        # Reads until the block returns what it took for the answer. mirror is
+        # the schema of the tool a call is for.
+        def call(payload, replayable:, mirror: nil, **)
           @reading = true
           answered = false
           took = ->(record) { answered ||= yield(record) }
           events = Events.new(max_record_bytes: @max_record_bytes)
-          capture_session(post(@transport, payload, replayable: replayable, events: events, &took))
+          repeated = stateless? ? repeated(payload, mirror) : {}
+          meta = post(@transport, payload, repeated, replayable: replayable, events: events, &took)
+          return if stateless?
+
+          capture_session(meta)
           resume(events, &took) unless answered
           nil
         ensure
@@ -92,15 +100,27 @@ module Mistri
         end
 
         # A reply to the server's own request leaves while the response of a
-        # call is read, and a cancel leaves when a call was given up. Neither
-        # may hold the caller, so both go out on a second connection, which
-        # waits ASIDE_TIMEOUT at most.
-        def notify(payload, wait: nil)
-          post(@reading || wait ? aside : @transport, payload) { |_record| nil }
+        # call is read, on a second connection, because the first is taken.
+        def notify(payload)
+          post(@reading ? aside : @transport, payload) { |_record| nil }
+          nil
+        end
+
+        # A call that was given up is cancelled with a notification, on the
+        # second connection, which waits ASIDE_TIMEOUT at most. Since
+        # 2026-07-28 the closed stream of the call is the cancel.
+        def cancel(payload)
+          post(aside, payload) { |_record| nil } unless stateless?
           nil
         end
 
         def open? = true
+
+        # Since 2026-07-28 a client repeats parts of a request in its headers.
+        def mirrors? = stateless?
+
+        # An HTTP server that takes long to answer is slow, not old.
+        def probe_wait = nil
 
         def session? = !@session_id.nil?
 
@@ -133,8 +153,8 @@ module Mistri
         # callable is not taken for the server's answer. A server that was too
         # slow is kept, as a slow stdio server is. A refusal keeps its class,
         # status and body, and its message names an MCP server, not a provider.
-        def post(transport, payload, **, &)
-          headers = request_headers
+        def post(transport, payload, repeated = {}, **, &)
+          headers = request_headers.merge(repeated)
           begin
             transport.post_either(@path, body: payload, headers: headers, **, &)
           rescue ProviderError => e
@@ -162,6 +182,19 @@ module Mistri
           raise WireTimeout, TIMED_OUT if slow?(e)
 
           nil
+        end
+
+        def stateless? = @protocol_version.to_s >= STATELESS_SINCE
+
+        # The method of a request, the name it is for, and each parameter the
+        # tool's schema marks.
+        def repeated(payload, mirror)
+          params = payload[:params] || {}
+          name = params[:name] || params[:uri]
+          headers = { "Mcp-Method" => payload[:method].to_s }
+          headers["Mcp-Name"] = Mirror.value(name.to_s) if name
+          headers.merge!(Mirror.headers(mirror, params[:arguments])) if mirror
+          headers
         end
 
         def aside
@@ -230,6 +263,9 @@ module Mistri
       class Stdio
         READ_SIZE = 16 * 1024
         WRITE_SIZE = 64 * 1024
+        # Seconds a server gets to say which revisions it speaks. An older
+        # server may not answer a request it does not know at all.
+        PROBE_WAIT = 5
         BLANK_RECORD = /\A[[:space:]]*\z/
         # Seconds a server gets to end by itself once its input is closed, and
         # then to end after SIGTERM.
@@ -244,8 +280,8 @@ module Mistri
           LANG LC_ALL LC_CTYPE TZ TMPDIR
           SSL_CERT_FILE SSL_CERT_DIR NODE_EXTRA_CA_CERTS REQUESTS_CA_BUNDLE CURL_CA_BUNDLE
         ].freeze
-        private_constant :READ_SIZE, :WRITE_SIZE, :BLANK_RECORD, :EXIT_WAIT, :TERM_WAIT,
-                         :INHERITED_ENV
+        private_constant :READ_SIZE, :WRITE_SIZE, :PROBE_WAIT, :BLANK_RECORD, :EXIT_WAIT,
+                         :TERM_WAIT, :INHERITED_ENV
 
         def initialize(command:, env: {}, read_timeout: 120,
                        max_record_bytes: DEFAULT_MAX_RECORD_BYTES)
@@ -261,11 +297,12 @@ module Mistri
           @cut_write = false
         end
 
-        # Reads until the block returns what it took for the answer.
-        def call(payload, **)
+        # Reads until the block returns what it took for the answer. wait
+        # replaces the read timeout for this one request.
+        def call(payload, wait: nil, **)
           start
-          write(payload, @read_timeout)
-          loop { break if yield(read_record) }
+          write(payload, wait || @read_timeout)
+          loop { break if yield(read_record(wait || @read_timeout)) }
           nil
         end
 
@@ -276,9 +313,17 @@ module Mistri
           nil
         end
 
+        # A call that was given up is cancelled with a notification, which
+        # does not wait for a server that has stopped reading.
+        def cancel(payload) = notify(payload, wait: 0)
+
         # False once the server this wire spoke to is gone or cannot be
         # written to, so the client knows to do the handshake again.
         def open? = !@pid.nil? && !@cut_write
+
+        def mirrors? = false
+
+        def probe_wait = [@read_timeout, PROBE_WAIT].compact.min
 
         def session? = false
 
@@ -346,8 +391,8 @@ module Mistri
         # stdout carries one message a line. A line that is not JSON is
         # skipped and written to standard error, where the server's own
         # standard error goes, and the wait for the message goes on.
-        def read_record
-          deadline = @read_timeout && (clock + @read_timeout)
+        def read_record(wait = @read_timeout)
+          deadline = wait && (clock + wait)
           loop do
             line = next_line(deadline)
             return JSON.parse(line)

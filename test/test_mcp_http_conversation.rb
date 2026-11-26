@@ -43,6 +43,12 @@ class TestMcpHttpConversation < Minitest::Test
     end
     :close
   end
+  FLOODS = lambda do |server, socket, _id|
+    server.open(socket)
+    stop = Process.clock_gettime(Process::CLOCK_MONOTONIC) + 2
+    server.raw(socket, ": again\n\n") while Process.clock_gettime(Process::CLOCK_MONOTONIC) < stop
+    :close
+  end
   REFUSED = lambda do |server, socket, id|
     server.json(socket, { "jsonrpc" => "2.0", "id" => id,
                           "error" => { "code" => -32_602, "message" => "Bad arguments" } },
@@ -50,7 +56,8 @@ class TestMcpHttpConversation < Minitest::Test
   end
   BROKEN = ->(server, socket, _id) { server.json(socket, "upstream is down", status: 502) }
   TOOLS = { "echo" => ECHO, "asks" => ASKS, "drops" => DROPS, "cut" => CUT, "slow" => SLOW,
-            "comments" => COMMENTS, "refused" => REFUSED, "broken" => BROKEN }.freeze
+            "comments" => COMMENTS, "floods" => FLOODS, "refused" => REFUSED,
+            "broken" => BROKEN }.freeze
 
   def teardown
     @client&.close
@@ -61,7 +68,7 @@ class TestMcpHttpConversation < Minitest::Test
     result = client.call_tool("asks", {})
 
     assert_equal [{ "jsonrpc" => "2.0", "id" => "srv-1", "result" => {} },
-                  { "jsonrpc" => "2.0", "id" => 2,
+                  { "jsonrpc" => "2.0", "id" => @server.calling,
                     "error" => { "code" => -32_601, "message" => "Method not found" } }],
                  JSON.parse(result.dig("content", 0, "text")),
                  "a request with the id of the call was not taken for its answer"
@@ -88,8 +95,10 @@ class TestMcpHttpConversation < Minitest::Test
     assert_raises(Timeout::Error) { Timeout.timeout(0.2) { @client.call_tool("slow", {}) } }
     result = @client.call_tool("echo", {})
 
+    stopped = { "requestId" => called("tools/call"), "reason" => "the caller stopped waiting" }
+
     assert_equal "echo", result.dig("content", 0, "text")
-    assert_equal [{ "requestId" => 2, "reason" => "the caller stopped waiting" }], cancels
+    assert_equal [stopped], cancels
   end
 
   def test_comments_do_not_move_the_wait_for_a_message
@@ -102,8 +111,18 @@ class TestMcpHttpConversation < Minitest::Test
 
     assert_match(/timed out waiting for the MCP server/, error.message)
     assert_in_delta 0.3, elapsed, 0.2
-    assert_equal [{ "requestId" => 2, "reason" => "timed out" }], cancels
+    assert_equal [{ "requestId" => called("tools/call"), "reason" => "timed out" }], cancels
     assert_equal 1, @server.sent("initialize").length, "the session is kept"
+  end
+
+  def test_a_stream_of_comments_with_no_pause_ends_at_the_read_timeout
+    client(read_timeout: 0.3).connect
+    started = Process.clock_gettime(Process::CLOCK_MONOTONIC)
+
+    error = assert_raises(Mistri::AmbiguousDeliveryError) { @client.call_tool("floods", {}) }
+
+    assert_match(/timed out waiting for the MCP server/, error.message)
+    assert_in_delta 0.3, Process.clock_gettime(Process::CLOCK_MONOTONIC) - started, 0.25
   end
 
   def test_a_list_that_times_out_is_cancelled_and_keeps_the_session
@@ -115,7 +134,7 @@ class TestMcpHttpConversation < Minitest::Test
 
     assert_match(/timed out waiting for the MCP server/, error.message)
     assert_empty @client.tools
-    assert_equal([2], cancels.map { |params| params["requestId"] })
+    assert_equal([called("tools/list")], cancels.map { |params| params["requestId"] })
     assert_equal 1, @server.sent("initialize").length
   end
 
@@ -141,13 +160,14 @@ class TestMcpHttpConversation < Minitest::Test
       "token-#{asked}"
     end
     client(token: token).connect
+    before = asked
     @client.close
     ended = @server.requests("DELETE")
 
     assert_equal 1, ended.length
     assert_equal "s1", ended.first[:headers]["mcp-session-id"]
-    assert_equal "Bearer token-2", ended.first[:headers]["authorization"]
-    assert_equal 2, asked, "a close does not ask for a token"
+    assert_equal "Bearer token-#{before}", ended.first[:headers]["authorization"]
+    assert_equal before, asked, "a close does not ask for a token"
   end
 
   def test_close_stands_when_the_server_refuses_to_end_the_session
@@ -173,4 +193,6 @@ class TestMcpHttpConversation < Minitest::Test
   end
 
   def cancels = @server.sent("notifications/cancelled").map { |message| message["params"] }
+
+  def called(method) = @server.sent(method).first["id"]
 end

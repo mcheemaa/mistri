@@ -126,7 +126,7 @@ module Mistri
         end
         sse.finish(&block)
       ensure
-        @connection.read_timeout = @read_timeout if @connection
+        @connection.read_timeout = @read_timeout
       end
 
       def bodiless(verb, path, headers)

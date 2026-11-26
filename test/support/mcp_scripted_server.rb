@@ -10,8 +10,14 @@ module Mistri
     # the response itself: a stream that stays open, one that ends early, a
     # request of its own. A script that returns :close drops the connection.
     class McpScriptedServer
-      def initialize(tools: {}, session: "s1", on_get: nil, delete_status: 200, list_wait: 0)
+      # discover: is what the server answers server/discover with: a result,
+      # or a lambda given this server, the socket and the id. Without it the
+      # server is an older one that does not know the request.
+      def initialize(tools: {}, session: "s1", on_get: nil, delete_status: 200, list_wait: 0,
+                     discover: nil, listed: [])
         @tools = tools
+        @discover = discover
+        @listed = listed
         @session = session
         @on_get = on_get
         @delete_status = delete_status
@@ -21,6 +27,9 @@ module Mistri
       end
 
       attr_writer :list_wait
+
+      # The id of the call a tool is running for.
+      attr_reader :calling
 
       def url = "#{@stub.origin}/mcp"
       def stop = @stub.stop
@@ -63,10 +72,32 @@ module Mistri
         when "initialize" then json(socket, handshake(message["id"]), headers: session_header)
         when "tools/list"
           sleep(@list_wait)
-          json(socket, { "jsonrpc" => "2.0", "id" => message["id"], "result" => { "tools" => [] } })
-        else @tools.fetch(message.dig("params", "name")).call(self, socket, message["id"])
+          result(socket, message["id"], { "tools" => @listed })
+        when "server/discover" then discover(socket, message["id"])
+        when "tools/call"
+          @calling = message["id"]
+          @tools.fetch(message.dig("params", "name")).call(self, socket, @calling)
+        else refuse(socket, message["id"])
         end
       end
+
+      def result(socket, id, result)
+        json(socket, { "jsonrpc" => "2.0", "id" => id, "result" => result })
+      end
+
+      def refuse(socket, id, code: -32_601, message: "Method not found", data: nil, status: 200)
+        error = { "code" => code, "message" => message, "data" => data }.compact
+        json(socket, { "jsonrpc" => "2.0", "id" => id, "error" => error }, status: status)
+      end
+
+      def discover(socket, id)
+        return refuse(socket, id) unless @discover
+        return @discover.call(self, socket, id) if @discover.respond_to?(:call)
+
+        result(socket, id, @discover)
+      end
+
+      public :result, :refuse
 
       def came_back(socket, request)
         return json(socket, "", status: 405) unless @on_get
