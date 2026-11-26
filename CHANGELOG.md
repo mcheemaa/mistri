@@ -5,6 +5,14 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+- A request that the host ends early no longer answers the next one. A
+  `Timeout` around an agent run or an MCP call raises an error that is not a
+  `StandardError`, so nothing closed the connection, and the response stayed
+  half read on it. The next request on the same provider or MCP client read
+  those bytes: a provider's stream raised `Net::HTTPBadResponse`, and
+  `Transport#post` returned the earlier request's answer. A connection is now
+  closed whenever its response was not read to the end. One local streaming
+  request takes the same time as before, 521 and 508 microseconds.
 - A bridged MCP tool stops after 300 seconds. A server that keeps sending
   messages and never answers a call restarted the read timeout with each one,
   so the call, and the run with it, had no end. `Mistri::MCP.tools` and

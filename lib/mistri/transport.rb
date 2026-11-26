@@ -85,9 +85,11 @@ module Mistri
       @mutex.synchronize do
         with_retry do
           parsed = nil
-          connection.request(build_request(path, body, headers)) do |response|
-            raise_for_status(response)
-            parsed = JSON.parse(read_json_body(response))
+          read_whole do
+            connection.request(build_request(path, body, headers)) do |response|
+              raise_for_status(response)
+              parsed = JSON.parse(read_json_body(response))
+            end
           end
           parsed
         end
@@ -125,11 +127,13 @@ module Mistri
       begin
         started = false
         response_headers = nil
-        connection.request(build_request(path, body, headers, streaming: true)) do |response|
-          started = true
-          raise_for_status(response)
-          response_headers = response.to_hash.transform_values(&:first)
-          read_either(response, &block)
+        read_whole do
+          connection.request(build_request(path, body, headers, streaming: true)) do |response|
+            started = true
+            raise_for_status(response)
+            response_headers = response.to_hash.transform_values(&:first)
+            read_either(response, &block)
+          end
         end
         response_headers
       rescue ResponseTooLargeError, ResponseTooComplexError, ProviderError
@@ -172,10 +176,12 @@ module Mistri
         # socket.
         closer = signal&.on_abort { quietly_finish(conn) }
         begin
-          conn.request(build_request(path, body, headers, streaming: true)) do |response|
-            started = true
-            raise_for_status(response)
-            aborted = read_stream(response, signal, count_tokens, &block)
+          read_whole do
+            conn.request(build_request(path, body, headers, streaming: true)) do |response|
+              started = true
+              raise_for_status(response)
+              aborted = read_stream(response, signal, count_tokens, &block)
+            end
           end
         ensure
           signal&.remove_callback(closer) if closer
@@ -199,6 +205,18 @@ module Mistri
         end
         raise ProviderError, "connection lost mid-stream: #{e.message}"
       end
+    end
+
+    # A request can be left by an error that is no StandardError, such as the
+    # one a Timeout raises. It passes every rescue here and the one Net::HTTP
+    # closes its socket in, so the response would stay half read on the kept
+    # connection and the next request would take it for its own.
+    def read_whole
+      whole = false
+      yield
+      whole = true
+    ensure
+      teardown unless whole
     end
 
     def read_stream(response, signal, count_tokens, &block)
