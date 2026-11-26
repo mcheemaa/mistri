@@ -336,8 +336,9 @@ module Mistri
         def cancel(payload) = notify(payload, wait: 0)
 
         # False once the server this wire spoke to is gone or cannot be
-        # written to, so the client knows to do the handshake again.
-        def open? = !@pid.nil? && !@cut_write
+        # written to, so the client knows to do the handshake again. A close
+        # that was ended early leaves a server whose input is closed.
+        def open? = !@pid.nil? && !@cut_write && !@stdin.closed?
 
         def mirrors? = false
 
@@ -369,7 +370,7 @@ module Mistri
         # A write that was cut short left half a message in the server's input,
         # and the next message would be read as its end.
         def start
-          close if @cut_write
+          close if @pid && !open?
           spawn_server unless @pid
         end
 

@@ -59,6 +59,12 @@ class TestMcpStdioConversation < Minitest::Test
 
         STDIN.reopen(File::NULL)
         sleep
+      when "big"
+        begin
+          puts "x" * 300_000
+        rescue Errno::EPIPE
+          sleep
+        end
       when "late"
         sleep 0.4
         say.call("id" => id, "result" => text.call("late"))
@@ -252,6 +258,36 @@ class TestMcpStdioConversation < Minitest::Test
     assert_predicate wire, :open?, "nothing was written, so the wire is whole"
   ensure
     [reader, writer].each(&:close)
+  end
+
+  def test_a_cancel_does_not_wait_for_a_server_that_has_stopped_reading
+    reader, writer = IO.pipe
+    nil while writer.write_nonblock("x" * 65_536, exception: false) != :wait_writable
+    wire = Mistri::MCP::Wires::Stdio.new(command: ["unused"], read_timeout: 5)
+    wire.instance_variable_set(:@stdin, writer)
+    wire.instance_variable_set(:@pid, Process.pid)
+    started = Process.clock_gettime(Process::CLOCK_MONOTONIC)
+
+    assert_raises(Mistri::MCP.const_get(:WireTimeout)) do
+      wire.cancel({ jsonrpc: "2.0", method: "notifications/cancelled" })
+    end
+    assert_operator Process.clock_gettime(Process::CLOCK_MONOTONIC) - started, :<, 1
+  ensure
+    [reader, writer].each(&:close)
+  end
+
+  def test_a_caller_that_stops_waiting_while_a_server_is_ended_gets_its_own_error
+    stubborn = { "STUB_TRACE" => @trace, "STUB_IGNORE_EOF" => "1", "STUB_IGNORE_TERM" => "1" }
+    @stdio = Mistri::MCP::Client.new(command: ["ruby", "-e", SERVER], env: stubborn,
+                                     read_timeout: 10, max_record_bytes: 100_000)
+    @stdio.connect
+
+    assert_raises(Timeout::Error) { Timeout.timeout(0.3) { @stdio.call_tool("big", {}) } }
+    result = @stdio.call_tool("echo", { "text" => "next" })
+
+    assert_equal "echo: next", result.dig("content", 0, "text")
+    assert_equal 2, pids.length, "the server whose close was ended early was ended, then replaced"
+    assert_raises(Errno::ESRCH) { Process.kill(0, pids.first.to_i) }
   end
 
   def test_a_client_with_no_read_timeout_waits_without_one
