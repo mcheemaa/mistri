@@ -97,6 +97,20 @@ class TestMcpResources < Minitest::Test
     end
   end
 
+  def test_a_read_in_the_newer_form_repeats_its_method_and_its_uri_in_headers
+    newest = { "supportedVersions" => ["2026-07-28"], "capabilities" => HAS }
+
+    assert_equal NOTES, client(discover: newest).read_resource("notes://today")
+
+    sent = @server.requests("POST").last
+
+    assert_equal ["resources/read", "notes://today"],
+                 sent[:headers].values_at("mcp-method", "mcp-name")
+    assert_equal "2026-07-28",
+                 JSON.parse(sent[:body]).dig("params", "_meta",
+                                             "io.modelcontextprotocol/protocolVersion")
+  end
+
   def test_a_server_with_resources_gets_a_tool_that_reads_them
     reader = Mistri::MCP.tools(client, prefix: "notes").last
 
