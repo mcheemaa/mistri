@@ -159,8 +159,9 @@ client. What it raises is written to standard error with the prefix
 notice. The host lists again with `refresh: true` when it decides to.
 
 A notice reaches the host when it arrives on a stream the client reads. Over
-stdio that is the next call at the latest. A notice that a server sends on a
-stream of its own, outside any call, is not read.
+stdio that is the next call at the latest. Over HTTP it is the stream of a
+call, up to a tenth of a second after its answer. A notice that a server
+sends on a stream of its own, outside any call, is not read.
 
 `progress: true` asks for progress with each tool call, by a token that is the
 call's own request id. Each progress notice is a message, so a call that

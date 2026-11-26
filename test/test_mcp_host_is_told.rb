@@ -18,6 +18,13 @@ class TestMcpHostIsTold < Minitest::Test
       server.event(socket, server.answer(id, "changed"))
       server.finish(socket)
     end,
+    "changes_late" => lambda do |server, socket, id|
+      server.open(socket)
+      server.raw(socket, [server.answer(id, "changed"), CHANGED].map do |message|
+        "data: #{JSON.generate(message)}\n\n"
+      end.join)
+      server.finish(socket)
+    end,
     "works" => lambda do |server, socket, id|
       token = server.sent("tools/call").last.dig("params", "_meta", "progressToken")
       server.open(socket)
@@ -57,6 +64,14 @@ class TestMcpHostIsTold < Minitest::Test
     assert_equal [["notifications/tools/list_changed", nil]], told
     assert_same before, @client.tools
     assert_equal 1, @server.sent("tools/list").length
+  end
+
+  def test_a_notice_after_the_answer_on_the_same_stream_reaches_the_host
+    told = []
+    client(on_notification: ->(method, _params) { told << method })
+
+    assert_equal "changed", @client.call_tool("changes_late", {}).dig("content", 0, "text")
+    assert_equal ["notifications/tools/list_changed"], told
   end
 
   def test_what_the_hosts_callable_raises_is_reported_and_the_call_goes_on

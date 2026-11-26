@@ -86,7 +86,7 @@ module Mistri
         def call(payload, replayable:, mirror: nil, **)
           @reading = true
           answered = false
-          took = ->(record) { answered ||= yield(record) }
+          took = ->(record) { answered = yield(record) || answered }
           events = Events.new(max_record_bytes: @max_record_bytes)
           repeated = stateless? ? repeated(payload, mirror) : {}
           meta = post(@transport, payload, repeated, replayable: replayable, events: events, &took)

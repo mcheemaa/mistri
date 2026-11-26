@@ -67,7 +67,7 @@ module Mistri
                 started = true
                 raise_for_status(response)
                 response_headers = response.to_hash.transform_values(&:first)
-                read_either(response, events) { |record| answered ||= block.call(record) }
+                read_either(response, events) { |record| answered = block.call(record) || answered }
               end
             end
           end

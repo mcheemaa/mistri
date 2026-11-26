@@ -282,7 +282,10 @@ module Mistri
         answer = nil
         # A tool may commit its external side effect before the connection dies.
         exchange({ jsonrpc: "2.0", id: id, method: method, params: params },
-                 replayable, **options) { |record| answer ||= answer_in(record, id) }
+                 replayable, **options) do |record|
+          taken = answer_in(record, id)
+          answer ||= taken
+        end
         return outcome(answer) if answer
 
         raise unanswered(method, replayable)
