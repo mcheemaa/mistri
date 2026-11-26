@@ -7,6 +7,17 @@ require_relative "support/mcp_stub_server"
 # copy tagged NotSent. The error a caller owns is never changed.
 class TestMcpNotSent < Minitest::Test
   ECHO = { "echo" => { description: "Echoes.", handler: ->(_args) { "echo" } } }.freeze
+  # Raises the error a test set, once, from the next read of a connection.
+  FailingRead = Module.new do
+    def rbuf_fill
+      error = Thread.current[:mistri_test_read_error]
+      return super unless error
+
+      Thread.current[:mistri_test_read_error] = nil
+      raise error
+    end
+  end
+  Net::BufferedIO.prepend(FailingRead)
 
   def with_server
     server = Mistri::Test::McpStubServer.new(tools: ECHO)
@@ -26,13 +37,37 @@ class TestMcpNotSent < Minitest::Test
     token = -> { [1, 5].include?(resolved += 1) ? raise(shared) : "token" }
     with_server do |server|
       client = remote_client(server, token: token)
-      unsent = assert_raises(RuntimeError) { client.call_tool("echo", {}) }
-      attempted = assert_raises(RuntimeError) { client.call_tool("echo", {}) }
+      at_the_handshake = assert_raises(RuntimeError) { client.call_tool("echo", {}) }
+      at_the_call = assert_raises(RuntimeError) { client.call_tool("echo", {}) }
 
-      assert_kind_of Mistri::MCP::NotSent, unsent
-      assert_equal ["no token", shared.backtrace], [unsent.message, unsent.backtrace]
-      assert_same shared, attempted
+      assert_kind_of Mistri::MCP::NotSent, at_the_handshake
+      assert_equal "no token", at_the_handshake.message
+      refute_same shared, at_the_handshake
+      assert_kind_of Mistri::MCP::NotSent, at_the_call, "nothing is written before the token"
+      assert_equal 5, resolved
+      assert_empty server.calls
       refute_kind_of Mistri::MCP::NotSent, shared
+    end
+  end
+
+  def test_a_call_whose_read_fails_like_a_refused_connection_was_still_sent
+    with_server do |server|
+      client = remote_client(server)
+      client.tools
+      Thread.current[:mistri_test_read_error] = Errno::EHOSTUNREACH.new
+      error = assert_raises(Mistri::AmbiguousDeliveryError) { client.call_tool("echo", {}) }
+      sleep 0.1
+
+      refute_kind_of Mistri::MCP::NotSent, error
+      assert_operator server.calls.length, :<=, 1
+    end
+  ensure
+    Thread.current[:mistri_test_read_error] = nil
+  end
+
+  def test_the_class_of_an_error_does_not_say_that_no_connection_was_opened
+    [Errno::ECONNREFUSED.new, Errno::EHOSTUNREACH.new, Net::OpenTimeout.new].each do |error|
+      refute Mistri::Transport.unopened?(error)
     end
   end
 end

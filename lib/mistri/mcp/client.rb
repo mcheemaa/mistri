@@ -138,15 +138,20 @@ module Mistri
 
       # An error raised before the call is sent is raised as a copy tagged
       # NotSent. The error itself may be frozen, or raised again by a later
-      # call that was sent.
+      # call that was sent. One client runs one call at a time, so a call
+      # that is ended while it waits for another was not sent either.
       def call_tool(name, arguments = {})
+        waiting = true
         @mutex.synchronize do
+          waiting = false
           @sent = false
           finished(name, arguments, request("tools/call", { name: name, arguments: arguments }))
         rescue StandardError => e
           note(e)
-          raise unsent?(e) ? e.dup.extend(NotSent) : e
+          raise unsent?(e) ? tagged(e) : e
         end
+      rescue StandardError => e
+        raise waiting ? tagged(e) : e
       end
 
       def connect
@@ -178,15 +183,19 @@ module Mistri
       # connection could be opened to send it on.
       def unsent?(error) = !@sent || Transport.unopened?(error.cause)
 
+      def tagged(error) = error.is_a?(NotSent) ? error : error.dup.extend(NotSent)
+
       # What a failure says of the server: that it refused to authorize, or
       # that it could not be used. Its own answer, a call that timed out and
       # an answer over a limit leave the state as it was, and so does an
       # error of the host's own.
       def note(error)
         return if [error, error.cause].any? { |known| KEPT.any? { |kind| known.is_a?(kind) } }
-        return unless DOWN.any? { |kind| error.is_a?(kind) }
 
-        @state = error.is_a?(AuthenticationError) ? :needs_sign_in : :failed
+        refused = SIGN_IN_ERRORS.any? { |kind| error.is_a?(kind) }
+        return unless refused || DOWN.any? { |kind| error.is_a?(kind) }
+
+        @state = refused ? :needs_sign_in : :failed
         @failure = error.message
       end
 
@@ -218,9 +227,14 @@ module Mistri
       rescue Error, ProviderError => e
         raise if asked || !stateless? || !form_refused?(e)
 
-        # The server no longer takes the form this client remembered. A
-        # request it refused for that did not run, so it is sent again.
+        # The server may no longer take the form this client remembered, so
+        # it is asked again. One that still speaks this revision gave its
+        # answer. One that now speaks an older revision refused the request
+        # for its form, so the request did not run and is sent again.
         @version = nil
+        ensure_connected
+        raise e if stateless?
+
         request(method, params, reconnected: reconnected, refreshed: refreshed, asked: true)
       end
 
@@ -259,19 +273,6 @@ module Mistri
         params = { name: name, arguments: arguments }
         params[:requestState] = result["requestState"] if result.key?("requestState")
         finished(name, arguments, request("tools/call", params), rounds - 1)
-      end
-
-      def declined(asked)
-        wanted = (asked.is_a?(Hash) ? asked.values : []).first(3).filter_map do |input|
-          next unless input.is_a?(Hash)
-
-          params = input["params"]
-          [input["method"], (params["message"] if params.is_a?(Hash))].compact.join(": ")
-        end
-        detail = " (#{wanted.join("; ")[0, 300]})" unless wanted.empty?
-        text = "The server asked for input before it would finish this call#{detail}. " \
-               "This client gives a server no input, so the call was not finished."
-        { "isError" => true, "content" => [{ "type" => "text", "text" => text }] }
       end
 
       def rpc(method, params, newest: stateless?, **options)

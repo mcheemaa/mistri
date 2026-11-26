@@ -121,6 +121,24 @@ class TestMcpRefusedToken < Minitest::Test
                  result.content)
   end
 
+  def test_a_grant_that_is_spent_when_a_call_is_about_to_go_out_needs_a_sign_in
+    gone = Mistri::MCP::OAuth::InvalidGrantError.new("token request failed (400): invalid_grant",
+                                                     status: 400, reason: "invalid_grant")
+    spent = false
+    client(-> { spent ? raise(gone) : "new" }).connect
+    tool = Mistri::MCP.bridge(@client, { "name" => "guarded" }, prefix: "files")
+    spent = true
+    result = tool.call({})
+
+    assert result.error
+    assert_equal 'files__guarded did not run: the MCP server "files" needs a sign-in before ' \
+                 "its tools can be used (token request failed (400): invalid_grant).",
+                 result.content
+    assert_empty @server.sent("tools/call")
+    assert_equal [:needs_sign_in, gone.message], [@client.state, @client.failure]
+    refute_kind_of Mistri::MCP::NotSent, gone
+  end
+
   private
 
   def client(token, tools: TOOLS, **)

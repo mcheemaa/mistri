@@ -157,11 +157,16 @@ module Mistri
         private
 
         # The headers are resolved first, so an error from the host's token
-        # callable is not taken for the server's answer. A server that was too
-        # slow is kept, as a slow stdio server is. A refusal keeps its class,
-        # status and body, and its message names an MCP server, not a provider.
+        # callable is not taken for the server's answer. Nothing is written
+        # by then, so it is tagged NotSent. A server that was too slow is
+        # kept, as a slow stdio server is. A refusal keeps its class, status
+        # and body, and its message names an MCP server, not a provider.
         def post(transport, payload, repeated = {}, **, &)
-          headers = request_headers.merge(repeated)
+          headers = begin
+            request_headers.merge(repeated)
+          rescue StandardError => e
+            raise e.dup.extend(NotSent)
+          end
           begin
             transport.post_either(@path, body: payload, headers: headers, **, &)
           rescue ProviderError => e

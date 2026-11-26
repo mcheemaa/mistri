@@ -28,6 +28,12 @@ module Mistri
     CONNECT_ERRORS = [IOError, SocketError, SystemCallError, Timeout::Error,
                       Net::HTTPBadResponse, OpenSSL::SSL::SSLError].freeze
 
+    # Marks an error raised while a connection was being opened, so before
+    # any request was written on it. The class of an error does not say
+    # that: a socket that was connected can still raise ECONNREFUSED or
+    # EHOSTUNREACH.
+    module Unopened; end
+
     # Net::HTTP reconnects expired keep-alives internally. Resolving inside
     # connect makes every MCP connection cycle cross the egress boundary.
     class ResolvedHTTP < Net::HTTP
@@ -57,20 +63,19 @@ module Mistri
           end
         end
         raise failure || Net::OpenTimeout.new("all approved addresses timed out")
+      rescue *CONNECT_ERRORS => e
+        raise e.extend(Unopened)
       ensure
         @open_timeout = original_timeout if original_timeout
       end
     end
-    private_constant :ResolvedHTTP, :CONNECT_ERRORS, :BLANK_BODY
+    private_constant :ResolvedHTTP, :CONNECT_ERRORS, :BLANK_BODY, :Unopened
 
     include StreamableHTTP
 
-    # True for an error that means no connection was opened, so no request
-    # was sent on it.
-    def self.unopened?(error)
-      [Net::OpenTimeout, SocketError, Errno::ECONNREFUSED, Errno::EHOSTUNREACH,
-       Errno::ENETUNREACH].any? { |kind| error.is_a?(kind) }
-    end
+    # True for an error that was raised while a connection was being opened,
+    # so no request was sent on it.
+    def self.unopened?(error) = error.is_a?(Unopened)
 
     def initialize(origin:, open_timeout: 15, read_timeout: 300, write_timeout: 60,
                    address_resolver: nil, max_record_bytes: DEFAULT_MAX_RECORD_BYTES)

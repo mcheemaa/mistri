@@ -18,6 +18,9 @@ class TestMcpStateless < Minitest::Test
       server.result(socket, id, { "resultType" => "partial" })
     },
     "empty" => ->(server, socket, id) { server.result(socket, id, nil) },
+    "refuses" => lambda { |server, socket, id|
+      server.refuse(socket, id, code: -32_602, message: "Invalid params", status: 400)
+    },
     "requests" => lambda do |server, socket, id|
       server.open(socket)
       server.event(socket, { "jsonrpc" => "2.0", "id" => "srv-1", "method" => "ping" })
@@ -92,6 +95,15 @@ class TestMcpStateless < Minitest::Test
 
   def test_a_result_that_is_no_object_is_handed_on_as_it_is
     assert_nil client.call_tool("empty", {})
+  end
+
+  def test_a_refusal_with_an_http_status_is_the_servers_answer_and_is_not_sent_again
+    error = assert_raises(Mistri::ProviderError) { client.call_tool("refuses", {}) }
+
+    assert_equal [400, "the MCP server answered HTTP 400: Invalid params"],
+                 [error.status, error.message]
+    assert_equal 1, @server.sent("tools/call").length
+    assert_equal 2, @server.sent("server/discover").length, "the server is asked, not the call"
   end
 
   def test_a_request_from_the_server_gets_no_reply

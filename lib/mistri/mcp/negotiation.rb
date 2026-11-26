@@ -160,6 +160,20 @@ module Mistri
           "io.modelcontextprotocol/clientCapabilities" => {} }
       end
 
+      # What a model reads when a server asked for input to finish a call.
+      def declined(asked)
+        wanted = (asked.is_a?(Hash) ? asked.values : []).first(3).filter_map do |input|
+          next unless input.is_a?(Hash)
+
+          params = input["params"]
+          [input["method"], (params["message"] if params.is_a?(Hash))].compact.join(": ")
+        end
+        detail = " (#{wanted.join("; ")[0, 300]})" unless wanted.empty?
+        text = "The server asked for input before it would finish this call#{detail}. " \
+               "This client gives a server no input, so the call was not finished."
+        { "isError" => true, "content" => [{ "type" => "text", "text" => text }] }
+      end
+
       # A result names its type since 2026-07-28. None means complete, and one
       # this client does not know is not a result it can use.
       def typed(result)

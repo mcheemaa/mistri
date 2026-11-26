@@ -10,12 +10,13 @@ module Mistri
 
       # The wait for an answer can be ended from outside the gem: by a tool's
       # own limit, or by a Timeout the host put around the call. That cancels
-      # the request and keeps the server, as the read timeout does.
+      # the request and keeps the server, as the read timeout does. A request
+      # that was not sent has nothing to cancel.
       def exchange(payload, replayable, **, &)
         settled = false
         @wire.call(payload, replayable: replayable, **, &)
         settled = true
-      rescue Mistri::Error
+      rescue Mistri::Error, NotSent
         settled = true
         raise
       ensure

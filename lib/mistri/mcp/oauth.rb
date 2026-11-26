@@ -832,6 +832,11 @@ module Mistri
         params
       end
     end # rubocop:enable Metrics/ModuleLength
+
+    # The failures that only a new sign-in ends: a token the server refused,
+    # and a grant that is spent.
+    SIGN_IN_ERRORS = [AuthenticationError, OAuth::InvalidGrantError].freeze
+    private_constant :SIGN_IN_ERRORS
   end
 end
 

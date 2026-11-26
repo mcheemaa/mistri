@@ -277,7 +277,7 @@ module Mistri
     # not be used: which server, by the name the host gave it, and why.
     def unreachable(local, prefix, error)
       server = prefix ? "the MCP server #{prefix.to_s.inspect}" : "the MCP server"
-      if error.is_a?(AuthenticationError)
+      if SIGN_IN_ERRORS.any? { |kind| error.is_a?(kind) }
         return "#{local} did not run: #{server} needs a sign-in before its tools can be used " \
                "(#{error.message})."
       end

@@ -250,6 +250,21 @@ class TestMcpHostIsTold < Minitest::Test
     assert_empty @server.sent("tools/call")
   end
 
+  def test_a_call_whose_limit_passes_while_it_waits_for_another_did_not_run
+    listing = { "tools" => [{ "name" => "works" }, { "name" => "echo" }] }
+    slow, fast = Mistri::MCP.tools(client(listing: listing), timeout: 0.2)
+    holder = Thread.new { slow.call({}) }
+    sleep 0.05
+    call = Mistri::ToolCall.new(id: "c1", name: fast.name, arguments: {})
+    _call, result, = Mistri::ToolExecutor.call([call], { fast.name => fast }).first
+    holder.join
+
+    assert result.error
+    assert_equal "echo did not run: its time limit passed before the call was sent to " \
+                 "the MCP server.", result.content
+    assert_equal(["works"], @server.sent("tools/call").map { |sent| sent.dig("params", "name") })
+  end
+
   def test_a_tool_bridged_with_no_prefix_names_no_server
     listing = { "tools" => [{ "name" => "echo" }] }
     echo = Mistri::MCP.tools(client(listing: listing)).first
