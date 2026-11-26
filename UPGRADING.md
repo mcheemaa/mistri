@@ -22,6 +22,17 @@ error when one call takes more than 300 seconds in all.
   `Mistri::MCP.tools(client, timeout: 1800)`.
 - For the earlier behaviour, pass `timeout: nil`.
 
+### A bridged MCP tool says which server could not be used
+
+- The text of a bridged tool's result changed for a server that cannot be
+  used. It names the server by its `prefix:`, and says so when the server
+  needs a sign-in. A host that matched the text
+  `No connection to the MCP server could be established` matches
+  `did not run` instead.
+- `Client#call_tool` raises a `Mistri::ProviderError` tagged
+  `Mistri::MCP::NotSent` when no connection could be opened. Before, it raised
+  `Mistri::AmbiguousDeliveryError`, which says the call may have completed.
+
 ### A bridged MCP tool's description is cut at 4,096 characters
 
 A longer description now reaches the model cut, with a line that says so.

@@ -183,9 +183,8 @@ module Mistri
                   instructions_as: instructions_as, timeout: timeout,
                   complete_argument_validator: complete_argument_validator) do |args|
         answer(client.call_tool(remote, args || {}))
-      rescue NotSent => e
-        ToolResult.new(content: "No connection to the MCP server could be established, so " \
-                                "#{local} did not run: #{e.message}", error: true)
+      rescue NotSent, AuthenticationError => e
+        ToolResult.new(content: unreachable(local, prefix, e), error: true)
       end
     rescue ConfigurationError => e
       raise ConfigurationError, "MCP tool #{label(remote)}: #{e.message}"
@@ -201,6 +200,19 @@ module Mistri
       trusted && annotations.is_a?(Hash) && annotations["readOnlyHint"] == true
     end
     private_class_method :marked?
+
+    # What the model reads when a tool could not run because its server could
+    # not be used: which server, by the name the host gave it, and why.
+    def unreachable(local, prefix, error)
+      server = prefix ? "the MCP server #{prefix.to_s.inspect}" : "the MCP server"
+      if error.is_a?(AuthenticationError)
+        return "#{local} did not run: #{server} needs a sign-in before its tools can be used " \
+               "(#{error.message})."
+      end
+
+      "No connection to #{server} could be established, so #{local} did not run: #{error.message}"
+    end
+    private_class_method :unreachable
 
     def bounded(description, limit)
       return description if limit.nil? || description.length <= limit
@@ -292,6 +304,7 @@ end
 require_relative "mcp/egress"
 require_relative "mcp/mirror"
 require_relative "mcp/negotiation"
+require_relative "mcp/conversation"
 require_relative "mcp/wires"
 require_relative "mcp/client"
 require_relative "mcp/oauth"

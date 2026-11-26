@@ -65,6 +65,13 @@ module Mistri
 
     include StreamableHTTP
 
+    # True for an error that means no connection was opened, so no request
+    # was sent on it.
+    def self.unopened?(error)
+      [Net::OpenTimeout, SocketError, Errno::ECONNREFUSED, Errno::EHOSTUNREACH,
+       Errno::ENETUNREACH].any? { |kind| error.is_a?(kind) }
+    end
+
     def initialize(origin:, open_timeout: 15, read_timeout: 300, write_timeout: 60,
                    address_resolver: nil, max_record_bytes: DEFAULT_MAX_RECORD_BYTES)
       unless max_record_bytes.is_a?(Integer) && max_record_bytes.positive?

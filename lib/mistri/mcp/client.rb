@@ -33,18 +33,31 @@ module Mistri
     #
     # listing: takes the value an earlier client's listing returned. A client
     # built with it sends no request until a tool is called.
+    #
+    # on_notification: is called with the method and the params of each
+    # notification the server sends while the client reads, such as a changed
+    # tool list. It runs inside the call, so it must not use this client.
+    # progress: true asks for progress with each tool call. state says whether
+    # the server answered, could not be reached, or needs a sign-in, and
+    # failure says why.
     class Client
       include Negotiation
+      include Conversation
 
       # Times a call is sent again for a server that asks to be called again.
       STATE_ROUNDS = 3
-      private_constant :STATE_ROUNDS
-      attr_reader :server_info
+      # The failures that leave a server as it was, and the ones that say it
+      # could not be used.
+      KEPT = [WireTimeout, ResponseTooLargeError, ResponseTooComplexError].freeze
+      DOWN = [ProviderError, WireError, SystemCallError].freeze
+      private_constant :STATE_ROUNDS, :KEPT, :DOWN
+      attr_reader :server_info, :state, :failure
 
       def initialize(url: nil, command: nil, env: {}, token: nil, headers: {},
                      client_name: "mistri", open_timeout: 15, read_timeout: 120,
                      allow_non_public: nil, max_tool_pages: 100, max_tools: 10_000,
-                     max_record_bytes: DEFAULT_MAX_RECORD_BYTES, listing: nil)
+                     max_record_bytes: DEFAULT_MAX_RECORD_BYTES, listing: nil,
+                     on_notification: nil, progress: false)
         if [url, command].compact.length != 1
           raise ConfigurationError, "pass exactly one of url: or command:"
         end
@@ -63,6 +76,9 @@ module Mistri
                                    max_record_bytes: max_record_bytes)
                 end
         @client_name = client_name
+        @on_notification = on_notification
+        @progress = progress
+        @state = :idle
         @mutex = Mutex.new
         @serial = 0
         @connected = false
@@ -74,7 +90,7 @@ module Mistri
       # The server's tools, and its instructions when it sent any, as JSON a
       # host can store.
       def listing(refresh: false)
-        @mutex.synchronize do
+        watched do
           @tools = nil if refresh
           @tools ||= list_tools
           { "tools" => @tools, "instructions" => @instructions,
@@ -84,7 +100,7 @@ module Mistri
 
       # The instructions field of the server's initialize result, or nil.
       def instructions
-        @mutex.synchronize do
+        watched do
           handshake unless @described
           @instructions
         end
@@ -93,7 +109,7 @@ module Mistri
       # The server's tools as it describes them: hashes with "name",
       # "description", and "inputSchema". Cached; refresh: true re-lists.
       def tools(refresh: false)
-        @mutex.synchronize do
+        watched do
           @tools = nil if refresh
           @tools ||= list_tools
         end
@@ -107,21 +123,51 @@ module Mistri
           @sent = false
           finished(name, arguments, request("tools/call", { name: name, arguments: arguments }))
         rescue StandardError => e
-          raise @sent ? e : e.dup.extend(NotSent)
+          note(e)
+          raise unsent?(e) ? e.dup.extend(NotSent) : e
         end
       end
 
       def connect
-        @mutex.synchronize { handshake }
+        watched { handshake }
         self
       end
 
       def close
-        @mutex.synchronize { reset_wire }
+        @mutex.synchronize do
+          reset_wire
+          @state = :idle
+          @failure = nil
+        end
         nil
       end
 
       private
+
+      def watched
+        @mutex.synchronize do
+          yield
+        rescue StandardError => e
+          note(e)
+          raise
+        end
+      end
+
+      # A call was not sent when it failed before its request, or when no
+      # connection could be opened to send it on.
+      def unsent?(error) = !@sent || Transport.unopened?(error.cause)
+
+      # What a failure says of the server: that it refused to authorize, or
+      # that it could not be used. Its own answer, a call that timed out and
+      # an answer over a limit leave the state as it was, and so does an
+      # error of the host's own.
+      def note(error)
+        return if [error, error.cause].any? { |known| KEPT.any? { |kind| known.is_a?(kind) } }
+        return unless DOWN.any? { |kind| error.is_a?(kind) }
+
+        @state = error.is_a?(AuthenticationError) ? :needs_sign_in : :failed
+        @failure = error.message
+      end
 
       # The handshake with the one token refresh a request gets.
       def handshake(refreshed: false)
@@ -199,7 +245,8 @@ module Mistri
       def rpc(method, params, newest: stateless?, **options)
         id = (@serial += 1)
         replayable = method != "tools/call"
-        params = params.merge(_meta: described) if newest
+        meta = meta_of(method, id, newest)
+        params = params.merge(_meta: meta) unless meta.empty?
         answer = nil
         # A tool may commit its external side effect before the connection dies.
         exchange({ jsonrpc: "2.0", id: id, method: method, params: params },
@@ -225,79 +272,6 @@ module Mistri
         raise SessionExpired if e.status == 404 && @wire.session?
 
         raise
-      end
-
-      # The wait for an answer can be ended from outside the gem: by a tool's
-      # own limit, or by a Timeout the host put around the call. That cancels
-      # the request and keeps the server, as the read timeout does.
-      def exchange(payload, replayable, **, &)
-        settled = false
-        @wire.call(payload, replayable: replayable, **, &)
-        settled = true
-      rescue Mistri::Error
-        settled = true
-        raise
-      ensure
-        cancel(payload[:method], payload[:id], "the caller stopped waiting") unless settled
-      end
-
-      # A record with a method is the server's own request or notice, whatever
-      # its id. The answer may carry the id as a string of the same digits.
-      def answer_in(record, id)
-        return unless record.is_a?(Hash)
-        return reply_to(record) if record.key?("method")
-
-        record if [id, id.to_s].include?(record["id"])
-      end
-
-      # An error is raised once its response was read to the end, so the
-      # connection it came on is kept.
-      def outcome(answer)
-        raise rpc_error(answer["error"]) if answer["error"]
-
-        typed(answer["result"])
-      end
-
-      # This client declares no capability, so ping is the one request it
-      # serves. A reply that cannot be delivered does not fail the call. Since
-      # 2026-07-28 a server sends no request and a client no reply.
-      def reply_to(record)
-        id = record["id"]
-        return if stateless?
-        return unless id.is_a?(Integer) || (id.is_a?(String) && id.valid_encoding?)
-
-        reply = if record["method"] == "ping"
-                  { result: {} }
-                else
-                  { error: { code: -32_601, message: "Method not found" } }
-                end
-        @wire.notify({ jsonrpc: "2.0", id: id, **reply })
-        nil
-      rescue Mistri::Error
-        nil
-      end
-
-      # The handshake is the one request the spec forbids a client to cancel.
-      def cancel(method, id, reason)
-        return if method == "initialize"
-
-        @wire.cancel({ jsonrpc: "2.0", method: "notifications/cancelled",
-                       params: { requestId: id, reason: reason } })
-      rescue Mistri::Error
-        nil
-      end
-
-      def unanswered(method, replayable)
-        detail = "the server sent no matching response to #{method}"
-        return Error.new(detail) if replayable
-
-        AmbiguousDeliveryError.new("#{AmbiguousDeliveryError.default_message}: #{detail}")
-      end
-
-      def unconfirmed(error)
-        "the request was sent but its tool outcome could not be confirmed: " \
-          "#{error.message}; the operation may have completed; do not retry automatically; " \
-          "verify external state first"
       end
 
       def list_tools

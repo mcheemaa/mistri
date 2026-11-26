@@ -5,6 +5,15 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+- An MCP client tells its host more. `on_notification:` is called with each
+  notification a server sends while the client reads, such as a changed tool
+  list. The kept list is not changed by it. `progress: true` asks for progress
+  with each tool call. `Client#state` says whether the server answered, could
+  not be used or needs a sign-in, and `Client#failure` says why.
+- A bridged tool whose MCP server cannot be used names the server, by the
+  prefix the host gave it, and says when the server needs a sign-in. A call to
+  a server whose connection could not be opened is reported as a call that did
+  not run. It was reported as one that may have completed.
 - A bridged MCP tool's description is cut at 4,096 characters, and ends with a
   line that says so. A description is text from the server that the model
   reads as guidance, and it had no bound. `description_limit:` on

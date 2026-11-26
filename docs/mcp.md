@@ -128,6 +128,47 @@ A request is never taken for the answer to a call, whatever its id. An answer
 is matched by the id of its call, also when the server sends that id back as a
 string.
 
+### What the host is told
+
+```ruby
+client = Mistri::MCP::Client.new(
+  url: server_url,
+  on_notification: ->(method, params) { Rails.logger.info("#{method} #{params}") },
+  progress: true,
+)
+```
+
+`on_notification:` is called with the method and the params of each
+notification the server sends while the client reads: a changed tool list, a
+progress notice, a log line. It runs inside the call, so it must not use the
+client. What it raises is written to standard error with the prefix
+`mistri:`, and the call goes on. The kept tool list is not changed by a
+notice. The host lists again with `refresh: true` when it decides to.
+
+A notice reaches the host when it arrives on a stream the client reads. Over
+stdio that is the next call at the latest. A notice that a server sends on a
+stream of its own, outside any call, is not read.
+
+`progress: true` asks for progress with each tool call, by a token that is the
+call's own request id. Each progress notice is a message, so a call that
+reports progress is not ended by `read_timeout`. The limit of the bridged
+tool still holds.
+
+`client.state` is `:idle` before anything was asked, `:connected` once the
+server answered, `:needs_sign_in` after it refused to authorize, and `:failed`
+when it could not be reached, its connection broke, a local server could not
+be started, or it answered with an HTTP error. `client.failure` holds the
+reason. A call that timed out, an answer over a limit and an error the server
+answered with leave both as they were. The next answer makes the state
+`:connected` again.
+
+A bridged tool whose server cannot be used tells the model so, and names the
+server by the `prefix:` the host gave it: `No connection to the MCP server
+"tracker" could be established, so tracker__search did not run`, or `the MCP
+server "tracker" needs a sign-in before its tools can be used`. A call to a
+server whose connection could not be opened did not run, and is not reported
+as one that may have completed.
+
 ### Protocol revisions
 
 The client speaks two forms of the protocol. In the form of 2026-07-28 there
@@ -363,19 +404,27 @@ An agent can be given the tools of tens or hundreds of servers. Four things
 keep that cheap, and each is a host decision that Mistri supports:
 
 1. List each server once, in a job, and store the listing. Listing takes a
-   connection for each server, so run the servers in parallel and let one
-   failure leave the others:
+   connection for each server, so run the servers in parallel, wait a bounded
+   time for all of them together, and let one failure leave the others:
 
    ```ruby
-   listings = servers.to_h do |name, url|
-     [name, Thread.new { Mistri::MCP::Client.new(url: url).listing }]
-   end
-   listings.each do |name, thread|
-     store.write(name, thread.value)
+   clients = servers.transform_values { |url| Mistri::MCP::Client.new(url: url) }
+   threads = clients.transform_values { |client| Thread.new { client.listing } }
+   deadline = Process.clock_gettime(Process::CLOCK_MONOTONIC) + 30
+   threads.each do |name, thread|
+     left = deadline - Process.clock_gettime(Process::CLOCK_MONOTONIC)
+     store.write(name, thread.value) if thread.join([left, 0].max)
    rescue StandardError => e
      report(name, e)
    end
    ```
+
+   A server that has not answered by then is left for the next run of the
+   job. Its client is still `:idle`, and its thread ends by the client's own
+   timeouts. `client.state` and `client.failure` say how each of the others
+   ended. Mistri has no helper for this: it would start threads inside the
+   host's process, and how many a process may hold, and for how long, is the
+   host's decision.
 
 2. Build the clients from the stored listings and bridge them once for the
    process. Bridging validates each schema, so it is the part worth doing

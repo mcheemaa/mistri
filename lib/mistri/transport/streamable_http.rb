@@ -80,7 +80,7 @@ module Mistri
           teardown
           return response_headers if answered
 
-          unless replayable
+          unless replayable || Transport.unopened?(e)
             raise AmbiguousDeliveryError, "#{AmbiguousDeliveryError.default_message}: #{e.message}"
           end
           if started || retried || e.is_a?(Timeout::Error)
