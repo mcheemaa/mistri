@@ -12,8 +12,9 @@ class TestMcpStdioSignOfLife < Minitest::Test
     require "json"
     STDOUT.sync = true
     notice = { "method" => "notifications/message", "params" => { "data" => "busy" } }
-    say = ->(message) { puts JSON.generate({ "jsonrpc" => "2.0" }.merge(message)) }
-    gone = false
+    line_of = ->(message) { "#{JSON.generate({ "jsonrpc" => "2.0" }.merge(message))}\n" }
+    say = ->(*messages) { STDOUT.write(messages.map(&line_of).join) }
+    gone = noisy = false
     while (line = STDIN.gets)
       message = JSON.parse(line)
       File.write(ENV.fetch("STUB_TRACE"), "#{Process.pid} #{message["method"]}\n", mode: "a")
@@ -23,6 +24,9 @@ class TestMcpStdioSignOfLife < Minitest::Test
       arguments = message.dig("params", "arguments") || {}
       case tool
       when "silent" then next
+      when "noisy"
+        noisy = true
+        next
       when "works" then sleep arguments["seconds"]
       when "gone"
         gone = true
@@ -41,15 +45,18 @@ class TestMcpStdioSignOfLife < Minitest::Test
                when "tools/call" then { "content" => [{ "type" => "text", "text" => tool }] }
                else {}
                end
-      say.call("id" => message["id"], "result" => result)
+      answer = { "id" => message["id"], "result" => result }
+      noisy ? say.call(notice, answer) : say.call(answer)
     end
   SCRIPT
 
   def setup
     @directory = Dir.mktmpdir
     @trace = File.join(@directory, "trace")
+    @pause = 0
     @stdio = Mistri::MCP::Client.new(command: ["ruby", "-e", SERVER], read_timeout: 10,
-                                     env: { "STUB_TRACE" => @trace })
+                                     env: { "STUB_TRACE" => @trace },
+                                     on_notification: ->(*) { sleep @pause })
     @stdio.connect
   end
 
@@ -117,6 +124,16 @@ class TestMcpStdioSignOfLife < Minitest::Test
 
     assert_equal [1, 1, 1], [pids.length, read("ping"), read("tools/call")],
                  "only the host ends such a server"
+  end
+
+  def test_the_time_the_host_takes_for_a_notice_does_not_end_a_server_that_answered
+    within(0.2) do
+      assert_raises(Mistri::AmbiguousDeliveryError) { @stdio.call_tool("noisy", {}) }
+      @pause = 0.4
+
+      assert_equal "echo", text_of(@stdio.call_tool("echo", {}))
+    end
+    assert_equal [1, 1], [pids.length, read("ping")], "its answer came in one write with a notice"
   end
 
   def test_a_server_that_answers_the_question_and_never_a_call_is_kept

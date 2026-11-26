@@ -337,7 +337,8 @@ module Mistri
           wait ||= @read_timeout
           deadline = clock + wait if whole && wait
           write(payload, wait)
-          loop { break if yield(read_record(deadline ? remaining(deadline) : wait)) }
+          # A message that was read before the deadline is still handed on.
+          loop { break if yield(read_record(deadline ? [deadline - clock, 0].max : wait)) }
           nil
         end
 
