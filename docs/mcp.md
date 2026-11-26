@@ -211,8 +211,8 @@ the form of 2026-07-28 its first request is the call itself.
 A server can move from one form to the other after the answer was kept. When
 a server refuses the handshake of a remembered older revision, or refuses a
 request in the form of 2026-07-28 in a way that may be about its form, the
-client asks it again. A refused sign-in, a timeout, a limit and a server
-error are not about its form. A request is sent a second time only to a
+client asks it again. A refused sign-in, a timeout, a limit and an HTTP
+status of 500 or above are not about its form. A request is sent a second time only to a
 server that turned out to speak the other form, which refused the first for
 its form. A server that still speaks the same form gave its answer, and that
 is raised.
