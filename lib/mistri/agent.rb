@@ -677,17 +677,19 @@ module Mistri
       due.keys - sent
     end
 
-    # Each distinct instructions text as the text block the model reads,
-    # with the names of the tools that carry it.
+    # Each distinct instructions text, under each weight it was given, as
+    # the text block the model reads, with the names of the tools that carry
+    # it.
     def tool_instructions
       @tool_instructions ||=
         @tools.select { |tool| tool.respond_to?(:instructions) }
-              .group_by { |tool| tool.instructions.to_s.strip }.except("")
-              .to_h do |text, tools|
+              .group_by { |tool| [tool.instructions.to_s.strip, weight_of(tool)] }
+              .reject { |(text, _weight), _tools| text.empty? }
+              .to_h do |(text, weight), tools|
                 names = tools.map(&:name)
                 block = "The server of #{instructed(names)} gives these instructions for using " \
                         "its tools:\n#{bounded_instructions(text)}"
-                (@instruction_kinds ||= {})[block] = INSTRUCTION_KINDS.fetch(weight_of(tools.first))
+                (@instruction_kinds ||= {})[block] = INSTRUCTION_KINDS.fetch(weight)
                 [block, names]
               end
     end

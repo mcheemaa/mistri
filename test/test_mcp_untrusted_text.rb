@@ -99,6 +99,22 @@ class TestMcpUntrustedText < Minitest::Test
     end
   end
 
+  def test_one_text_under_two_weights_is_sent_with_each
+    listed = client(SEARCH, instructions: "Search first.")
+    first = Mistri::MCP.tools(listed, prefix: "first")
+    second = Mistri::MCP.tools(listed, prefix: "second", instructions_as: :user)
+    agent = Mistri::Agent.new(provider: Mistri::Providers::Fake.new(turns: [{ text: "done" }]),
+                              tools: first + second)
+    agent.run("go")
+    sent = agent.session.messages.select(&:reminder).to_h do |message|
+      [message.reminder, message.content.grep(Mistri::Content::Text).map(&:text).join]
+    end
+
+    assert_equal %w[tool_instructions tool_instructions_as_user], sent.keys.sort
+    assert_match(/first__\*/, sent["tool_instructions"])
+    assert_match(/second__\*/, sent["tool_instructions_as_user"])
+  end
+
   def test_a_tool_that_names_no_weight_gets_the_weight_of_a_reminder
     plain = Class.new(Mistri::Tool) { undef_method :instructions_as }
                  .define("plain", "Plain.", instructions: "Use with care.") { "ok" }
