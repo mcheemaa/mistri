@@ -99,7 +99,14 @@ The client now sends `server/discover` before its first request, and uses the
   `Mistri::ProviderError`. Both are a `Mistri::Error`.
 - The message of an HTTP error from an MCP server changed. A host that matched
   the text `provider request failed` matches the class or `status` instead.
-- `headers:` no longer takes `Last-Event-ID`.
+- `headers:` no longer takes `Last-Event-ID`, `Mcp-Method` or `Mcp-Name`.
+- `read_timeout` is now the wait for one message. A call that takes longer
+  than `read_timeout`, 120 seconds unless the host set another, on a server
+  that sends only comments to keep its stream open, now ends at
+  `read_timeout` with `Mistri::AmbiguousDeliveryError`. Before, each comment
+  started the wait again and the call returned its answer. Pass a longer
+  `read_timeout`, or `progress: true` for a server that reports progress,
+  because a progress notice is a message.
 
 ### A timeout no longer ends a stdio MCP server
 

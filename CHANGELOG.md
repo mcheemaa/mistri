@@ -62,7 +62,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - A bridged tool whose MCP server cannot be used names the server, by the
   prefix the host gave it, and says when the server needs a sign-in. A call to
   a server whose connection could not be opened is reported as a call that did
-  not run. It was reported as one that may have completed.
+  not run. It was reported as one that may have completed. So is a call that
+  the host's token callable ended before it was sent, and one whose time limit
+  passed while it waited for another call. A token callable that raises
+  `OAuth::InvalidGrantError` makes the state `:needs_sign_in`.
 - A bridged MCP tool's description is cut at 4,096 characters, and ends with a
   line that says so. A description is text from the server that the model
   reads as guidance, and it had no bound. `description_limit:` on

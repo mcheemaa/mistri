@@ -121,7 +121,6 @@ in an application or deployment so the executable does not change without a
 code review.
 
 Call `client.close` when a long-lived host is finished. For stdio, it closes the
-Call `client.close` when a long-lived host is finished. For stdio, it closes the
 server's input and waits half a second for the server to end. A server that is
 still running is sent SIGTERM, and SIGKILL one second after that. For HTTP, it
 sends a DELETE with the session id, as the spec asks, on a connection that
@@ -129,6 +128,7 @@ waits five seconds at most, and forgets the session whatever the server
 answers. It sends the token it last sent and does not ask the host for a new
 one. The discovered tool cache remains available.
 `call_tool` or `tools(refresh: true)` performs a fresh handshake when needed.
+
 ### Requests from a server
 
 In the older form of the protocol a server may send its own requests while a
@@ -170,7 +170,8 @@ reports progress is not ended by `read_timeout`. The limit of the bridged
 tool still holds.
 
 `client.state` is `:idle` before anything was asked, `:connected` once the
-server answered, `:needs_sign_in` after it refused to authorize, and `:failed`
+server answered, `:needs_sign_in` after it refused to authorize or the host's
+token callable raised `OAuth::InvalidGrantError`, and `:failed`
 when it could not be reached, its connection broke, a local server could not
 be started, or it answered with an HTTP error. `client.failure` holds the
 reason. A call that timed out, an answer over a limit and an error the server
@@ -183,7 +184,8 @@ server by the `prefix:` the host gave it: `No connection to the MCP server
 server "tracker" needs a sign-in before its tools can be used`. A call to a
 server whose connection could not be opened did not run, and is not reported
 as one that may have completed. A tool whose `timeout:` passes before its
-call is sent says that it did not run, too.
+call is sent says that it did not run, too. That includes a call that waited
+for another call of the same client, which runs one at a time.
 
 ### Protocol revisions
 
@@ -204,6 +206,13 @@ The answer is kept for the life of the client. `client.listing` holds it as
 `"protocolVersion"`, so a client built from a stored listing asks nothing: in
 the form of 2026-07-28 its first request is the call itself.
 
+A server can move from one form to the other after the answer was kept. When
+a server refuses the handshake of a remembered older revision, or refuses a
+request in the form of 2026-07-28 with an HTTP status, the client asks it
+again. A request is sent a second time only to a server that turned out to
+speak the other form, which refused the first for its form. A server that
+still speaks the same form gave its answer, and that is raised.
+
 In the form of 2026-07-28:
 
 - A request from the server gets no reply. The revision allows neither.
@@ -214,7 +223,8 @@ In the form of 2026-07-28:
   `x-mcp-header` is repeated in `Mcp-Param-*`. A direct `call_tool` on a
   client that holds no listing lists the tools first, to learn the marks. A
   tool whose marks break the rules of the revision is left out of the list and
-  named in a warning on standard error.
+  named in a warning on standard error. So is one in a stored listing that
+  names 2026-07-28, and no parameter of such a tool is ever repeated.
 - `close` sends no DELETE, because there is no session.
 - A server may answer a call by asking for input. The client declares no
   capability to give any, so such a call ends as a tool error that says so,
@@ -314,13 +324,16 @@ that server.
 `instructions_as: :user` gives a server's instructions less weight. They are
 then sent as text of a user turn in a system-reminder block on every provider,
 and never as a system or developer message. The reminder they are appended as
-is `"tool_instructions_as_user"`.
+is `"tool_instructions_as_user"`. When tools of one server are bridged under
+one prefix with both weights, the server's instructions are sent once, as
+text of a user turn.
 
 ### What else a server's text can do
 
 A tool's description is text from the server that the model reads as guidance.
 `Mistri::MCP.tools` cuts one at 4,096 characters and ends it with a line that
-says so. `description_limit:` sets another number, and `nil` sets none. Of
+says so. `description_limit:` sets another number, which is an integer that
+is not negative, and `nil` sets none. Of
 350 definitions from 32 public servers the longest description has 3,674
 characters.
 
@@ -342,7 +355,8 @@ Mistri::MCP.changes(kept, fresh)
 ```
 
 The client itself never replaces a kept listing. What to do with a changed
-definition is the host's decision.
+definition is the host's decision. When a listing names one tool twice, the
+first definition is the one compared, as it is the one bridged.
 
 `Mistri::MCP.tools` filters remote names with `allow:` and `deny:`. `prefix:`
 creates local names such as `linear__create_issue` while the remote call still
@@ -612,8 +626,9 @@ follow it:
 - `resources: true` offers the tool for a server that returns links and
   declares no resources.
 - `gates: { "read_resource" => true }` makes a read wait for approval. The
-  tool follows `deferred:` and `timeout:` like the server's own tools, and it
-  is marked to run beside other calls.
+  tool follows `deferred:` and `timeout:` like the server's own tools. It is
+  marked to run beside other calls, unless `parallel: false` or
+  `parallel: { "read_resource" => false }` says it runs alone.
 - A server that lists a tool named `read_resource` keeps that name, and
   Mistri's tool is left out.
 

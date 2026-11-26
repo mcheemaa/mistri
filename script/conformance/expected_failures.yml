@@ -2,8 +2,10 @@
 # to fail, each with its reason. The suite fails the run for any other failure,
 # and for an entry here whose scenario passes.
 client:
-  # The server asks the client a question in the middle of a call. Mistri's
-  # client declares no elicitation and answers such a request with an error.
+  # The server asks the client a question in the middle of a call, on a
+  # stream of its own, outside the stream of the call. Mistri's client reads
+  # only the stream of a call and declares no elicitation, so it never sees
+  # the question. The call waits for read_timeout and ends.
   - elicitation-sep1034-client-defaults
   # The server answers a call by asking for input. The client gives a server
   # no input, so it ends the call there. It does send state back when a
