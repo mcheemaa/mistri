@@ -22,12 +22,27 @@ error when one call takes more than 300 seconds in all.
   `Mistri::MCP.tools(client, timeout: 1800)`.
 - For the earlier behaviour, pass `timeout: nil`.
 
+### A key of `gates:` that names no tool raises
+
+`Mistri::MCP.tools(client, gates: { "create_issue" => true })` now raises
+`Mistri::ConfigurationError` for a key that names no tool the server lists.
+Before, such a key was ignored and the tool ran with no approval.
+
+- Keys are remote names, as strings. A symbol names no tool.
+- A host that passes one hash to several servers gives each server the keys
+  of its own tools:
+  `gates: GATED.slice(*client.tools.map { |tool| tool["name"] })`.
+- A server that drops or renames a gated tool makes `MCP.tools` raise until
+  the hash is changed.
+
 ### `Mistri::MCP.tools` returns a tool that reads resources
 
 For a server that declares resources, `Mistri::MCP.tools` now returns one
 more tool than the server lists: `read_resource`, under the server's prefix.
 
 - A host that wants the list as it was passes `resources: false`.
+- A host that passes `allow:` gets the tool only when the list names
+  `read_resource`, and `deny:` leaves it out by the same name.
 - A host that gates a server's tools gates this one with
   `gates: { "read_resource" => true }`, or with `needs_approval: true`.
 - A listing stored before this release has no `"resources"` key, so a client
@@ -113,9 +128,12 @@ The client now sends `server/discover` before its first request, and uses the
 When `read_timeout` passes, the client cancels that one request and keeps the
 server. Before, the server was ended and the next call started a new one.
 
-- A host that relied on a new server after a timeout calls `client.close`
-  itself. The next call then starts one. A server that has stopped for good
-  makes every call wait for the timeout until then.
+- After a request with no answer, the client asks the server for a sign of
+  life before the next request. A server that gives none is ended, and the
+  request starts a new one.
+- A server that answers that question and still never answers a call is kept.
+  A host that relied on a new server after every timeout calls
+  `client.close` itself. The next call then starts one.
 - A line on a stdio server's stdout that is not JSON no longer fails the call.
   It is written to standard error with the prefix `mistri:`.
 - `client.close` takes up to half a second longer for a stdio server that does

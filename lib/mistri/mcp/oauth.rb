@@ -239,7 +239,7 @@ module Mistri
           document = get_json(metadata_url, allow_non_public:, optional: true, missed:)
           next unless document
 
-          validate_resource(document["resource"], tolerant ? url : expected_resource, tolerant:)
+          validate_resource(document["resource"], expected_resource, url, tolerant:)
           authorization_servers(document)
           return [document, challenge["scope"]]
         end
@@ -290,8 +290,10 @@ module Mistri
           next unless document
 
           named = document["issuer"]
-          unless named == authority || (tolerant && same_issuer?(named, authority))
-            raise Error, "authorization server metadata issuer does not match #{authority}"
+          alike = same_issuer?(named, authority)
+          unless tolerant ? alike : named == authority
+            raise Error, "authorization server metadata issuer does not match #{authority}" \
+                         "#{tolerable("it differs by one trailing slash") if alike}"
           end
 
           return document
@@ -373,12 +375,13 @@ module Mistri
       def authorization_server(document, issuer: nil, tolerant: false)
         servers = authorization_servers(document)
         if issuer
-          named = servers.find do |server|
-            server == issuer || (tolerant && same_issuer?(server, issuer))
-          end
+          alike = servers.select { |server| same_issuer?(server, issuer) }
+          named = tolerant ? alike.first : alike.find { |server| server == issuer }
           return named if named
 
-          raise IssuerChanged, "protected resource metadata does not name the configured issuer"
+          slash = tolerable("one it names differs by one trailing slash") unless alike.empty?
+          raise IssuerChanged,
+                "protected resource metadata does not name the configured issuer#{slash}"
         end
         return servers.first if servers.one?
 
@@ -803,16 +806,25 @@ module Mistri
         nil
       end
 
-      def validate_resource(candidate, expected, tolerant: false)
+      # Exact discovery takes a document that names the address it was read
+      # for. Tolerant discovery takes one that names the server, its origin
+      # or a path above it. A refusal does not show a query, because a query
+      # can hold a secret.
+      def validate_resource(candidate, expected, url, tolerant: false)
         raise Error, "protected resource metadata has no resource" unless candidate.is_a?(String)
 
         resource = canonical(candidate)
-        return if resource == canonical(expected)
-        return if tolerant && covers?(resource, canonical(expected))
+        covered = covers?(resource, canonical(url))
+        return if tolerant ? covered : resource == canonical(expected)
 
-        raise Error,
-              "protected resource metadata resource does not match " \
-              "#{Egress.display(URI(expected))}"
+        refused = Egress.display(URI(tolerant ? url : expected))
+        message = "protected resource metadata resource does not match #{refused}"
+        raise Error, message unless covered
+
+        named = Egress.display(URI(resource))
+        raise Error, message + tolerable("it differs only in the query") if named == refused
+
+        raise Error, message + tolerable("it names #{named}", "a resource")
       end
 
       def parse_www_authenticate(header)

@@ -11,17 +11,67 @@ module Mistri
       # The wait for an answer can be ended from outside the gem: by a tool's
       # own limit, or by a Timeout the host put around the call. That cancels
       # the request and keeps the server, as the read timeout does. A request
-      # that was not sent has nothing to cancel.
+      # that was not sent has nothing to cancel. In each case the request got
+      # no answer, and the time of the first such request is kept.
       def exchange(payload, replayable, **, &)
         settled = false
         @wire.call(payload, replayable: replayable, **, &)
         settled = true
+      rescue WireTimeout
+        @unanswered_at ||= clock
+        settled = true
+        raise
       rescue Mistri::Error, NotSent
         settled = true
         raise
       ensure
-        cancel(payload[:method], payload[:id], "the caller stopped waiting") unless settled
+        unless settled
+          @unanswered_at ||= clock
+          cancel(payload[:method], payload[:id], "the caller stopped waiting")
+        end
       end
+
+      # A request with no answer leaves a doubt about a server this client
+      # started. Before the next request the server is asked a question that
+      # changes nothing. One that answers was slow, and is kept with all it
+      # holds. One that does not is ended, and the request starts a new one.
+      # A question that the caller ends leaves the doubt as old as it was.
+      def end_if_gone
+        gone = @wire.restartable? && @wire.open? && !sign_of_life?
+        @unanswered_at = nil
+        return unless gone
+
+        warn("mistri: the MCP server gave no sign of life after a request with no answer, " \
+             "so it was ended")
+        @wire.close
+      end
+
+      # The question is ping, or server/discover since 2026-07-28, which has
+      # no ping. Any answer to it counts, a refusal too. The time is for the
+      # answer: other messages do not extend it. A question that fails is no
+      # sign of life, and not the failure of the request that comes after it.
+      def sign_of_life?
+        id = (@serial += 1)
+        question = { jsonrpc: "2.0", id: id, method: stateless? ? "server/discover" : "ping" }
+        question[:params] = { _meta: described } if stateless?
+        exchange(question, true, wait: time_left, whole: true) { |record| answer_in(record, id) }
+        true
+      rescue Mistri::Error
+        false
+      end
+
+      # The server has the read timeout to give a sign of life, counted from
+      # the request that got no answer. So a server that handles one request
+      # at a time can first finish that request, and a caller whose own limit
+      # ends the question still ends a server that is gone, at a later
+      # request. A question asked after that time still gets a short wait of
+      # its own. With no read timeout the question has no limit of its own.
+      def time_left
+        limit = @wire.read_timeout
+        limit && [limit - (clock - @unanswered_at), @wire.probe_wait].max
+      end
+
+      def clock = Process.clock_gettime(Process::CLOCK_MONOTONIC)
 
       # A record with a method is the server's own request or notice, whatever
       # its id. The answer may carry the id as a string of the same digits.
@@ -57,6 +107,7 @@ module Mistri
       # An error is raised once its response was read to the end, so the
       # connection it came on is kept.
       def outcome(answer)
+        @unanswered_at = nil
         @state = :connected
         @failure = nil
         raise rpc_error(answer["error"]) if answer["error"]

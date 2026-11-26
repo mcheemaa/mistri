@@ -37,6 +37,7 @@ module Mistri
 
       def url = "#{@stub.origin}/mcp"
       def stop = @stub.stop
+      def stop_listening = @stub.stop_listening
       def accepts = @stub.accepts
 
       def requests(verb) = @stub.requests.select { |request| request[:line].start_with?(verb) }

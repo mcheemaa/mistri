@@ -134,6 +134,20 @@ class TestMcpResources < Minitest::Test
     assert_equal %w[links report read_resource], names.call(resources: true)
   end
 
+  def test_allow_and_deny_decide_the_tool_like_any_other
+    names = ->(**options) { Mistri::MCP.tools(@client, **options).map(&:name) }
+    client
+
+    assert_equal %w[links], names.call(allow: %w[links])
+    assert_equal %w[links read_resource], names.call(allow: %w[links read_resource])
+    assert_equal %w[links report], names.call(deny: %w[read_resource])
+    assert_equal %w[links], names.call(allow: %w[links], resources: true)
+    assert_equal %w[links], names.call(allow: %w[links], gates: { "read_resource" => true })
+    assert_equal "Two things:\n[resource: notes://today]\n[resource: notes://bare]",
+                 Mistri::MCP.tools(@client, allow: %w[links]).first.call({}),
+                 "a link names no tool the model was not given"
+  end
+
   def test_a_servers_own_tool_of_that_name_keeps_it
     client(listed: [*LISTED, { "name" => "read_resource", "description" => "The server's own." }])
     tools = Mistri::MCP.tools(@client)

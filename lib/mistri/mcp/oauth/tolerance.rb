@@ -41,6 +41,13 @@ module Mistri
         end
       end
 
+      # What an exact refusal adds when tolerant discovery takes the same
+      # answer, so the host can choose it. It names what is accepted: a later
+      # step of the sign-in can still refuse the server.
+      def tolerable(what, accepted = "a difference")
+        "; #{what}, #{accepted} that tolerant: true accepts"
+      end
+
       # The endpoints of the 2025-03-26 revision, for an authorization server
       # that publishes no metadata. That revision required PKCE.
       def default_metadata(authority)

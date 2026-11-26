@@ -117,6 +117,9 @@ module Mistri
 
         def open? = true
 
+        # A remote server is not this client's to end.
+        def restartable? = false
+
         # Since 2026-07-28 a client repeats parts of a request in its headers.
         def mirrors? = stateless?
 
@@ -310,6 +313,8 @@ module Mistri
         private_constant :READ_SIZE, :WRITE_SIZE, :PROBE_WAIT, :BLANK_RECORD, :EXIT_WAIT,
                          :TERM_WAIT, :INHERITED_ENV
 
+        attr_reader :read_timeout
+
         def initialize(command:, env: {}, read_timeout: 120,
                        max_record_bytes: DEFAULT_MAX_RECORD_BYTES)
           unless max_record_bytes.is_a?(Integer) && max_record_bytes.positive?
@@ -325,11 +330,15 @@ module Mistri
         end
 
         # Reads until the block returns what it took for the answer. wait
-        # replaces the read timeout for this one request.
-        def call(payload, wait: nil, **)
+        # replaces the read timeout for this one request. whole makes that
+        # time the wait for the answer, where it is the wait for each message.
+        def call(payload, wait: nil, whole: false, **)
           start
-          write(payload, wait || @read_timeout)
-          loop { break if yield(read_record(wait || @read_timeout)) }
+          wait ||= @read_timeout
+          deadline = clock + wait if whole && wait
+          write(payload, wait)
+          # A message that was read before the deadline is still handed on.
+          loop { break if yield(read_record(deadline ? [deadline - clock, 0].max : wait)) }
           nil
         end
 
@@ -348,6 +357,9 @@ module Mistri
         # written to, so the client knows to do the handshake again. A close
         # that was ended early leaves a server whose input is closed.
         def open? = !@pid.nil? && !@cut_write && !@stdin.closed?
+
+        # This wire started the server, so it can end it and start another.
+        def restartable? = true
 
         def mirrors? = false
 

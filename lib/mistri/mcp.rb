@@ -78,25 +78,28 @@ module Mistri
     # The server's tools as Mistri tools. allow/deny filter by remote name,
     # prefix namespaces local names ("linear__create_issue") against
     # collisions, and gates marks tools needing human approval
-    # (gates: { "create_issue" => true }, or needs_approval: for all). A tool
-    # that cannot be bridged is left out: the block is given its definition
-    # and the error, and without a block it is named in a warning. deferred
-    # keeps the server's tools out of the model's sight until a search loads
-    # them. instructions: false keeps the server's instructions out of the
-    # conversation, and a string is sent in their place. parallel says which
-    # tools may run beside others in a turn: nil follows each tool's
-    # readOnlyHint, true or false sets every tool, and a hash sets tools by
-    # remote name and leaves the rest to their hint. trust_hints: false means
-    # no tool is marked by its hint, only by parallel. timeout is the seconds
-    # one call may take in all before the agent stops waiting for it, and nil
-    # sets no limit. description_limit is the characters of a description that
-    # reach the model, and nil sets none. instructions_as: :user sends the
-    # instructions as text of a user turn where they would be a system message.
+    # (gates: { "create_issue" => true }, or needs_approval: for all). A key
+    # of gates that names no tool of the server raises, and so does one of a
+    # parallel hash. A tool that cannot be bridged is left out: the block is
+    # given its definition and the error, and without a block it is named in
+    # a warning. deferred keeps the server's tools out of the model's sight
+    # until a search loads them. instructions: false keeps the server's
+    # instructions out of the conversation, and a string is sent in their
+    # place. parallel says which tools may run beside others in a turn: nil
+    # follows each tool's readOnlyHint, true or false sets every tool, and a
+    # hash sets tools by remote name and leaves the rest to their hint.
+    # trust_hints: false means no tool is marked by its hint, only by
+    # parallel. timeout is the seconds one call may take in all before the
+    # agent stops waiting for it, and nil sets no limit. description_limit is
+    # the characters of a description that reach the model, and nil sets
+    # none. instructions_as: :user sends the instructions as text of a user
+    # turn where they would be a system message.
     #
     # A server that has resources gets one more tool, read_resource, which
     # reads one by its URI: a result of the server's tools names them.
     # resources: true offers it for a server that declares none, and false
-    # leaves it out. It is gated by gates: { "read_resource" => true }.
+    # leaves it out. It is gated by gates: { "read_resource" => true }, and
+    # allow and deny take it or leave it out under that name.
     def tools(client, allow: nil, deny: [], prefix: nil, needs_approval: false, gates: {},
               complete_argument_validator: nil, deferred: false, instructions: true,
               parallel: nil, timeout: CALL_TIMEOUT, description_limit: DESCRIPTION_LIMIT,
@@ -105,11 +108,13 @@ module Mistri
       taken = {}
       listed = client.tools
       reader = reader_name(client, listed, resources, prefix)
-      known_marks!(parallel, listed, reader)
+      names = names_of(client, listed, reader)
+      { parallel:, gates: }.each { |option, keyed| known_keys!(option, keyed, names) }
+      reader = nil unless allowed?(READ_RESOURCE, allow, deny)
       instructions = instructions_for(client, instructions)
       bridged = listed.filter_map do |tool|
         remote = tool["name"] if tool.is_a?(Hash)
-        next if deny.include?(remote) || (allow && !allow.include?(remote))
+        next unless allowed?(remote, allow, deny)
 
         bridged = bridge(client, tool, prefix: prefix, gate: gates.fetch(remote, needs_approval),
                                        complete_argument_validator: complete_argument_validator,
@@ -177,19 +182,30 @@ module Mistri
     end
     private_class_method :saver
 
-    # A key that names no tool would leave the tool it was meant for to its
-    # hint, which can mark a tool the host set to run alone.
-    def known_marks!(parallel, listed, reader)
-      return unless parallel.is_a?(Hash)
+    def allowed?(name, allow, deny) = !deny.include?(name) && (allow.nil? || allow.include?(name))
 
-      unknown = parallel.keys - listed.grep(Hash).map { |tool| tool["name"] }
-      unknown -= [READ_RESOURCE] if reader
+    # The names a host's key may use: the tools the client lists, the ones it
+    # left out itself, and the tool that reads resources.
+    def names_of(client, listed, reader)
+      names = listed.grep(Hash).map { |tool| tool["name"] }
+      names.concat(Array(client.left_out)) if client.respond_to?(:left_out)
+      reader ? names << READ_RESOURCE : names
+    end
+
+    # A key that names no tool leaves the tool it was meant for without what
+    # the host set: without its approval, or to a hint that can mark a tool
+    # the host set to run alone. A key may name a tool that allow or deny
+    # leaves out.
+    def known_keys!(option, keyed, names)
+      return unless keyed.is_a?(Hash)
+
+      unknown = keyed.keys - names
       return if unknown.empty?
 
-      names = unknown.map { |name| label(name) }.join(", ")
-      raise ConfigurationError, "parallel: names no tool of this server: #{names}"
+      raise ConfigurationError, "#{option}: names no tool of this server: " \
+                                "#{unknown.map { |name| label(name) }.join(", ")}"
     end
-    private_class_method :known_marks!
+    private_class_method :allowed?, :names_of, :known_keys!
 
     def claim(taken, local, remote)
       holder = taken[local]
@@ -345,98 +361,10 @@ module Mistri
       safe = "_#{safe}" unless safe.match?(/\A[A-Za-z_]/)
       "#{safe[0, NAME_LIMIT - 9]}_#{Digest::SHA256.hexdigest(whole)[0, 8]}"
     end
-
-    # An MCP result becomes model-readable content: text joins, images ride
-    # as image blocks, and isError remains structured failure data end to end.
-    # A link to a resource and bytes that are neither an image nor text are
-    # named and nothing more: a bridged tool does more with them.
-    def answer(result) = shown(result, nil, nil)
-
-    # reader is the name of the tool that reads this server's resources, and
-    # save a callable that keeps bytes and returns where. With them a link
-    # names that tool, and bytes a model cannot read are kept for it.
-    def shown(result, reader, save)
-      blocks = Array(result["content"]).map { |block| convert(block, reader, save) }
-      if result["isError"]
-        text_blocks = blocks.grep(String)
-        if result["structuredContent"]
-          structured = JSON.generate(result["structuredContent"])
-          text_blocks << structured unless text_blocks.include?(structured)
-        end
-        text = text_blocks.join("\n")
-        content = "MCP tool error: #{text.empty? ? "unknown error" : text}"
-        non_text = blocks.grep_v(String)
-        content = [content, *non_text] unless non_text.empty?
-        return ToolResult.new(content:, error: true)
-      end
-      if blocks.empty? && result["structuredContent"]
-        return JSON.generate(result["structuredContent"])
-      end
-      return blocks.join("\n") if blocks.all?(String)
-
-      blocks
-    end
-    private_class_method :shown
-
-    def convert(block, reader = nil, save = nil)
-      case block["type"]
-      when "text" then block["text"].to_s
-      when "image"
-        Content::Image.new(data: block["data"], mime_type: block["mimeType"] || "image/png")
-      when "resource" then embedded(block["resource"] || {}, save)
-      when "resource_link" then link(block, reader)
-      else "[unsupported #{block["type"]} content]"
-      end
-    end
-
-    # A resource a server put into a result: its text, or its bytes. Bytes
-    # that are an image are shown, bytes of a text type are read as text, and
-    # any other bytes are kept where the agent can find them.
-    def embedded(resource, save)
-      return resource["text"] if resource["text"]
-
-      blob = resource["blob"]
-      return "[resource: #{resource["uri"]}]" unless blob.is_a?(String)
-
-      type = resource["mimeType"].to_s
-      return Content::Image.new(data: blob, mime_type: type) if type.start_with?("image/")
-
-      bytes = Content.strict_base64(blob).unpack1("m0")
-      text = bytes.dup.force_encoding(Encoding::UTF_8)
-      return text if TEXT_TYPE.match?(type) && text.valid_encoding?
-
-      kept(resource["uri"], type, bytes, save)
-    end
-    private_class_method :embedded
-
-    def kept(uri, type, bytes, save)
-      return "[resource: #{uri}]" unless save
-
-      about = "#{uri} (#{type.empty? ? "unknown type" : type}, #{bytes.bytesize} bytes)"
-      path = save.call(bytes, uri.to_s[/\.[A-Za-z0-9]{1,8}\z/] || ".bin")
-      return "[Binary resource #{about} saved at #{path}]" if path
-
-      "[Binary resource #{about} is not shown: the agent has no scratchpad to keep it in]"
-    rescue StandardError => e
-      "[Binary resource #{about} could not be saved: #{e.message}]"
-    end
-    private_class_method :kept
-
-    def link(block, reader)
-      return "[resource: #{block["uri"]}]" unless reader
-
-      label = [block["title"], block["name"]].grep(String).first
-      details = [block["mimeType"], (size = block["size"]) && "#{size} bytes"].compact.join(", ")
-      named = "Resource #{block["uri"]}"
-      named += " #{label.inspect}" if label
-      named += " (#{details})" unless details.empty?
-      about = block["description"].strip.delete_suffix(".") if block["description"].is_a?(String)
-      "[#{[named, about, "Read it with #{reader}"].compact.join(". ")}.]"
-    end
-    private_class_method :link
   end
 end
 
+require_relative "mcp/results"
 require_relative "mcp/egress"
 require_relative "mcp/mirror"
 require_relative "mcp/negotiation"

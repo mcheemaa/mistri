@@ -26,6 +26,10 @@ module Mistri
     # One client serializes its calls; parallel tool calls against one
     # server queue rather than interleave.
     #
+    # A timeout keeps a stdio server. Before the request after one with no
+    # answer, the server is asked for a sign of life, and one that gives none
+    # is ended, so that request starts a new server.
+    #
     # A server is asked once which revisions of the protocol it speaks. With
     # one that speaks 2026-07-28 there is no handshake and no session: each
     # request carries its own version. An older one gets the handshake of
@@ -39,19 +43,19 @@ module Mistri
     # tool list. It runs inside the call, so it must not use this client.
     # progress: true asks for progress with each tool call. state says whether
     # the server answered, could not be reached, or needs a sign-in, and
-    # failure says why.
+    # failure says why. left_out names the tools the server lists and this
+    # client does not offer, because their header marks break the rules of
+    # 2026-07-28.
     class Client
       include Negotiation
       include Conversation
 
-      # Times a call is sent again for a server that asks to be called again.
-      STATE_ROUNDS = 3
       # The failures that leave a server as it was, and the ones that say it
       # could not be used.
       KEPT = [WireTimeout, ResponseTooLargeError, ResponseTooComplexError].freeze
       DOWN = [ProviderError, WireError, SystemCallError].freeze
-      private_constant :STATE_ROUNDS, :KEPT, :DOWN
-      attr_reader :server_info, :state, :failure
+      private_constant :KEPT, :DOWN
+      attr_reader :server_info, :state, :failure, :left_out
 
       def initialize(url: nil, command: nil, env: {}, token: nil, headers: {},
                      client_name: "mistri", open_timeout: 15, read_timeout: 120,
@@ -82,6 +86,8 @@ module Mistri
         @mutex = Mutex.new
         @serial = 0
         @connected = false
+        @unanswered_at = nil
+        @left_out = []
         @max_tool_pages = max_tool_pages
         @max_tools = max_tools
         keep(listing) unless listing.nil?
@@ -93,8 +99,9 @@ module Mistri
         watched do
           @tools = nil if refresh
           @tools ||= list_tools
-          { "tools" => @tools, "instructions" => @instructions,
-            "protocolVersion" => @version, "resources" => @resources || nil }.compact
+          { "tools" => @tools, "instructions" => @instructions, "protocolVersion" => @version,
+            "resources" => @resources || nil,
+            "leftOut" => (@left_out.dup unless @left_out.empty?) }.compact
         end
       end
 
@@ -139,15 +146,19 @@ module Mistri
       # An error raised before the call is sent is raised as a copy tagged
       # NotSent. The error itself may be frozen, or raised again by a later
       # call that was sent. One client runs one call at a time, so a call
-      # that is ended while it waits for another was not sent either.
+      # that is ended while it waits for another was not sent either. A
+      # server that asks for a call again has taken it, so a later round that
+      # is not delivered leaves the outcome of the call open.
       def call_tool(name, arguments = {})
         waiting = true
         @mutex.synchronize do
           waiting = false
-          @sent = false
+          @sent = @taken = false
           finished(name, arguments, request("tools/call", { name: name, arguments: arguments }))
         rescue StandardError => e
           note(e)
+          raise AmbiguousDeliveryError, unconfirmed(e) if @taken && undelivered?(e)
+
           raise unsent?(e) ? tagged(e) : e
         end
       rescue StandardError => e
@@ -183,6 +194,12 @@ module Mistri
       # connection could be opened to send it on.
       def unsent?(error) = !@sent || Transport.unopened?(error.cause)
 
+      # The failures a bridged tool reports as a call that did not run.
+      def undelivered?(error)
+        error.is_a?(NotSent) || error.is_a?(AuthenticationError) ||
+          Transport.unopened?(error.cause)
+      end
+
       # A copy, so the error a host owns is not changed. clone keeps a module
       # the host extended its error with, which dup would drop.
       def tagged(error)
@@ -213,6 +230,7 @@ module Mistri
       end
 
       def request(method, params, reconnected: false, refreshed: false, asked: false)
+        end_if_gone if @unanswered_at
         ensure_connected
         options = wire_options(method, params)
         # A list that a call needed first is not the call.
@@ -265,21 +283,6 @@ module Mistri
         { mirror: tool && tool["inputSchema"] }
       end
 
-      # In the form of 2026-07-28 a server may answer a call by asking for
-      # input. This client declares none it can give, so a call that waits
-      # for some ends as the tool's own error, in words a model can pass on. A
-      # result that asks for nothing and carries state is sent again with it.
-      def finished(name, arguments, result, rounds = STATE_ROUNDS)
-        return result unless result.is_a?(Hash) && result["resultType"] == "input_required"
-
-        asked = result["inputRequests"]
-        return declined(asked) if rounds.zero? || (asked.is_a?(Hash) && !asked.empty?)
-
-        params = { name: name, arguments: arguments }
-        params[:requestState] = result["requestState"] if result.key?("requestState")
-        finished(name, arguments, request("tools/call", params), rounds - 1)
-      end
-
       def rpc(method, params, newest: stateless?, **options)
         id = (@serial += 1)
         replayable = method != "tools/call"
@@ -316,6 +319,7 @@ module Mistri
       end
 
       def list_tools
+        @left_out = []
         collected = []
         cursor = nil
         seen_cursors = {}
@@ -341,14 +345,17 @@ module Mistri
       end
 
       # Over HTTP the revision of 2026-07-28 has a client leave out a tool
-      # whose header marks it cannot honour, and say why.
+      # whose header marks it cannot honour, and say why. Its name is kept,
+      # so a host's key for it still names a tool of the server.
       def usable(tools)
         return tools unless @wire.mirrors?
 
         tools.reject do |tool|
           reason = Mirror.violation(tool["inputSchema"]) if tool.is_a?(Hash)
-          warn("mistri: the MCP tool #{tool["name"].inspect} was left out: #{reason}") if reason
-          reason
+          next unless reason
+
+          warn("mistri: the MCP tool #{tool["name"].inspect} was left out: #{reason}")
+          @left_out |= [tool["name"]]
         end
       end
 
@@ -360,6 +367,7 @@ module Mistri
         end
 
         @instructions = (text unless text.to_s.empty?)
+        @left_out = Array(listing["leftOut"]).grep(String)
         @resources = listing["resources"] == true
         @described = true
         @version = version if SUPPORTED_VERSIONS.include?(version)

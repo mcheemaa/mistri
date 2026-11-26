@@ -595,7 +595,9 @@ class TestMcpOauth < Minitest::Test # rubocop:disable Metrics/ClassLength -- one
     with_server(query: "tenant=one", resource: ->(server) { "#{server.origin}/mcp" }) do |server|
       error = assert_raises(Mistri::MCP::Error) { start_flow(server) }
 
-      assert_match(/does not match/, error.message)
+      assert_equal "protected resource metadata resource does not match #{server.origin}/mcp; " \
+                   "it differs only in the query, a difference that tolerant: true accepts",
+                   error.message
     end
   end
 
@@ -604,6 +606,7 @@ class TestMcpOauth < Minitest::Test # rubocop:disable Metrics/ClassLength -- one
       error = assert_raises(Mistri::MCP::Error) { start_flow(server) }
 
       assert_match(/issuer does not match/, error.message)
+      refute_match(/tolerant/, error.message)
     end
   end
 

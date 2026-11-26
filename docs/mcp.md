@@ -132,12 +132,12 @@ one. The discovered tool cache remains available.
 ### Requests from a server
 
 In the older form of the protocol a server may send its own requests while a
-call waits for its answer. The client declares no capability, so it answers `ping` with an empty result and
-refuses any other request with JSON-RPC error -32601. Over Streamable HTTP the
-reply is a POST of its own, on a second connection that waits five seconds at
-most, because the first is taken by the stream of the call. A reply and a
-cancel carry the token last sent. The host's token callable is asked only for
-a request.
+call waits for its answer. The client declares no capability, so it answers
+`ping` with an empty result and refuses any other request with JSON-RPC error
+-32601. Over Streamable HTTP the reply is a POST of its own, on a second
+connection that waits five seconds at most, because the first is taken by the
+stream of the call. A reply and a cancel carry the token last sent. The host's
+token callable is asked only for a request.
 
 A request is never taken for the answer to a call, whatever its id. An answer
 is matched by the id of its call, also when the server sends that id back as a
@@ -229,7 +229,8 @@ In the form of 2026-07-28:
   tool whose marks break the rules of the revision is left out of the list and
   named in a warning on standard error. So is one in a stored listing, once
   the client knows the server speaks 2026-07-28, and no parameter of such a
-  tool is ever repeated. A tool that was bridged before that stays offered
+  tool is ever repeated. `client.left_out` holds the names of the tools that
+  were left out. A tool that was bridged before that stays offered
   until the host builds its tools again.
 - `close` sends no DELETE, because there is no session.
 - A server may answer a call by asking for input. The client declares no
@@ -264,8 +265,8 @@ looping or allocating without bound.
 Listing a server's tools takes a connection, and a stdio server must be
 started first. With many servers that is too slow to repeat each time an
 agent is built. `client.listing` returns the server's tools, its
-`instructions` when it sent any, the revision it speaks, and whether it has
-resources, as plain JSON.
+`instructions` when it sent any, the revision it speaks, whether it has
+resources, and the names of the tools the client left out, as plain JSON.
 Store it, and pass it to the clients built later:
 
 ```ruby
@@ -407,7 +408,11 @@ name calls. A host that stores local names or holds approvals across runs for
 such a server should raise from the block.
 
 `needs_approval:` gates every bridged tool. `gates:` sets policy by remote name
-and overrides the shared default.
+and overrides the shared default. A key of `gates:` that names no tool of the
+server raises `Mistri::ConfigurationError`: a name spelled another way, or a
+symbol, would leave the tool it was meant for to run with no approval. A key
+may name a tool that is not offered: one that `allow:` or `deny:` leaves out,
+or one that the client left out itself.
 
 A bridged tool is marked `parallel` when its server lists it with
 `readOnlyHint: true`, so it runs beside its marked neighbours in a turn. Any
@@ -631,6 +636,9 @@ follow it:
   `[resource: notes://today]`, as before.
 - `resources: true` offers the tool for a server that returns links and
   declares no resources.
+- `allow:` and `deny:` decide it under the name `read_resource`, like any
+  tool the server lists. With `allow: ["search"]` it is left out, and a link
+  is the line `[resource: notes://today]`.
 - `gates: { "read_resource" => true }` makes a read wait for approval. The
   tool follows `deferred:` and `timeout:` like the server's own tools. It is
   marked to run beside other calls, unless `parallel: false` or
@@ -699,9 +707,31 @@ ignored. A list raises `Mistri::MCP::Error`. A tool call raises
 `Mistri::AmbiguousDeliveryError`, because the tool may have run. The handshake
 is never cancelled: a server that does not answer `initialize` is ended.
 
-A stdio server that has stopped for good is not ended by a timeout. Every later
-call waits for the timeout again until the host calls `client.close`. The call
-after that starts a new server.
+A timeout does not end a stdio server. A request with no answer leaves a
+doubt about it. Before the next request, the client asks the server one
+question that changes nothing: `ping`, or `server/discover` for a server of
+2026-07-28, which has no `ping`. The server has `read_timeout` to give that
+sign of life, counted from the request that got no answer. So a server that
+handles one request at a time can first finish that request. A question that
+is asked later than that still gets five seconds, or `read_timeout` when that
+is shorter. The time is for the answer, and other messages do not extend it.
+
+- A server that answers was slow. It is kept, with everything it holds.
+- A server that does not answer is ended. A line on standard error with the
+  prefix `mistri:` says so. The request starts a new server with a new
+  handshake.
+
+The question is part of the next call, so the limit of that call applies to it
+too. A call whose limit ends the question did not run, and the model reads
+that. The call after it asks again, with the time that is left. Two settings
+leave a server that is gone to the host, which ends it with `client.close`:
+`read_timeout: nil`, where the question has no limit of its own, and calls
+with a limit shorter than the time one question gets.
+
+A server that answers the question and still never answers a call is kept, and
+each call to it waits for the timeout. Whether such a server is worth keeping
+is the host's decision: `client.close` ends it, and the next call starts a new
+one. A server over HTTP is never asked, because it is not the client's to end.
 
 A call is also written under `read_timeout`. When a stdio server has stopped
 reading its input, a call with large arguments ends there. Half a message is
@@ -721,8 +751,9 @@ Mistri::MCP.tools(client, timeout: nil)  # no limit
 `timeout`, so the tool executor ends the call. The model reads that the tool
 timed out and may have completed, and the agent goes on. The client sends
 `notifications/cancelled` for the call, over stdio and over Streamable HTTP.
-The server and its session are kept, and the next call works. A call that
-waits behind another call to the same server spends its limit waiting.
+The server and its session are kept. Before the next call a stdio server is
+asked for a sign of life, as after a timeout. A call that waits behind another
+call to the same server spends its limit waiting.
 
 A direct `Client#call_tool` has no such limit. A host that puts its own
 `Timeout` around one gets the same cancel and keeps the server.
@@ -756,6 +787,12 @@ before `tools/call` leaves. `Client#call_tool` raises a copy of that error
 tagged with `Mistri::MCP::NotSent`, of the same class. A bridged tool turns it
 into an error result that states no connection could be established and the
 tool did not run, so the model does not report a partial effect.
+
+A server of 2026-07-28 may ask for a call to be sent again with state. Once it
+has answered one round, the call has reached it. A later round that is not
+delivered, because the token callable raised, no connection could be opened or
+the server did not authorize it, raises `Mistri::AmbiguousDeliveryError`, and
+is never reported as a call that did not run.
 
 ## Remote network policy
 
@@ -1007,6 +1044,21 @@ error. None of the three lets a token be asked for another origin, and a
 client that was registered with another issuer is refused with
 `IssuerChanged`, as it is exactly. A host that starts a sign-in tolerantly
 passes `tolerant: true` to every later step of it.
+
+Exact discovery is the default. When it refuses a server for the first or the
+second reason, the error names what tolerant discovery accepts:
+
+```text
+protected resource metadata resource does not match https://mcp.example.com/mcp; it names https://mcp.example.com, a resource that tolerant: true accepts
+authorization server metadata issuer does not match https://auth.example.com/; it differs by one trailing slash, a difference that tolerant: true accepts
+```
+
+That is one step of the sign-in. A later step can still refuse the server, for
+example when it names more than one authorization server.
+
+A resource document for an origin makes a token good for every server on that
+origin. Keep discovery exact for an origin that holds servers of different
+owners.
 
 ## Optional Rails connection generator
 
