@@ -55,8 +55,9 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   origin or a path above the server, an issuer one trailing slash apart, and
   a server of the 2025-03-26 revision with no resource document. It is off by
   default. An exact refusal names what tolerant discovery accepts: for the
-  first two of the three the error ends with `that tolerant: true accepts`. `offline_access: true` on `OAuth.start` adds that scope
-  when the authorization server lists it. It is off by default too.
+  first two of the three the error ends with `that tolerant: true accepts`.
+  `offline_access: true` on `OAuth.start` adds that scope when the
+  authorization server lists it. It is off by default too.
 - The generated MCP connection model locks its row for a token refresh, takes
   the refused token, and passes the callback's `iss`. Two processes that
   refreshed one connection at once lost the sign-in.
@@ -93,15 +94,15 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   `Mcp-Name` and `Mcp-Param-*` for each parameter a tool marks with
   `x-mcp-header`. A tool whose marks break the rules of the revision is left
   out of the list, with a warning, and `Client#left_out` names it. An older
-  server gets the handshake of 2025-11-25 as before. `client.listing` holds the revision as `"protocolVersion"`, so a
-  client built from a stored listing asks nothing. A call that a 2026-07-28
-  server answers by asking for input ends as a tool error that says so,
-  because the client declares no elicitation. A call that such a server asks
-  for again with state is sent again, three times at most. The server took
-  the first round, so a later round that is not delivered raises
-  `Mistri::AmbiguousDeliveryError`, and is not reported as a call that did
-  not run. `Client::PROTOCOL_VERSION` is now `"2026-07-28"`, and
-  `Mistri::MCP::Error` has `data`.
+  server gets the handshake of 2025-11-25 as before. `client.listing` holds
+  the revision as `"protocolVersion"`, so a client built from a stored listing
+  asks nothing. A call that a 2026-07-28 server answers by asking for input
+  ends as a tool error that says so, because the client declares no
+  elicitation. A call that such a server asks for again with state is sent
+  again, three times at most. The server took the first round, so a later
+  round that is not delivered raises `Mistri::AmbiguousDeliveryError`, and is
+  not reported as a call that did not run. `Client::PROTOCOL_VERSION` is now
+  `"2026-07-28"`, and `Mistri::MCP::Error` has `data`.
 - A JSON-RPC error from an MCP server no longer costs its connection. The
   error was raised while its response was still being read, which closed the
   connection. It is raised once the response is read.
