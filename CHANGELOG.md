@@ -22,6 +22,30 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   completed. The client sends `notifications/cancelled` for the call, the
   server and its session are kept, and the next call works. A host's own
   `Timeout` around `Client#call_tool` ends the same way.
+- A call over Streamable HTTP returns when its answer arrives. It returned when
+  the server ended the stream, and one public server keeps every stream open
+  for ten seconds after the answer. A stream that is still open a tenth of a
+  second after the answer is left and its connection is closed. A stream that
+  ended is read to its end as before, so its connection is kept.
+- A failed call over Streamable HTTP keeps its session. After a timeout, a
+  dropped stream or a response over a limit, the session was forgotten and the
+  next call did the handshake again. The connection is now closed and the
+  session is kept. A timeout sends `notifications/cancelled` and raises
+  `Mistri::MCP::Error` for a list, where it raised `Mistri::ProviderError`. A
+  tool call raises `Mistri::AmbiguousDeliveryError` as before.
+- `read_timeout` is the wait for one message over Streamable HTTP too. A
+  server that sent a comment each second to keep its stream open held a call
+  with no end, because each byte started the wait again.
+- A stream that a server ended before the answer is asked for again. When an
+  event carried an id, the client waits the `retry` the server named, or one
+  second, and sends a GET with `Last-Event-ID`, once. `Last-Event-ID` is no
+  longer accepted in `headers:`.
+- `Client#close` ends an HTTP session with a DELETE, as the spec asks. It waits
+  five seconds at most and forgets the session whatever the server answers.
+- An MCP server that refuses a request is named in the error. The message was
+  `provider request failed`. It is now `the MCP server answered HTTP 400`, with
+  the message of a JSON-RPC error when the body holds one. The class, `status`
+  and `body` are as before.
 - A timeout no longer ends a stdio MCP server. When `read_timeout` passed, the
   server was ended and the next call started a new one, so one slow call lost
   whatever the server held, such as an open browser page. The client now sends
@@ -34,8 +58,9 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   carried the id of the waiting call was taken for its answer:
   `Client#call_tool` returned nil and the bridged tool raised. The client now
   answers `ping` with an empty result, refuses any other request with error
-  -32601, and takes only a response for an answer. Over Streamable HTTP a
-  request is no longer taken for an answer either, and no reply is sent.
+  -32601, and takes only a response for an answer. The same holds over
+  Streamable HTTP, where a reply is a POST on a second connection, because
+  the first is taken by the stream of the call.
 - A stdio server that sends ids back as strings can be used. Its answer to the
   handshake was never matched, so the client timed out.
 - A line that is not JSON no longer ends a stdio MCP server. Some servers print

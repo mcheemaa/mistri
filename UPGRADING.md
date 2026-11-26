@@ -22,6 +22,18 @@ error when one call takes more than 300 seconds in all.
   `Mistri::MCP.tools(client, timeout: 1800)`.
 - For the earlier behaviour, pass `timeout: nil`.
 
+### MCP over HTTP keeps a session and ends it
+
+- `Client#close` now sends a DELETE with the session id. A server that counts
+  on sessions being left open sees them end.
+- After a failed call the next call uses the same session. Before, the client
+  did the handshake again.
+- A timeout of a list raises `Mistri::MCP::Error`. Before, it raised
+  `Mistri::ProviderError`. Both are a `Mistri::Error`.
+- The message of an HTTP error from an MCP server changed. A host that matched
+  the text `provider request failed` matches the class or `status` instead.
+- `headers:` no longer takes `Last-Event-ID`.
+
 ### A timeout no longer ends a stdio MCP server
 
 When `read_timeout` passes, the client cancels that one request and keeps the

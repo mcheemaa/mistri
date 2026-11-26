@@ -43,8 +43,8 @@ module Mistri
     # The stdio peer failed while a protocol message was in flight.
     class WireError < Error; end
 
-    # The stdio peer took longer than the read timeout to send a message or to
-    # take one. The peer itself is kept.
+    # The server took longer than the read timeout to send a message or to
+    # take one. The server, or its session, is kept.
     class WireTimeout < WireError; end
 
     # The server expired this client's session (a 404 with a session

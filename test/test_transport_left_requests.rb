@@ -49,10 +49,13 @@ class TestTransportLeftRequests < Minitest::Test
     serve_slow_stream
     seen = []
 
-    assert_raises(Timeout::Error) do
-      Timeout.timeout(0.1) { @transport.post_either("/x", body: {}) { |record| seen << record } }
+    keep = lambda do |record|
+      seen << record
+      nil
     end
-    @transport.post_either("/x", body: {}) { |record| seen << record }
+
+    assert_raises(Timeout::Error) { Timeout.timeout(0.1) { @transport.post_either("/x", body: {}, &keep) } }
+    @transport.post_either("/x", body: {}, &keep)
 
     assert_equal [{ "n" => 1 }, { "n" => 2 }, { "n" => 2, "last" => true }], seen
     assert_equal 2, @server.accepts

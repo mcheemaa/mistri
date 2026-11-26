@@ -42,6 +42,23 @@ One Client serializes its requests. Parallel Agent tool calls against the same
 client queue rather than interleave. Use distinct clients only when the server
 and host policy allow true parallel connections.
 
+A server answers a request with a JSON body or with an SSE stream. A call
+returns when its answer arrives. Most servers end the stream with the answer,
+and the connection is then kept for the next request. A stream that is still
+open a tenth of a second after the answer is left, and its connection is
+closed.
+
+A server may end a stream before the answer and expect the client back. When
+an event of that stream carried an id, the client waits the `retry` the server
+named, or one second, and asks for the rest with a GET and `Last-Event-ID`. It
+does so once, and not when the wait is longer than `read_timeout`. The call is
+never sent again.
+
+An HTTP status that refuses a request is raised as the transport's error for
+that status, such as `Mistri::ServerError`, with its `status` and `body`. The
+message names the MCP server: `the MCP server answered HTTP 400`, followed by
+the message of a JSON-RPC error when the body holds one.
+
 ### Stdio
 
 ```ruby
@@ -91,18 +108,21 @@ in an application or deployment so the executable does not change without a
 code review.
 
 Call `client.close` when a long-lived host is finished. For stdio, it closes the
+Call `client.close` when a long-lived host is finished. For stdio, it closes the
 server's input and waits half a second for the server to end. A server that is
-still running is sent SIGTERM, and SIGKILL one second after that. For HTTP, it closes the local connection and forgets the negotiated
-session, but does not send the optional MCP DELETE termination request; remote
-resources expire by server policy. The discovered tool cache remains available.
+still running is sent SIGTERM, and SIGKILL one second after that. For HTTP, it
+sends a DELETE with the session id, as the spec asks, on a connection that
+waits five seconds at most, and forgets the session whatever the server
+answers. It sends the token it last sent and does not ask the host for a new
+one. The discovered tool cache remains available.
 `call_tool` or `tools(refresh: true)` performs a fresh handshake when needed.
-
 ### Requests from a server
 
 A server may send its own requests while a call waits for its answer. The
-client declares no capability, so over stdio it answers `ping` with an empty
-result and refuses any other request with JSON-RPC error -32601. Over
-Streamable HTTP no reply is sent.
+client declares no capability, so it answers `ping` with an empty result and
+refuses any other request with JSON-RPC error -32601. Over Streamable HTTP the
+reply is a POST of its own, on a second connection that waits five seconds at
+most, because the first is taken by the stream of the call.
 
 A request is never taken for the answer to a call, whatever its id. An answer
 is matched by the id of its call, also when the server sends that id back as a
@@ -414,20 +434,23 @@ list answers the same however it replies.
 Byte overflow raises `Mistri::ResponseTooLargeError`. Structural overflow raises
 `Mistri::ResponseTooComplexError`. Both expose `kind` and `limit`.
 
-Either failure resets the wire and negotiated session. The next operation must
-handshake again.
+Either failure closes the connection. Over HTTP the session is kept. Over stdio
+the server is ended, and the next operation starts one and does the handshake
+again.
 
 ### The time one call may take
 
-`read_timeout:` is the wait for one message from the server. When it passes
-over stdio, the client sends `notifications/cancelled` for that request, stops
-waiting and keeps the server. An answer that arrives later is ignored. A list
-raises `Mistri::MCP::Error`. A tool call raises
+`read_timeout:` is the wait for one message from the server, over stdio and
+over HTTP. A comment that a server sends to keep a stream open is not a
+message and does not start the wait again. When the wait passes, the client
+sends `notifications/cancelled` for that request and stops waiting. It keeps
+the stdio server, or the HTTP session. An answer that arrives later is
+ignored. A list raises `Mistri::MCP::Error`. A tool call raises
 `Mistri::AmbiguousDeliveryError`, because the tool may have run. The handshake
 is never cancelled: a server that does not answer `initialize` is ended.
 
-A server that has stopped for good is not ended by a timeout. Every later call
-waits for the timeout again until the host calls `client.close`. The call
+A stdio server that has stopped for good is not ended by a timeout. Every later
+call waits for the timeout again until the host calls `client.close`. The call
 after that starts a new server.
 
 A call is also written under `read_timeout`. When a stdio server has stopped
@@ -471,7 +494,7 @@ replay the call. A model may choose to issue a new call after reading the error,
 so approval, idempotency, and reconciliation remain host policy.
 
 If a matching result arrived before an invalid trailing SSE record, that result
-remains authoritative. The wire is still reset for the next operation.
+remains authoritative. The connection is closed and the session is kept.
 
 Session-expired and authentication retries occur only through explicit server
 responses that establish the request was not accepted under the old session or

@@ -10,6 +10,9 @@ module Mistri
     # payload's own response arrives, and knows nothing about MCP semantics;
     # the Client owns those.
     module Wires
+      TIMED_OUT = "timed out waiting for the MCP server"
+      private_constant :TIMED_OUT
+
       # Streamable HTTP: requests POST to one endpoint, responses arrive as
       # JSON or an SSE stream. Sessions and bearer auth live here.
       class Http
@@ -18,8 +21,39 @@ module Mistri
         RESERVED_HEADERS = %w[host content-length transfer-encoding connection keep-alive
                               proxy-authenticate proxy-authorization proxy-connection te trailer
                               upgrade accept content-type accept-encoding mcp-session-id
-                              mcp-protocol-version].freeze
-        private_constant :HEADER_NAME, :INVALID_HEADER_VALUE, :RESERVED_HEADERS
+                              mcp-protocol-version last-event-id].freeze
+        # Seconds before a stream that ended early is asked for again, when
+        # the server named none.
+        RECONNECT_WAIT = 1
+        # Seconds a message said aside may take.
+        ASIDE_TIMEOUT = 5
+        private_constant :HEADER_NAME, :INVALID_HEADER_VALUE, :RESERVED_HEADERS, :RECONNECT_WAIT,
+                         :ASIDE_TIMEOUT
+
+        # The decoder of one stream, which also keeps what a client needs to
+        # go back to it: the id of the last whole event, and the wait the
+        # server asked for.
+        class Events < SSE
+          attr_reader :last_event_id, :retry_after
+
+          private
+
+          # An id counts when its event ends, at the blank line.
+          def decode(line, &)
+            if line.empty?
+              @last_event_id = @event_id if @event_id
+            elsif line.start_with?("id:")
+              id = line.delete_prefix("id:").delete_prefix(" ")
+              @event_id = id unless id.include?("\0")
+            elsif line.start_with?("retry:")
+              wait = line.delete_prefix("retry:").strip
+              @retry_after = wait.to_i / 1000.0 if wait.match?(/\A\d+\z/)
+            else
+              super
+            end
+          end
+        end
+        private_constant :Events
 
         def initialize(url:, token:, headers:, open_timeout:, read_timeout:, allow_non_public:,
                        max_record_bytes: DEFAULT_MAX_RECORD_BYTES)
@@ -27,9 +61,15 @@ module Mistri
                                                timeout: open_timeout)
           @path = uri.path.empty? ? "/" : uri.path
           @path = "#{@path}?#{uri.query}" if uri.query
-          @transport = Transport.new(origin: Egress.origin(uri), address_resolver: resolver,
-                                     open_timeout: open_timeout, read_timeout: read_timeout,
-                                     max_record_bytes: max_record_bytes)
+          @dial = lambda do |open, read|
+            Transport.new(origin: Egress.origin(uri), address_resolver: resolver,
+                          open_timeout: open, read_timeout: read,
+                          max_record_bytes: max_record_bytes)
+          end
+          @transport = @dial.call(open_timeout, read_timeout)
+          @open_timeout = open_timeout
+          @read_timeout = read_timeout
+          @max_record_bytes = max_record_bytes
           @token = token
           @headers = normalized_headers(headers)
           @session_id = nil
@@ -38,19 +78,25 @@ module Mistri
 
         attr_writer :protocol_version
 
-        def call(payload, replayable:, &)
+        # Reads until the block returns what it took for the answer.
+        def call(payload, replayable:)
           @reading = true
-          capture_session(post(payload, replayable: replayable, &))
+          answered = false
+          took = ->(record) { answered ||= yield(record) }
+          events = Events.new(max_record_bytes: @max_record_bytes)
+          capture_session(post(@transport, payload, replayable: replayable, events: events, &took))
+          resume(events, &took) unless answered
           nil
         ensure
           @reading = false
         end
 
-        # The one connection is taken while a response is read.
-        def notify(payload, **)
-          return if @reading
-
-          post(payload) { |_record| nil }
+        # A reply to the server's own request leaves while the response of a
+        # call is read, and a cancel leaves when a call was given up. Neither
+        # may hold the caller, so both go out on a second connection, which
+        # waits ASIDE_TIMEOUT at most.
+        def notify(payload, wait: nil)
+          post(@reading || wait ? aside : @transport, payload) { |_record| nil }
           nil
         end
 
@@ -65,21 +111,77 @@ module Mistri
           @protocol_version = nil
         end
 
-        def close = @transport.close
+        # The spec asks a client that is done with a session to say so. The
+        # server may refuse, and the session ends for this client either way.
+        # The token is the one last sent: a close does not wait for a refresh.
+        def end_session
+          aside.delete(@path, headers: request_headers(fresh: false)) if @session_id
+        rescue Mistri::Error
+          nil
+        ensure
+          reset_session
+        end
+
+        def close
+          @aside&.close
+          @transport.close
+        end
 
         private
 
-        # The transport's message for a 401 or 403 describes a provider's API
-        # key. The headers are resolved first, so an error from the host's
-        # token callable is not taken for the server's answer.
-        def post(payload, **, &)
+        # The headers are resolved first, so an error from the host's token
+        # callable is not taken for the server's answer. A server that was too
+        # slow is kept, as a slow stdio server is. A refusal keeps its class,
+        # status and body, and its message names an MCP server, not a provider.
+        def post(transport, payload, **, &)
           headers = request_headers
           begin
-            @transport.post_either(@path, body: payload, headers: headers, **, &)
-          rescue AuthenticationError => e
-            raise AuthenticationError.new("the MCP server did not authorize the request",
-                                          status: e.status, body: e.body)
+            transport.post_either(@path, body: payload, headers: headers, **, &)
+          rescue ProviderError => e
+            raise WireTimeout, TIMED_OUT if slow?(e)
+            raise unless e.status
+
+            raise e.exception(refusal(e))
           end
+        end
+
+        # A server may end the stream of a call before the answer and expect
+        # the client back for it: once, after the wait the server named, from
+        # the last event it sent. A failure here leaves the call unanswered,
+        # and never sends the call again.
+        def resume(events, &)
+          wait = events.retry_after || RECONNECT_WAIT
+          return if events.last_event_id.nil? || (@read_timeout && wait > @read_timeout)
+
+          sleep(wait)
+          headers = request_headers.merge("Last-Event-ID" => events.last_event_id)
+          @transport.get_either(@path, headers: headers,
+                                       events: Events.new(max_record_bytes: @max_record_bytes), &)
+          nil
+        rescue ProviderError => e
+          raise WireTimeout, TIMED_OUT if slow?(e)
+
+          nil
+        end
+
+        def aside
+          @aside ||= @dial.call([@open_timeout, ASIDE_TIMEOUT].compact.min, ASIDE_TIMEOUT)
+        end
+
+        def slow?(error)
+          error.cause.is_a?(Timeout::Error) && !error.cause.is_a?(Net::OpenTimeout)
+        end
+
+        def refusal(error)
+          return "the MCP server did not authorize the request" if error.is_a?(AuthenticationError)
+
+          said = begin
+            JSON.parse(error.body.to_s).dig("error", "message")
+          rescue JSON::ParserError, TypeError, NoMethodError
+            nil
+          end
+          detail = ": #{said[0, 200]}" if said.is_a?(String) && !said.empty?
+          "the MCP server answered HTTP #{error.status}#{detail}"
         end
 
         def normalized_headers(headers)
@@ -100,10 +202,11 @@ module Mistri
           end.freeze
         end
 
-        def request_headers
+        def request_headers(fresh: true)
+          @authorization = "Bearer #{resolve_token}" if @token && fresh
           headers = { "Accept" => "application/json, text/event-stream" }
           headers.merge!(@headers)
-          headers["Authorization"] = "Bearer #{resolve_token}" if @token
+          headers["Authorization"] = @authorization if @authorization
           headers["Mcp-Session-Id"] = @session_id if @session_id
           headers["MCP-Protocol-Version"] = @protocol_version if @protocol_version
           headers
@@ -128,7 +231,6 @@ module Mistri
         READ_SIZE = 16 * 1024
         WRITE_SIZE = 64 * 1024
         BLANK_RECORD = /\A[[:space:]]*\z/
-        TIMED_OUT = "timed out waiting for the MCP server"
         # Seconds a server gets to end by itself once its input is closed, and
         # then to end after SIGTERM.
         EXIT_WAIT = 0.5
@@ -142,8 +244,8 @@ module Mistri
           LANG LC_ALL LC_CTYPE TZ TMPDIR
           SSL_CERT_FILE SSL_CERT_DIR NODE_EXTRA_CA_CERTS REQUESTS_CA_BUNDLE CURL_CA_BUNDLE
         ].freeze
-        private_constant :READ_SIZE, :WRITE_SIZE, :BLANK_RECORD, :TIMED_OUT, :EXIT_WAIT,
-                         :TERM_WAIT, :INHERITED_ENV
+        private_constant :READ_SIZE, :WRITE_SIZE, :BLANK_RECORD, :EXIT_WAIT, :TERM_WAIT,
+                         :INHERITED_ENV
 
         def initialize(command:, env: {}, read_timeout: 120,
                        max_record_bytes: DEFAULT_MAX_RECORD_BYTES)
@@ -183,6 +285,8 @@ module Mistri
         def refreshable? = false
 
         def reset_session = nil
+
+        def end_session = nil
 
         def protocol_version=(_version); end
 

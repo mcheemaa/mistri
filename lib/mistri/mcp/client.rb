@@ -182,15 +182,13 @@ module Mistri
 
         raise AmbiguousDeliveryError, unconfirmed(e)
       rescue ResponseTooLargeError, ResponseTooComplexError, WireError => e
-        reset_wire
+        @wire.close
         raise if replayable
         return answer["result"] if answer
 
         raise AmbiguousDeliveryError, unconfirmed(e)
       rescue AmbiguousDeliveryError
-        reset_wire
-        return answer["result"] if answer
-
+        @wire.close
         raise
       rescue ProviderError => e
         raise SessionExpired if e.status == 404 && @wire.session?
@@ -306,8 +304,8 @@ module Mistri
       end
 
       def reset_wire
+        @wire.end_session
         @wire.close
-        @wire.reset_session
         @connected = false
         @server_info = nil
       end

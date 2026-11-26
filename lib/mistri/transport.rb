@@ -4,6 +4,7 @@ require "net/http"
 require "openssl"
 require "json"
 require "uri"
+require_relative "transport/streamable_http"
 
 module Mistri
   # HTTP for one provider origin, held open across the turns of a run: a
@@ -62,6 +63,8 @@ module Mistri
     end
     private_constant :ResolvedHTTP, :CONNECT_ERRORS, :BLANK_BODY
 
+    include StreamableHTTP
+
     def initialize(origin:, open_timeout: 15, read_timeout: 300, write_timeout: 60,
                    address_resolver: nil, max_record_bytes: DEFAULT_MAX_RECORD_BYTES)
       unless max_record_bytes.is_a?(Integer) && max_record_bytes.positive?
@@ -108,62 +111,11 @@ module Mistri
       @mutex.synchronize { stream_locked(path, body, headers, signal, count_tokens, &block) }
     end
 
-    # POST for Streamable-HTTP endpoints (the MCP shape) that answer either
-    # a JSON body or an SSE stream: yields each JSON record either way and
-    # returns the response headers, downcased. A replayable request retries
-    # once when a dead idle socket fails before any response starts.
-    def post_either(path, body:, headers: {}, replayable: true, &block)
-      @mutex.synchronize { post_either_locked(path, body, headers, replayable, &block) }
-    end
-
     def close
       @mutex.synchronize { teardown }
     end
 
     private
-
-    def post_either_locked(path, body, headers, replayable, &block)
-      retried = false
-      begin
-        started = false
-        response_headers = nil
-        read_whole do
-          connection.request(build_request(path, body, headers, streaming: true)) do |response|
-            started = true
-            raise_for_status(response)
-            response_headers = response.to_hash.transform_values(&:first)
-            read_either(response, &block)
-          end
-        end
-        response_headers
-      rescue ResponseTooLargeError, ResponseTooComplexError, ProviderError
-        teardown
-        raise
-      rescue IOError, SocketError, SystemCallError, Timeout::Error, JSON::ParserError,
-             Net::HTTPBadResponse, OpenSSL::SSL::SSLError => e
-        teardown
-        unless replayable
-          raise AmbiguousDeliveryError, "#{AmbiguousDeliveryError.default_message}: #{e.message}"
-        end
-        if started || retried || e.is_a?(Timeout::Error)
-          raise ProviderError, "connection failed: #{e.message}"
-        end
-
-        retried = true
-        retry
-      end
-    end
-
-    def read_either(response, &block)
-      if response["content-type"].to_s.include?("text/event-stream")
-        sse = SSE.new(max_record_bytes: @max_record_bytes)
-        response.read_body { |chunk| sse.feed(chunk, &block) }
-        sse.finish(&block)
-      else
-        raw = read_json_body(response)
-        block.call(JSON.parse(raw)) unless BLANK_BODY.match?(raw)
-      end
-    end
 
     def stream_locked(path, body, headers, signal, count_tokens, &block)
       retried = false
@@ -294,6 +246,8 @@ module Mistri
         http.read_timeout = @read_timeout
         http.write_timeout = @write_timeout
         http.keep_alive_timeout = KEEP_ALIVE_SECONDS
+        # Net::HTTP sends a GET or a DELETE again by itself after a failure.
+        http.max_retries = 0
         http.start
         http
       end
