@@ -114,12 +114,14 @@ class TestGeminiLive < Minitest::Test
     lookup = { name: "lookup", description: "Looks up one record.",
                input_schema: { type: "object", properties: { record: { type: "string" } },
                                required: ["record"] } }
-    generated = provider.stream(
-      messages: [Mistri::Message.user("Call lookup with record two. No prose.")],
-      tools: [lookup]
-    ) { |_event| nil }
+    generated = Mistri::Test.retry_transient do
+      provider.stream(
+        messages: [Mistri::Message.user("Call lookup with record two. No prose.")],
+        tools: [lookup]
+      ) { |_event| nil }
+    end
 
-    assert_equal :tool_use, generated.stop_reason
+    assert_equal :tool_use, generated.stop_reason, generated.error_message.to_s
 
     current = generated.tool_calls.fetch(0)
     legacy_native = Mistri::ToolCall.new(id: "call_1", name: current.name,
@@ -142,9 +144,11 @@ class TestGeminiLive < Minitest::Test
       Mistri::Message.user("Return both exact lookup results, separated by one space.")
     ]
 
-    message = provider.stream(messages: history, tools: [lookup]) { |_event| nil }
+    message = Mistri::Test.retry_transient do
+      provider.stream(messages: history, tools: [lookup]) { |_event| nil }
+    end
 
-    assert_equal :stop, message.stop_reason
+    assert_equal :stop, message.stop_reason, message.error_message.to_s
     assert_includes message.text, first_fact
     assert_includes message.text, second_fact
   ensure
