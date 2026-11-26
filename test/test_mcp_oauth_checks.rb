@@ -548,6 +548,18 @@ class TestMcpOauthChecks < Minitest::Test # rubocop:disable Metrics/ClassLength 
     end
   end
 
+  def test_a_document_that_could_not_be_reached_is_not_taken_for_one_that_is_not_there
+    taken = TCPServer.new("127.0.0.1", 0)
+    dead = "http://127.0.0.1:#{taken.addr[1]}/resource"
+    taken.close
+    with_server(challenge_metadata: dead, path_metadata: false) do |server|
+      error = assert_raises(Mistri::MCP::Error) { start_flow(server, tolerant: true) }
+
+      assert_match(/no protected resource metadata/, error.message)
+      assert_empty server.registrations
+    end
+  end
+
   def test_a_server_with_no_metadata_at_all_gets_the_endpoints_of_the_older_revision
     with_server(challenge_header: false, path_metadata: false,
                 oauth_metadata_status: 404) do |server|

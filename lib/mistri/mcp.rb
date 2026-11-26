@@ -169,7 +169,7 @@ module Mistri
     # Keeps bytes in the scratchpad of the agent that made the call, and
     # returns where. nil when that agent has none.
     def saver(context, local)
-      ->(bytes, extension) { context&.scratchpad&.save_binary(bytes, local, extension) }
+      ->(bytes, extension) { context.scratchpad&.save_binary(bytes, local, extension) }
     end
     private_class_method :saver
 
