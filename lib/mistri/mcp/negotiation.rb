@@ -24,22 +24,38 @@ module Mistri
       # A server is asked once which revisions it speaks, and the answer is
       # kept. A server on stdio that was slow to start answers too late and
       # then refuses the handshake, so it is asked once more with the full
-      # wait.
+      # wait. So is a server that refuses the handshake of a revision this
+      # client remembered: it may speak only 2026-07-28 by now.
       def ensure_connected
         return @wire.protocol_version = @version if stateless?
         return if @connected && @wire.open?
 
-        silent = @version.nil? && discover(@wire.probe_wait) == :silent
+        remembered = !@version.nil?
+        silent = !remembered && discover(@wire.probe_wait) == :silent
         return if stateless?
 
         begin
           open_session
-        rescue Error, ProviderError
-          raise unless silent && discover(nil) == :newest
+        rescue Error, ProviderError => e
+          raise unless newest_after_all?(silent, remembered && refused?(e))
         end
       rescue Mistri::Error
         reset_wire
         raise
+      end
+
+      # A server that was silent gets the full wait this time. One that
+      # refused a remembered revision gets the wait of a first question.
+      def newest_after_all?(silent, refused)
+        return false unless silent || refused
+
+        discover(silent ? nil : @wire.probe_wait) == :newest
+      end
+
+      # The server's own answer to a request: a JSON-RPC error, or an HTTP
+      # status that says something about the request.
+      def refused?(error)
+        error.is_a?(ProviderError) ? !unrelated?(error.status) : !error.code.nil?
       end
 
       def stateless? = @version == PROTOCOL_VERSION

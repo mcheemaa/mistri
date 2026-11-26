@@ -354,11 +354,12 @@ module Mistri
           raise ConfigurationError, "listing: must be a value that Client#listing returned"
         end
 
-        @tools = tools
         @instructions = (text unless text.to_s.empty?)
         @resources = listing["resources"] == true
         @described = true
         @version = version if SUPPORTED_VERSIONS.include?(version)
+        @wire.protocol_version = @version if stateless?
+        @tools = usable(tools)
       end
 
       def validate_limit(name, value)

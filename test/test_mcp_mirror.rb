@@ -70,6 +70,34 @@ class TestMcpMirror < Minitest::Test
     encoded.each { |text, sent| assert_equal sent, MIRROR.value(text), text.inspect }
   end
 
+  def test_a_kept_listing_is_checked_for_its_marks_as_a_fresh_one_is
+    broken = { "name" => "query",
+               "inputSchema" => schema("region" => marked("Region\r\nInjected: yes")) }
+    echo = ->(server, socket, id) { server.result(socket, id, server.answer(id, "ok")["result"]) }
+    server = Mistri::Test::McpScriptedServer.new(tools: { "query" => echo }, discover: NEWEST)
+    build = lambda do |listing|
+      Mistri::MCP::Client.new(url: server.url, listing: listing,
+                              allow_non_public: Mistri::Test::ALLOW_LOOPBACK)
+    end
+    current = nil
+    _out, warned = capture_io do
+      current = build.call({ "tools" => [broken, { "name" => "echo" }],
+                             "protocolVersion" => "2026-07-28" })
+    end
+    older = build.call({ "tools" => [broken] })
+    older.call_tool("query", { "region" => "eu" })
+    sent = server.requests("POST").last[:headers]
+
+    assert_equal(["echo"], current.tools.map { |tool| tool["name"] })
+    assert_match(/the MCP tool "query" was left out: x-mcp-header is not a header name/, warned)
+    assert_equal "query", sent["mcp-name"]
+    assert_empty sent.keys.grep(/mcp-param|injected/)
+    assert_empty MIRROR.headers(broken["inputSchema"], { "region" => "eu" })
+  ensure
+    [current, older].each { |client| client&.close }
+    server&.stop
+  end
+
   def test_a_call_carries_its_marked_parameters_and_a_broken_tool_is_left_out
     listed = [{ "name" => "query", "inputSchema" => schema("region" => marked("Region"),
                                                            "sql" => { "type" => "string" }) },

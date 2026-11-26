@@ -29,8 +29,12 @@ class TestMcpStdioNegotiation < Minitest::Test
 
         say.call("id" => id, "result" => { "supportedVersions" => ["2026-07-28"] })
       when "initialize"
+        next if ENV["STUB_MUTE_INITIALIZE"]
+
         if ENV["STUB_LATE"]
           say.call("id" => id, "error" => { "code" => -32_022, "message" => "Unsupported" })
+        elsif ENV["STUB_NEWEST_ONLY"]
+          say.call("id" => id, "error" => { "code" => -32_601, "message" => "Method not found" })
         else
           say.call("id" => id, "result" => { "protocolVersion" => "2025-11-25", "capabilities" => {} })
         end
@@ -96,11 +100,38 @@ class TestMcpStdioNegotiation < Minitest::Test
                   "server/discover with _meta", "tools/call with _meta"], read
   end
 
+  def test_a_listing_kept_from_an_older_revision_does_not_pin_a_server_that_left_it
+    kept = { "tools" => [{ "name" => "echo" }], "protocolVersion" => "2025-11-25" }
+    stdio = client(env: { "STUB_NEWEST_ONLY" => "1" }, listing: kept)
+
+    assert_equal "echo", stdio.call_tool("echo", {}).dig("content", 0, "text")
+    assert_equal ["initialize", "server/discover with _meta", "tools/call with _meta"], read
+    assert_equal "2026-07-28", stdio.listing(refresh: true)["protocolVersion"]
+  end
+
+  def test_a_refusal_from_a_server_that_does_not_answer_the_question_is_raised_as_it_is
+    kept = { "tools" => [{ "name" => "echo" }], "protocolVersion" => "2025-11-25" }
+    stdio = client(env: { "STUB_NEWEST_ONLY" => "1", "STUB_SILENT" => "1" }, listing: kept,
+                   read_timeout: 0.3)
+
+    error = assert_raises(Mistri::MCP::Error) { stdio.call_tool("echo", {}) }
+
+    assert_equal "Method not found", error.message
+  end
+
+  def test_a_handshake_that_times_out_is_not_taken_for_a_refusal
+    kept = { "tools" => [{ "name" => "echo" }], "protocolVersion" => "2025-11-25" }
+    stdio = client(env: { "STUB_MUTE_INITIALIZE" => "1" }, listing: kept, read_timeout: 0.3)
+
+    assert_raises(Mistri::MCP::Error) { stdio.call_tool("echo", {}) }
+    assert_equal ["initialize"], read
+  end
+
   private
 
-  def client(env: {}, read_timeout: 10)
+  def client(env: {}, read_timeout: 10, **)
     @stdio = Mistri::MCP::Client.new(command: ["ruby", "-e", SERVER], read_timeout: read_timeout,
-                                     env: env.merge("STUB_TRACE" => @trace))
+                                     env: env.merge("STUB_TRACE" => @trace), **)
   end
 
   def read = File.readlines(@trace, chomp: true)

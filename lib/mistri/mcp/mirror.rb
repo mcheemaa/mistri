@@ -33,10 +33,12 @@ module Mistri
       end
 
       # The headers of one call: a header for each marked parameter the
-      # arguments hold. A parameter that is absent or null gets none.
+      # arguments hold. A parameter that is absent or null gets none, and so
+      # does every parameter of a schema whose marks break the rules: a mark
+      # is the server's text, and one that is no header name is not sent.
       def headers(schema, arguments)
         marked = marks(schema)
-        return {} if marked.empty?
+        return {} if marked.empty? || violation(schema)
 
         given = JSON.parse(JSON.generate(arguments || {}))
         marked.each_with_object({}) do |(path, property), headers|
