@@ -26,6 +26,10 @@ module Mistri
     # One client serializes its calls; parallel tool calls against one
     # server queue rather than interleave.
     #
+    # A timeout keeps a stdio server. Before the request after one with no
+    # answer, the server is asked for a sign of life, and one that gives none
+    # is ended, so that request starts a new server.
+    #
     # A server is asked once which revisions of the protocol it speaks. With
     # one that speaks 2026-07-28 there is no handshake and no session: each
     # request carries its own version. An older one gets the handshake of
@@ -80,6 +84,7 @@ module Mistri
         @mutex = Mutex.new
         @serial = 0
         @connected = false
+        @unanswered = false
         @max_tool_pages = max_tool_pages
         @max_tools = max_tools
         keep(listing) unless listing.nil?
@@ -221,6 +226,7 @@ module Mistri
       end
 
       def request(method, params, reconnected: false, refreshed: false, asked: false)
+        end_if_gone if @unanswered
         ensure_connected
         options = wire_options(method, params)
         # A list that a call needed first is not the call.

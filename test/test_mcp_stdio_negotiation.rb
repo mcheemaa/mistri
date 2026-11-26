@@ -74,6 +74,9 @@ class TestMcpStdioNegotiation < Minitest::Test
     stdio.call_tool("echo", {})
 
     assert_includes read, "notifications/cancelled"
+    assert_equal ["server/discover with _meta", "tools/call with _meta"], read.last(2),
+                 "this revision has no ping, so the sign of life is asked for with its own question"
+    refute_includes read, "ping"
   end
 
   def test_a_server_that_does_not_answer_the_question_gets_the_handshake

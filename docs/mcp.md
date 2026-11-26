@@ -704,9 +704,21 @@ ignored. A list raises `Mistri::MCP::Error`. A tool call raises
 `Mistri::AmbiguousDeliveryError`, because the tool may have run. The handshake
 is never cancelled: a server that does not answer `initialize` is ended.
 
-A stdio server that has stopped for good is not ended by a timeout. Every later
-call waits for the timeout again until the host calls `client.close`. The call
-after that starts a new server.
+A timeout does not end a stdio server. A request with no answer leaves a
+doubt about it. Before the next request, the client asks the server one
+question that changes nothing: `ping`, or `server/discover` for a server of
+2026-07-28, which has no `ping`. The server has five seconds to answer, or
+`read_timeout` when that is shorter.
+
+- A server that answers was slow. It is kept, with everything it holds.
+- A server that does not answer is ended. A line on standard error with the
+  prefix `mistri:` says so. The request starts a new server with a new
+  handshake.
+
+A server that answers the question and still never answers a call is kept, and
+each call to it waits for the timeout. Whether such a server is worth keeping
+is the host's decision: `client.close` ends it, and the next call starts a new
+one. A server over HTTP is never asked, because it is not the client's to end.
 
 A call is also written under `read_timeout`. When a stdio server has stopped
 reading its input, a call with large arguments ends there. Half a message is

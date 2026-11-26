@@ -138,6 +138,7 @@ class TestMcpStdioConversation < Minitest::Test
     assert_equal "echo: mine", result.dig("content", 0, "text"), "the late answer was not taken"
     assert_equal [{ "requestId" => called("tools/call"), "reason" => "timed out" }], cancels
     assert_equal 1, pids.length
+    assert_equal 1, asked("ping"), "it answered the question, so it was slow and not gone"
   end
 
   def test_a_list_that_times_out_is_cancelled_and_can_be_asked_again
@@ -149,7 +150,7 @@ class TestMcpStdioConversation < Minitest::Test
     assert_match(/timed out/, error.message)
     assert_equal(["echo"], stdio.tools.map { |tool| tool["name"] })
     assert_equal([called("tools/list")], cancels.map { |params| params["requestId"] })
-    assert_equal 1, pids.length
+    assert_equal [1, 1], [pids.length, asked("ping")]
   end
 
   def test_the_handshake_is_never_cancelled
@@ -183,7 +184,7 @@ class TestMcpStdioConversation < Minitest::Test
 
     assert_equal "echo: next", result.dig("content", 0, "text")
     assert_equal [stopped], cancels
-    assert_equal 1, pids.length
+    assert_equal [1, 1], [pids.length, asked("ping")]
   end
 
   def test_an_error_from_the_server_is_raised_and_nothing_is_cancelled
@@ -345,6 +346,8 @@ class TestMcpStdioConversation < Minitest::Test
   end
 
   def called(method) = sent.find { |message| message["method"] == method }["id"]
+
+  def asked(method) = sent.count { |message| message["method"] == method }
 
   # Only the one call gets the short deadline, never process startup.
   def with_read_timeout(client, seconds)

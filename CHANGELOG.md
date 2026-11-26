@@ -5,6 +5,12 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+- A stdio MCP server that stops answering is replaced. After a request with
+  no answer, the client asks the server one question before the next request:
+  `ping`, or `server/discover` for a server of 2026-07-28. A server that
+  answers within five seconds is kept. A server that does not is ended, and
+  the request starts a new one. Before, every later call waited for
+  `read_timeout` until the host closed the client.
 - A sign-in that exact discovery refuses says when tolerant discovery accepts
   the same server. The error ends with `which tolerant: true accepts` for a
   resource document that names the server's origin or a path above it, and

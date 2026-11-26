@@ -136,6 +136,7 @@ class TestMcpHttpConversation < Minitest::Test
     assert_empty @client.tools
     assert_equal([called("tools/list")], cancels.map { |params| params["requestId"] })
     assert_equal 1, @server.sent("initialize").length
+    assert_empty @server.sent("ping"), "a remote server is not this client's to end"
   end
 
   def test_a_refusal_names_the_mcp_server_and_what_it_said

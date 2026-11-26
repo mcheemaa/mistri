@@ -117,6 +117,9 @@ module Mistri
 
         def open? = true
 
+        # A remote server is not this client's to end.
+        def restartable? = false
+
         # Since 2026-07-28 a client repeats parts of a request in its headers.
         def mirrors? = stateless?
 
@@ -348,6 +351,9 @@ module Mistri
         # written to, so the client knows to do the handshake again. A close
         # that was ended early leaves a server whose input is closed.
         def open? = !@pid.nil? && !@cut_write && !@stdin.closed?
+
+        # This wire started the server, so it can end it and start another.
+        def restartable? = true
 
         def mirrors? = false
 
