@@ -16,8 +16,11 @@ module Mistri
     }.freeze
 
     # instructions is text from the tool's server on how to use its tools. An
-    # agent appends it to the conversation as a reminder.
-    attr_reader :name, :description, :input_schema, :timeout, :instructions, :result_limit
+    # agent appends it to the conversation as a reminder. instructions_as is
+    # the weight it is sent with: :system as every reminder, or :user as text
+    # of a user turn on every provider.
+    attr_reader :name, :description, :input_schema, :timeout, :instructions, :instructions_as,
+                :result_limit
 
     # Define a tool. Give the argument shape as a JSON Schema value via
     # input_schema:, or build it in Ruby with a schema: block. The result is
@@ -38,8 +41,12 @@ module Mistri
                    needs_approval: false, ends_turn: false, timeout: nil, deferred: false,
                    instructions: nil, argument_normalizer: nil, argument_validator: nil,
                    complete_argument_validator: nil, save_result: true, result_limit: nil,
-                   parallel: false, &handler)
+                   parallel: false, instructions_as: :system, &handler)
       raise ArgumentError, "tool #{name.inspect} needs a handler block" unless handler
+      unless %i[system user].include?(instructions_as)
+        raise ArgumentError, "instructions_as must be :system or :user"
+      end
+
       unless argument_normalizer.nil? || argument_normalizer.respond_to?(:call)
         raise ArgumentError, "argument_normalizer must be callable"
       end
@@ -66,6 +73,7 @@ module Mistri
       @timeout = timeout
       @deferred = deferred
       @instructions = instructions
+      @instructions_as = instructions_as
       @save_result = save_result
       @parallel = parallel == true
       @result_limit = checked_limit(result_limit)

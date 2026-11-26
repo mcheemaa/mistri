@@ -220,12 +220,14 @@ A server may send `instructions` in its initialize result: text on how to use
 its tools. `client.instructions` returns it, and `Mistri::MCP.tools` sets it
 on every tool it bridges, as `Tool#instructions`.
 
-The text is the server's, and the host decides whether the model reads it:
+The text is the server's, and the host decides whether the model reads it,
+and with what weight:
 
 ```ruby
 Mistri::MCP.tools(client)                                  # the server's text
 Mistri::MCP.tools(client, instructions: false)             # none
 Mistri::MCP.tools(client, instructions: "Use for orders.") # the host's text
+Mistri::MCP.tools(client, instructions_as: :user)          # as text of a user turn
 ```
 
 An agent appends the instructions of every server to the conversation with
@@ -250,6 +252,39 @@ OpenAI, and otherwise as text of a user turn in a system-reminder block. Each
 block names the tools it is about. A model gives such a message the weight of
 your own instructions, so give a server's instructions the trust you give
 that server.
+
+`instructions_as: :user` gives a server's instructions less weight. They are
+then sent as text of a user turn in a system-reminder block on every provider,
+and never as a system or developer message. The reminder they are appended as
+is `"tool_instructions_as_user"`.
+
+### What else a server's text can do
+
+A tool's description is text from the server that the model reads as guidance.
+`Mistri::MCP.tools` cuts one at 4,096 characters and ends it with a line that
+says so. `description_limit:` sets another number, and `nil` sets none. Of
+350 definitions from 32 public servers the longest description has 3,674
+characters.
+
+A server marks a tool that only reads with `readOnlyHint`, and such a tool may
+run beside others in a turn. Nothing checks the hint. `trust_hints: false`
+means no tool is marked by it, only by the host's own `parallel:`.
+
+A server can change a tool's definition after a person approved it.
+`Mistri::MCP.digest(definition)` is the SHA-256 of a definition, as JSON with
+the keys of every object in order, to keep with what was approved.
+`Mistri::MCP.changes(kept, fresh)` takes two listings and returns the names of
+the tools that were added, removed and changed:
+
+```ruby
+kept = store.read("tracker")
+fresh = client.listing(refresh: true)
+Mistri::MCP.changes(kept, fresh)
+# => { "added" => [], "removed" => ["archive"], "changed" => ["search"] }
+```
+
+The client itself never replaces a kept listing. What to do with a changed
+definition is the host's decision.
 
 `Mistri::MCP.tools` filters remote names with `allow:` and `deny:`. `prefix:`
 creates local names such as `linear__create_issue` while the remote call still

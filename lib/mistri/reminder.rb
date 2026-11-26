@@ -31,15 +31,26 @@ module Mistri
              .flat_map { |run| run.partition(&:tool?).flatten(1) }
     end
 
+    # The kinds of reminder that a host gave the weight of a user turn. They
+    # are sent as text of one on every provider.
+    AS_USER = %w[tool_instructions_as_user].freeze
+
     # The history for a provider that sends a note as text of a user turn:
     # each reminder message as a user message of wrapped text blocks.
     def self.as_user_turns(history)
-      after_results(history).map do |message|
-        next message unless message.reminder
-
-        Message.user(message.content.grep(Content::Text).map { |block| wrap(block.text) })
-      end
+      after_results(history).map { |message| message.reminder ? as_user(message) : message }
     end
+
+    # The history for a provider that sends a note as a system message: only
+    # a reminder of a kind in AS_USER becomes a user message.
+    def self.user_weighted(history)
+      history.map { |message| AS_USER.include?(message.reminder) ? as_user(message) : message }
+    end
+
+    def self.as_user(message)
+      Message.user(message.content.grep(Content::Text).map { |block| wrap(block.text) })
+    end
+    private_class_method :as_user
 
     def initialize(interval:, text:, after: nil)
       @interval = [interval.to_i, 1].max

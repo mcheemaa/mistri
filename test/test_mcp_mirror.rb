@@ -18,7 +18,7 @@ class TestMcpMirror < Minitest::Test
                     "x-mcp-header" => { "type" => "string" })
 
     assert_nil MIRROR.violation(nested)
-    assert_nil MIRROR.violation(schema("plain" => { "type" => "string" }))
+    assert_nil MIRROR.violation(schema("plain" => { "type" => "string" }, "open" => true))
     assert_nil MIRROR.violation(nil)
   end
 

@@ -28,6 +28,9 @@ module Mistri
     # A server that keeps sending and never answers restarts the read timeout
     # with every message, so one call is bounded in all.
     CALL_TIMEOUT = 300
+    # Characters of a tool's description that reach the model. A description
+    # is text from the server that the model reads as guidance.
+    DESCRIPTION_LIMIT = 4_096
 
     # A protocol-level failure: a JSON-RPC error, a missing response, an
     # unsupported negotiation.
@@ -72,12 +75,16 @@ module Mistri
     # conversation, and a string is sent in their place. parallel says which
     # tools may run beside others in a turn: nil follows each tool's
     # readOnlyHint, true or false sets every tool, and a hash sets tools by
-    # remote name and leaves the rest to their hint. timeout is the seconds one
-    # call may take in all before the agent stops waiting for it, and nil sets
-    # no limit.
+    # remote name and leaves the rest to their hint. trust_hints: false means
+    # no tool is marked by its hint, only by parallel. timeout is the seconds
+    # one call may take in all before the agent stops waiting for it, and nil
+    # sets no limit. description_limit is the characters of a description that
+    # reach the model, and nil sets none. instructions_as: :user sends the
+    # instructions as text of a user turn where they would be a system message.
     def tools(client, allow: nil, deny: [], prefix: nil, needs_approval: false, gates: {},
               complete_argument_validator: nil, deferred: false, instructions: true,
-              parallel: nil, timeout: CALL_TIMEOUT)
+              parallel: nil, timeout: CALL_TIMEOUT, description_limit: DESCRIPTION_LIMIT,
+              instructions_as: :system, trust_hints: true)
       taken = {}
       listed = client.tools
       known_marks!(parallel, listed)
@@ -90,7 +97,8 @@ module Mistri
                                        complete_argument_validator: complete_argument_validator,
                                        deferred: deferred, instructions: instructions,
                                        parallel: parallel.is_a?(Hash) ? parallel[remote] : parallel,
-                                       timeout: timeout)
+                                       timeout: timeout, description_limit: description_limit,
+                                       instructions_as: instructions_as, trust_hints: trust_hints)
         claim(taken, bridged.name, remote)
         bridged
       rescue ConfigurationError => e
@@ -147,7 +155,8 @@ module Mistri
     # the remote name. The server is always called with the remote name.
     def bridge(client, spec, prefix: nil, name: nil, gate: false,
                complete_argument_validator: nil, deferred: false, instructions: nil,
-               parallel: nil, timeout: CALL_TIMEOUT)
+               parallel: nil, timeout: CALL_TIMEOUT, description_limit: DESCRIPTION_LIMIT,
+               instructions_as: :system, trust_hints: true)
       raise ConfigurationError, "the definition is not an object" unless spec.is_a?(Hash)
 
       remote = spec["name"]
@@ -168,10 +177,10 @@ module Mistri
       input_schema = Schema.validate_mcp!(
         raw_schema, complete: !complete_argument_validator.nil?
       )
-      Tool.define(local, description,
-                  input_schema: input_schema, parallel: marked?(spec, parallel),
+      Tool.define(local, bounded(description, description_limit),
+                  input_schema: input_schema, parallel: marked?(spec, parallel, trust_hints),
                   needs_approval: gate, deferred: deferred, instructions: instructions,
-                  timeout: timeout,
+                  instructions_as: instructions_as, timeout: timeout,
                   complete_argument_validator: complete_argument_validator) do |args|
         answer(client.call_tool(remote, args || {}))
       rescue NotSent => e
@@ -183,14 +192,49 @@ module Mistri
     end
 
     # Without the host's choice a tool is marked by its readOnlyHint, which is
-    # the server's own word about its tool. Nothing checks it.
-    def marked?(spec, choice)
+    # the server's own word about its tool. Nothing checks it, so a host that
+    # does not trust the server turns the hint off.
+    def marked?(spec, choice, trusted)
       return choice unless choice.nil?
 
       annotations = spec["annotations"]
-      annotations.is_a?(Hash) && annotations["readOnlyHint"] == true
+      trusted && annotations.is_a?(Hash) && annotations["readOnlyHint"] == true
     end
     private_class_method :marked?
+
+    def bounded(description, limit)
+      return description if limit.nil? || description.length <= limit
+
+      "#{description[0, limit]}\n[cut at #{limit} of #{description.length} characters]"
+    end
+    private_class_method :bounded
+
+    # The SHA-256 of a tool's definition, as JSON with the keys of every
+    # object in order. A host keeps it with the definition a person approved.
+    def digest(definition)
+      Digest::SHA256.hexdigest(JSON.generate(ordered(JSON.parse(JSON.generate(definition)))))
+    end
+
+    # The names of the tools that a fresh listing adds, removes and changes,
+    # against a kept one. Each is what Client#listing returned, or an array
+    # of definitions.
+    def changes(kept, fresh)
+      before, after = [kept, fresh].map do |listing|
+        tools = listing.is_a?(Hash) ? listing["tools"] : listing
+        Array(tools).grep(Hash).to_h { |tool| [tool["name"], digest(tool)] }
+      end
+      { "added" => after.keys - before.keys, "removed" => before.keys - after.keys,
+        "changed" => before.keys.select { |name| after.key?(name) && after[name] != before[name] } }
+    end
+
+    def ordered(value)
+      case value
+      when Hash then value.sort.to_h.transform_values { |member| ordered(member) }
+      when Array then value.map { |member| ordered(member) }
+      else value
+      end
+    end
+    private_class_method :ordered
 
     # The local name of a remote tool. One that every provider takes stays
     # as it is. Any other has its unsafe characters replaced and ends in a

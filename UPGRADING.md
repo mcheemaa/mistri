@@ -22,6 +22,12 @@ error when one call takes more than 300 seconds in all.
   `Mistri::MCP.tools(client, timeout: 1800)`.
 - For the earlier behaviour, pass `timeout: nil`.
 
+### A bridged MCP tool's description is cut at 4,096 characters
+
+A longer description now reaches the model cut, with a line that says so.
+Pass `description_limit: nil` to `Mistri::MCP.tools` for the earlier
+behaviour, or another number.
+
 ### The MCP client asks a server which revision it speaks
 
 The client now sends `server/discover` before its first request, and uses the

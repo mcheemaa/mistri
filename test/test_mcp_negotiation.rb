@@ -56,7 +56,9 @@ class TestMcpNegotiation < Minitest::Test
   end
 
   def test_an_older_server_gets_the_handshake_however_it_answers
-    [nil, REFUSED, { "tools" => [] }, UNSUPPORTED.call(["2025-11-25"]),
+    odd = ->(body) { ->(server, socket, _id) { server.json(socket, body, status: 400) } }
+    [nil, REFUSED, { "tools" => [] }, UNSUPPORTED.call(["2025-11-25"]), odd.call("[1]"),
+     odd.call('{"error":"nope"}'),
      NEWEST.merge("supportedVersions" => ["2025-06-18"])].each do |answer|
       client(discover: answer).call_tool("echo", {})
 
@@ -80,11 +82,14 @@ class TestMcpNegotiation < Minitest::Test
   end
 
   def test_a_server_with_no_revision_in_common_is_refused_in_words
+    nameless = lambda do |server, socket, id|
+      server.refuse(socket, id, code: -32_022, message: "Unsupported protocol version", status: 400)
+    end
     [UNSUPPORTED.call(["2099-01-01"]), NEWEST.merge("supportedVersions" => ["2099-01-01"]),
-     UNSUPPORTED.call(["2026-07-28"])].each do |answer|
+     UNSUPPORTED.call(["2026-07-28"]), nameless].each do |answer|
       error = assert_raises(Mistri::Error) { client(discover: answer).connect }
 
-      assert_match(/no protocol version this client does: 2099-01-01|HTTP 400/, error.message)
+      assert_match(/no protocol version this client does: (2099-01-01)?\z|HTTP 400/, error.message)
       assert_empty @server.sent("initialize")
       teardown
     end
@@ -98,6 +103,35 @@ class TestMcpNegotiation < Minitest::Test
       assert_empty @server.sent("initialize")
       teardown
     end
+  end
+
+  def test_a_question_with_no_answer_over_http_is_a_timeout_and_not_an_older_server
+    silent = lambda do |_server, _socket, _id|
+      sleep 1
+      :close
+    end
+
+    error = assert_raises(Mistri::MCP::Error) { client(discover: silent, read_timeout: 0.3).connect }
+
+    assert_match(/timed out waiting for the MCP server/, error.message)
+    assert_empty @server.sent("initialize")
+  end
+
+  def test_a_remembered_revision_that_the_server_no_longer_speaks_is_asked_for_again
+    kept = { "tools" => [], "protocolVersion" => "2026-07-28" }
+    refused = 0
+    tools = { "echo" => lambda do |server, socket, id|
+      next UNSUPPORTED.call(["2025-11-25"]).call(server, socket, id) if (refused += 1) == 1
+
+      ECHO.call(server, socket, id)
+    end }
+    @server = Mistri::Test::McpScriptedServer.new(tools: tools)
+    @client = Mistri::MCP::Client.new(url: @server.url, listing: kept,
+                                      allow_non_public: Mistri::Test::ALLOW_LOOPBACK)
+
+    assert_equal "echo", @client.call_tool("echo", {}).dig("content", 0, "text")
+    assert_equal %w[tools/call server/discover initialize notifications/initialized tools/call],
+                 methods
   end
 
   def test_a_client_built_from_a_listing_asks_nothing
@@ -164,9 +198,9 @@ class TestMcpNegotiation < Minitest::Test
 
   private
 
-  def client(**)
+  def client(read_timeout: 10, **)
     @server = Mistri::Test::McpScriptedServer.new(tools: { "echo" => ECHO }, **)
-    @client = Mistri::MCP::Client.new(url: @server.url,
+    @client = Mistri::MCP::Client.new(url: @server.url, read_timeout: read_timeout,
                                       allow_non_public: Mistri::Test::ALLOW_LOOPBACK)
   end
 

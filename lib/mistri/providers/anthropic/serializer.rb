@@ -40,7 +40,7 @@ module Mistri
         def messages(history, cache: false, deferred: [], system_messages: false)
           unreferenced = deferred.dup
           history = if system_messages
-                      Reminder.after_results(history)
+                      Reminder.user_weighted(Reminder.after_results(history))
                     else
                       Reminder.as_user_turns(history)
                     end

@@ -5,6 +5,19 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+- A bridged MCP tool's description is cut at 4,096 characters, and ends with a
+  line that says so. A description is text from the server that the model
+  reads as guidance, and it had no bound. `description_limit:` on
+  `Mistri::MCP.tools` and `Mistri::MCP.bridge` sets another number, and `nil`
+  sets none.
+- A host has three more choices over what an MCP server's text can do.
+  `instructions_as: :user` sends a server's instructions as text of a user
+  turn on every provider, where they are a system or developer message by
+  default. `trust_hints: false` means no tool is marked to run beside others
+  by the server's `readOnlyHint`. `Mistri::MCP.digest` returns the SHA-256 of
+  a tool's definition and `Mistri::MCP.changes` the names of the tools that a
+  fresh listing adds, removes and changes. `Tool.define` takes
+  `instructions_as:` too.
 - The MCP client speaks the 2026-07-28 revision, which has no handshake and no
   session. Before its first request it asks the server which revisions it
   speaks, with `server/discover`, and remembers the answer. A server that

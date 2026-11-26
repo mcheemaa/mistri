@@ -17,6 +17,7 @@ class TestMcpStateless < Minitest::Test
     "strange" => lambda { |server, socket, id|
       server.result(socket, id, { "resultType" => "partial" })
     },
+    "empty" => ->(server, socket, id) { server.result(socket, id, nil) },
     "requests" => lambda do |server, socket, id|
       server.open(socket)
       server.event(socket, { "jsonrpc" => "2.0", "id" => "srv-1", "method" => "ping" })
@@ -87,6 +88,10 @@ class TestMcpStateless < Minitest::Test
     error = assert_raises(Mistri::MCP::Error) { client.call_tool("strange", {}) }
 
     assert_equal 'the server returned a result of the unknown type "partial"', error.message
+  end
+
+  def test_a_result_that_is_no_object_is_handed_on_as_it_is
+    assert_nil client.call_tool("empty", {})
   end
 
   def test_a_request_from_the_server_gets_no_reply
