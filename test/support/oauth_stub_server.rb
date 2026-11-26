@@ -24,7 +24,8 @@ module Mistri
                      token_error: "invalid_grant", token_error_description: nil,
                      token_auth_methods: nil,
                      registration_secret: "shh", registration_auth_method: nil,
-                     query: nil, revocation_status: 200, registration_client_id: "app-123")
+                     query: nil, revocation_status: 200, registration_client_id: "app-123",
+                     sign_in: true)
         @challenge_header = challenge_header
         @challenge_scope = challenge_scope
         @challenge_metadata = challenge_metadata
@@ -53,6 +54,7 @@ module Mistri
         @query = query
         @revocation_status = revocation_status
         @registration_client_id = registration_client_id
+        @sign_in = sign_in
         @registrations = []
         @token_requests = []
         @revocations = []
@@ -92,13 +94,19 @@ module Mistri
         end
       end
 
+      # sign_in: false is a server that takes a request with no token.
       def challenge(socket)
+        unless @sign_in
+          return @stub.respond_json(socket,
+                                    { "jsonrpc" => "2.0", "id" => 0, "result" => {} })
+        end
+
         headers = {}
         if @challenge_header
           metadata = if @challenge_metadata == :default
                        "#{origin}/.well-known/oauth-protected-resource/mcp"
                      else
-                       @challenge_metadata
+                       setting(@challenge_metadata, nil)
                      end
           params = []
           params << "resource_metadata=\"#{metadata}\"" if metadata

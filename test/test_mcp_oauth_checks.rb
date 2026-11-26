@@ -314,6 +314,20 @@ class TestMcpOauthChecks < Minitest::Test # rubocop:disable Metrics/ClassLength 
     assert_empty OAUTH.challenge(Mistri::ProviderError.new(status: 500))
   end
 
+  def test_a_servers_first_challenge_can_be_read_by_itself
+    with_server(challenge_scope: "tools:read") do |server|
+      asked = OAUTH.challenge_parameters(server.url, allow_non_public: Mistri::Test::ALLOW_LOOPBACK)
+
+      assert_equal "tools:read", asked["scope"]
+      assert_equal "#{server.origin}/.well-known/oauth-protected-resource/mcp",
+                   asked["resource_metadata"]
+    end
+    with_server(sign_in: false) do |server|
+      assert_empty OAUTH.challenge_parameters(server.url,
+                                              allow_non_public: Mistri::Test::ALLOW_LOOPBACK)
+    end
+  end
+
   def test_a_step_up_asks_for_what_was_granted_and_what_is_asked
     assert_equal "mcp:read mcp:write", OAUTH.step_up_scope("mcp:read", "mcp:write")
     assert_equal "a b c", OAUTH.step_up_scope("a b", "b  c")
@@ -496,6 +510,26 @@ class TestMcpOauthChecks < Minitest::Test # rubocop:disable Metrics/ClassLength 
 
       assert_equal [server.url, server.origin], flow.values_at("resource", "issuer")
       assert_equal "at-1", complete(flow, tolerant: true)["access_token"]
+    end
+  end
+
+  def test_a_server_that_takes_a_request_with_no_token_has_no_sign_in_to_read
+    with_server(sign_in: false, path_metadata: false, oauth_metadata_status: 404) do |server|
+      error = assert_raises(Mistri::MCP::Error) do
+        OAUTH.discover(url: server.url, tolerant: true,
+                       allow_non_public: Mistri::Test::ALLOW_LOOPBACK)
+      end
+
+      assert_match(/no protected resource metadata/, error.message)
+    end
+  end
+
+  def test_a_challenge_that_names_an_empty_address_falls_to_the_well_known_ones_tolerantly
+    nowhere = ->(server) { "#{server.origin}/nothing-here" }
+    with_server(challenge_metadata: nowhere) do |server|
+      assert_raises(Mistri::MCP::Error) { start_flow(server) }
+      assert_equal [server.url, server.origin],
+                   start_flow(server, tolerant: true).values_at("resource", "issuer")
     end
   end
 

@@ -214,13 +214,16 @@ module Mistri
 
       # RFC 9728: a 401's WWW-Authenticate names the resource metadata URL;
       # servers that skip the header serve the well-known path.
+      #
+      # Tolerant discovery also looks at the well-known paths when the address
+      # a challenge names holds nothing, and goes on with no document only for
+      # a server that did refuse the request: one that takes it has no sign-in.
       def resource_metadata_for(url, allow_non_public: nil, tolerant: false)
-        challenge = challenge_parameters(url, allow_non_public: allow_non_public)
-        candidates = if challenge["resource_metadata"]
-                       [[challenge["resource_metadata"], url]]
-                     else
-                       resource_metadata_candidates(url)
-                     end
+        refusal = unauthorized(url, allow_non_public:)
+        challenge = refusal ? parse_www_authenticate(refusal["WWW-Authenticate"]) : {}
+        named = challenge["resource_metadata"]
+        candidates = named ? [[named, url]] : resource_metadata_candidates(url)
+        candidates += resource_metadata_candidates(url) if named && tolerant
         missed = tolerant ? [] : nil
         candidates.each do |metadata_url, expected_resource|
           document = get_json(metadata_url, allow_non_public:, optional: true, missed:)
@@ -230,21 +233,26 @@ module Mistri
           authorization_servers(document)
           return [document, challenge["scope"]]
         end
-        return [nil, challenge["scope"]] if tolerant && unpublished?(missed)
+        return [nil, challenge["scope"]] if tolerant && refusal && unpublished?(missed)
 
         raise Error, "no protected resource metadata for #{Egress.display(URI(url))}"
       end
 
       def challenge_parameters(url, allow_non_public: nil)
+        refusal = unauthorized(url, allow_non_public:)
+        refusal ? parse_www_authenticate(refusal["WWW-Authenticate"]) : {}
+      end
+
+      # The server's answer to a request that carries no token, when it is a
+      # 401. nil for a server that takes the request.
+      def unauthorized(url, allow_non_public: nil)
         targets = Egress.targets(url, allow_non_public:, label: "MCP URL")
         request = Net::HTTP::Post.new(targets.first.uri)
         request["Accept"] = "application/json, text/event-stream"
         request["Content-Type"] = "application/json"
         request.body = JSON.generate({ jsonrpc: "2.0", id: 0, method: "ping" })
         response = http(targets, request)
-        return {} unless response.code.to_i == 401
-
-        parse_www_authenticate(response["WWW-Authenticate"])
+        response if response.code.to_i == 401
       end
 
       def well_known_resource_urls(url)
