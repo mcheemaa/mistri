@@ -445,7 +445,8 @@ class TestMcpOauthChecks < Minitest::Test # rubocop:disable Metrics/ClassLength 
       error = assert_raises(Mistri::MCP::Error) { start_flow(server) }
 
       assert_equal "protected resource metadata resource does not match #{server.url}; " \
-                   "it names #{server.origin}, which tolerant: true accepts", error.message
+                   "it names #{server.origin}, a resource that tolerant: true accepts",
+                   error.message
 
       flow = start_flow(server, tolerant: true)
 
@@ -489,7 +490,8 @@ class TestMcpOauthChecks < Minitest::Test # rubocop:disable Metrics/ClassLength 
       error = assert_raises(Mistri::MCP::Error) { start_flow(server) }
 
       assert_equal "authorization server metadata issuer does not match #{server.origin}; " \
-                   "it differs by one trailing slash, which tolerant: true accepts", error.message
+                   "it differs by one trailing slash, a difference that tolerant: true accepts",
+                   error.message
 
       flow = start_flow(server, tolerant: true)
 
@@ -508,8 +510,8 @@ class TestMcpOauthChecks < Minitest::Test # rubocop:disable Metrics/ClassLength 
       error = assert_raises(OAUTH::IssuerChanged) { start_flow(server, **stored) }
 
       assert_equal "protected resource metadata does not name the configured issuer; " \
-                   "one it names differs by one trailing slash, which tolerant: true accepts",
-                   error.message
+                   "one it names differs by one trailing slash, a difference that " \
+                   "tolerant: true accepts", error.message
 
       flow = start_flow(server, tolerant: true, **stored)
 

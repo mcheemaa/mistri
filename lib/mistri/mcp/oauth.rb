@@ -822,8 +822,9 @@ module Mistri
         raise Error, message unless covered
 
         named = Egress.display(URI(resource))
-        about = named == refused ? "it differs only in the query" : "it names #{named}"
-        raise Error, message + tolerable(about)
+        raise Error, message + tolerable("it differs only in the query") if named == refused
+
+        raise Error, message + tolerable("it names #{named}", "a resource")
       end
 
       def parse_www_authenticate(header)

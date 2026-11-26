@@ -54,9 +54,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - `tolerant: true` on the sign-in calls accepts a resource document for the
   origin or a path above the server, an issuer one trailing slash apart, and
   a server of the 2025-03-26 revision with no resource document. It is off by
-  default. An exact refusal says when tolerant discovery accepts the same
-  answer: the error ends with `which tolerant: true accepts` for the first
-  two of the three. `offline_access: true` on `OAuth.start` adds that scope
+  default. An exact refusal names what tolerant discovery accepts: for the
+  first two of the three the error ends with `that tolerant: true accepts`. `offline_access: true` on `OAuth.start` adds that scope
   when the authorization server lists it. It is off by default too.
 - The generated MCP connection model locks its row for a token refresh, takes
   the refused token, and passes the callback's `iss`. Two processes that

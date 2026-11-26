@@ -1038,12 +1038,15 @@ client that was registered with another issuer is refused with
 passes `tolerant: true` to every later step of it.
 
 Exact discovery is the default. When it refuses a server for the first or the
-second reason, the error says that tolerant discovery accepts it:
+second reason, the error names what tolerant discovery accepts:
 
 ```text
-protected resource metadata resource does not match https://mcp.example.com/mcp; it names https://mcp.example.com, which tolerant: true accepts
-authorization server metadata issuer does not match https://auth.example.com/; it differs by one trailing slash, which tolerant: true accepts
+protected resource metadata resource does not match https://mcp.example.com/mcp; it names https://mcp.example.com, a resource that tolerant: true accepts
+authorization server metadata issuer does not match https://auth.example.com/; it differs by one trailing slash, a difference that tolerant: true accepts
 ```
+
+That is one step of the sign-in. A later step can still refuse the server, for
+example when it names more than one authorization server.
 
 A resource document for an origin makes a token good for every server on that
 origin. Keep discovery exact for an origin that holds servers of different
