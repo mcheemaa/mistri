@@ -710,15 +710,23 @@ is never cancelled: a server that does not answer `initialize` is ended.
 A timeout does not end a stdio server. A request with no answer leaves a
 doubt about it. Before the next request, the client asks the server one
 question that changes nothing: `ping`, or `server/discover` for a server of
-2026-07-28, which has no `ping`. The server has `read_timeout` to answer, as
-for a request. So a server that handles one request at a time can first finish
-the request before. That time is for the answer, and other messages do not
-extend it.
+2026-07-28, which has no `ping`. The server has `read_timeout` to give that
+sign of life, counted from the request that got no answer. So a server that
+handles one request at a time can first finish that request. A question that
+is asked later than that still gets five seconds, or `read_timeout` when that
+is shorter. The time is for the answer, and other messages do not extend it.
 
 - A server that answers was slow. It is kept, with everything it holds.
 - A server that does not answer is ended. A line on standard error with the
   prefix `mistri:` says so. The request starts a new server with a new
   handshake.
+
+The question is part of the next call, so the limit of that call applies to it
+too. A call whose limit ends the question did not run, and the model reads
+that. The call after it asks again, with the time that is left. Two settings
+leave a server that is gone to the host, which ends it with `client.close`:
+`read_timeout: nil`, where the question has no limit of its own, and calls
+with a limit shorter than the time one question gets.
 
 A server that answers the question and still never answers a call is kept, and
 each call to it waits for the timeout. Whether such a server is worth keeping

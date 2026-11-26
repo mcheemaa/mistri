@@ -11,6 +11,7 @@ class TestMcpStdioSignOfLife < Minitest::Test
   SERVER = <<~'SCRIPT'
     require "json"
     STDOUT.sync = true
+    notice = { "method" => "notifications/message", "params" => { "data" => "busy" } }
     say = ->(message) { puts JSON.generate({ "jsonrpc" => "2.0" }.merge(message)) }
     gone = false
     while (line = STDIN.gets)
@@ -20,15 +21,17 @@ class TestMcpStdioSignOfLife < Minitest::Test
 
       tool = message.dig("params", "name")
       arguments = message.dig("params", "arguments") || {}
-      next if tool == "silent"
-
-      sleep arguments["seconds"] if tool == "works"
-      if tool == "gone"
+      case tool
+      when "silent" then next
+      when "works" then sleep arguments["seconds"]
+      when "gone"
         gone = true
-        if arguments["notice_after"]
+        if arguments["notices"]
           Thread.new do
-            sleep arguments["notice_after"]
-            say.call("method" => "notifications/message", "params" => { "data" => "busy" })
+            loop do
+              sleep 0.1
+              say.call(notice)
+            end
           end
         end
         next
@@ -56,16 +59,20 @@ class TestMcpStdioSignOfLife < Minitest::Test
   end
 
   def test_a_server_that_gives_no_sign_of_life_is_ended_before_the_next_request
-    assert_raises(Mistri::AmbiguousDeliveryError) { within(0.2) { @stdio.call_tool("gone", {}) } }
+    assert_raises(Timeout::Error) do
+      Timeout.timeout(0.3) { @stdio.call_tool("gone", { "notices" => true }) }
+    end
     result = nil
 
-    _out, reported = capture_io { within(1) { result = @stdio.call_tool("echo", {}) } }
+    _out, reported = capture_io do
+      Timeout.timeout(5) { within(1) { result = @stdio.call_tool("echo", {}) } }
+    end
 
-    assert_equal "echo", result.dig("content", 0, "text")
+    assert_equal "echo", text_of(result)
     assert_equal "mistri: the MCP server gave no sign of life after a request with no answer, " \
                  "so it was ended\n", reported
     assert_equal [2, 1, 2], [pids.length, read("ping"), read("initialize")],
-                 "the new server got its own handshake"
+                 "its notices did not extend the wait, and the new server got its own handshake"
   end
 
   def test_a_server_that_is_busy_with_the_request_before_answers_late_and_is_kept
@@ -74,35 +81,48 @@ class TestMcpStdioSignOfLife < Minitest::Test
       within(0.2) { @stdio.call_tool("works", { "seconds" => 0.5 }) }
     end
 
-    result = @stdio.call_tool("echo", {})
-
-    assert_equal "echo", result.dig("content", 0, "text")
+    assert_equal "echo", text_of(@stdio.call_tool("echo", {}))
     assert_equal [1, 1], [pids.length, read("ping")], "it had the read timeout to answer"
   end
 
-  def test_a_server_that_answers_the_question_and_never_a_call_is_kept
-    [0.2, 0.5].each do |seconds|
-      assert_raises(Timeout::Error) do
-        Timeout.timeout(seconds) { @stdio.call_tool("silent", {}) }
+  def test_a_server_asked_long_after_the_request_still_has_the_wait_for_one_question
+    within(0.4) do
+      assert_raises(Mistri::AmbiguousDeliveryError) { @stdio.call_tool("silent", {}) }
+      sleep 0.5
+
+      assert_equal "echo", text_of(@stdio.call_tool("echo", {}))
+    end
+    assert_equal [1, 1], [pids.length, read("ping")]
+  end
+
+  def test_a_call_with_a_shorter_limit_of_its_own_still_ends_a_server_that_is_gone
+    wire.define_singleton_method(:probe_wait) { 0.1 }
+    answers = nil
+
+    _out, reported = capture_io do
+      within(1) do
+        assert_nil limited(0.1) { @stdio.call_tool("gone", {}) }
+        answers = Array.new(6) { limited(0.4) { @stdio.call_tool("echo", {}) } }
       end
     end
 
-    assert_equal [1, 1], [pids.length, read("ping")], "whether to end it is the host's decision"
+    assert_nil answers.first, "the limit ended a question that had the read timeout"
+    assert_equal ["echo"], answers.compact.map { |answer| text_of(answer) }.uniq
+    assert_match(/gave no sign of life/, reported)
+    assert_equal 2, pids.length
   end
 
-  def test_a_wait_for_the_whole_answer_is_not_extended_by_another_message
-    assert_raises(Timeout::Error) do
-      Timeout.timeout(0.05) { @stdio.call_tool("gone", { "notice_after" => 0.35 }) }
-    end
-    question = { jsonrpc: "2.0", id: 99, method: "ping" }
-    started = Process.clock_gettime(Process::CLOCK_MONOTONIC)
+  def test_without_a_read_timeout_the_question_has_no_limit_of_its_own
+    within(nil) { 2.times { assert_nil limited(0.2) { @stdio.call_tool("gone", {}) } } }
 
-    assert_raises(Mistri::MCP.const_get(:WireTimeout)) do
-      Timeout.timeout(5) { wire.call(question, wait: 0.5, whole: true) { |_record| false } }
-    end
+    assert_equal [1, 1, 1], [pids.length, read("ping"), read("tools/call")],
+                 "only the host ends such a server"
+  end
 
-    assert_operator Process.clock_gettime(Process::CLOCK_MONOTONIC) - started, :<, 0.7,
-                    "a wait for each message would have ended 0.5 seconds after the notice"
+  def test_a_server_that_answers_the_question_and_never_a_call_is_kept
+    [0.2, 0.5].each { |seconds| assert_nil limited(seconds) { @stdio.call_tool("silent", {}) } }
+
+    assert_equal [1, 1], [pids.length, read("ping")], "whether to end it is the host's decision"
   end
 
   private
@@ -113,6 +133,8 @@ class TestMcpStdioSignOfLife < Minitest::Test
 
   def read(method) = lines.count { |_pid, name| name == method }
 
+  def text_of(result) = result.dig("content", 0, "text")
+
   def wire = @stdio.instance_variable_get(:@wire)
 
   # The read timeout for the requests of the block.
@@ -122,5 +144,12 @@ class TestMcpStdioSignOfLife < Minitest::Test
     yield
   ensure
     wire.instance_variable_set(:@read_timeout, previous)
+  end
+
+  # What the block returns, or nil when the caller's own limit ended it.
+  def limited(seconds, &)
+    Timeout.timeout(seconds, &)
+  rescue Timeout::Error
+    nil
   end
 end

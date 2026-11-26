@@ -313,6 +313,8 @@ module Mistri
         private_constant :READ_SIZE, :WRITE_SIZE, :PROBE_WAIT, :BLANK_RECORD, :EXIT_WAIT,
                          :TERM_WAIT, :INHERITED_ENV
 
+        attr_reader :read_timeout
+
         def initialize(command:, env: {}, read_timeout: 120,
                        max_record_bytes: DEFAULT_MAX_RECORD_BYTES)
           unless max_record_bytes.is_a?(Integer) && max_record_bytes.positive?

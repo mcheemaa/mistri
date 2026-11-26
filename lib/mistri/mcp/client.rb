@@ -86,7 +86,7 @@ module Mistri
         @mutex = Mutex.new
         @serial = 0
         @connected = false
-        @unanswered = false
+        @unanswered_at = nil
         @left_out = []
         @max_tool_pages = max_tool_pages
         @max_tools = max_tools
@@ -230,7 +230,7 @@ module Mistri
       end
 
       def request(method, params, reconnected: false, refreshed: false, asked: false)
-        end_if_gone if @unanswered
+        end_if_gone if @unanswered_at
         ensure_connected
         options = wire_options(method, params)
         # A list that a call needed first is not the call.
