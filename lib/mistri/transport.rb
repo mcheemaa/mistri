@@ -292,6 +292,7 @@ module Mistri
       body = preview.dup.force_encoding(Encoding::UTF_8).scrub("?")
       options = { status: status, body: body }
       options[:retry_after] = retry_after(response) if klass == RateLimitError
+      options[:challenge] = challenge(response) if klass == AuthenticationError
       klass.new(**options)
     end
 
@@ -303,6 +304,10 @@ module Mistri
       when 500..599 then ServerError
       else ProviderError
       end
+    end
+
+    def challenge(response)
+      response["www-authenticate"]&.scrub("?")&.slice(0, ERROR_PREVIEW_BYTES)
     end
 
     def retry_after(response)

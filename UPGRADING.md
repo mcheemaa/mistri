@@ -22,6 +22,25 @@ error when one call takes more than 300 seconds in all.
   `Mistri::MCP.tools(client, timeout: 1800)`.
 - For the earlier behaviour, pass `timeout: nil`.
 
+### MCP sign-in checks more, when the host hands it more
+
+- Pass the callback's `iss` to `OAuth.complete`: `iss: params[:iss]`. Without
+  it nothing changes, and a callback from another authorization server is not
+  told apart.
+- A host that matched the text `invalid_grant` in an error message rescues
+  `Mistri::MCP::OAuth::InvalidGrantError` instead. The message is unchanged.
+- A host that stores a client it registered and passes it to `OAuth.start`
+  with its `issuer:` rescues `Mistri::MCP::OAuth::IssuerChanged`, drops that
+  client and starts again without it. Before, the same case raised
+  `Mistri::MCP::Error` with the same message.
+- After a 403 whose challenge says `insufficient_scope`, the MCP client raises
+  at once. Before, it asked the token callable once more and sent the request
+  again. Read the challenge with `OAuth.challenge(error)`.
+- An application generated the connection model from an earlier release keeps
+  its copy. To get the lock around the refresh, copy `bearer_token` and
+  `stale?` from the new template, and pass `iss:` from the callback.
+- `OAuth.start` returns one more key, `"scope"`.
+
 ### A bridged MCP tool says which server could not be used
 
 - The text of a bridged tool's result changed for a server that cannot be

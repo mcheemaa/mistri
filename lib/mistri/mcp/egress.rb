@@ -135,12 +135,13 @@ module Mistri
       def redirect_uri(url)
         value = url.to_s
         uri = parse(value, "redirect_uri")
-        return value if uri.scheme == "https"
-
-        address = parse_address(uri.hostname)
-        return value if uri.hostname.casecmp?("localhost") || address&.loopback?
+        return value if uri.scheme == "https" || loopback?(uri.hostname)
 
         raise UnsafeURLError, "redirect_uri must use HTTPS or an explicit loopback address"
+      end
+
+      def loopback?(hostname)
+        hostname.casecmp?("localhost") || parse_address(hostname)&.loopback? || false
       end
 
       def origin(uri)

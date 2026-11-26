@@ -5,6 +5,41 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+- MCP sign-in checks the issuer of a callback. `OAuth.complete` takes `iss:`,
+  the callback's `iss` parameter, and refuses a callback that names another
+  issuer, or names none where the authorization server says it sends one,
+  before the code is sent anywhere (RFC 9207). A host that does not pass it
+  gets no check.
+- A dynamic registration that returns a secret and names no method is
+  accepted. The method is the one Mistri asked for, and with none asked for
+  the secret is not kept. A registration now sends `application_type`.
+- `OAuth.start` takes `client_metadata_url:`. A server that takes a client ID
+  metadata document gets that address as the client ID, and nothing is
+  registered. `OAuth.client_metadata` returns the document to serve.
+- `OAuth.start` raises `OAuth::IssuerChanged` when the server does not name
+  the issuer a client was registered with. It raised `Mistri::MCP::Error`,
+  which `IssuerChanged` is.
+- A refused token request raises `OAuth::TokenError`, with `status` and
+  `reason`, and `OAuth::InvalidGrantError` for a grant that is spent. Both
+  are a `Mistri::MCP::Error`, and the message is unchanged.
+- `Mistri::AuthenticationError` carries the `WWW-Authenticate` header of the
+  refusal as `challenge`. `OAuth.challenge(error)` reads its Bearer
+  parameters, and `OAuth.step_up_scope` joins the granted scope with the one
+  a 403 asks for. `OAuth.start` returns the scope it asked for as `"scope"`.
+  After a 403 for more scope the MCP client no longer asks the token callable
+  a second time.
+- A token callable that takes `refused:` is given the token the server
+  refused when it is asked again after a 401.
+- `OAuth.discover` reads how a server signs in and registers nothing.
+  `OAuth.revoke` ends a token at the authorization server.
+- `tolerant: true` on the sign-in calls accepts a resource document for the
+  origin or a path above the server, an issuer one trailing slash apart, and
+  a server of the 2025-03-26 revision with no resource document. It is off by
+  default. `offline_access: true` on `OAuth.start` adds that scope when the
+  authorization server lists it. It is off by default too.
+- The generated MCP connection model locks its row for a token refresh, takes
+  the refused token, and passes the callback's `iss`. Two processes that
+  refreshed one connection at once lost the sign-in.
 - An MCP client tells its host more. `on_notification:` is called with each
   notification a server sends while the client reads, such as a changed tool
   list. The kept list is not changed by it. `progress: true` asks for progress

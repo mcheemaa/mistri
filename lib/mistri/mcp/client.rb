@@ -172,8 +172,8 @@ module Mistri
       # The handshake with the one token refresh a request gets.
       def handshake(refreshed: false)
         ensure_connected
-      rescue AuthenticationError
-        raise if refreshed || !@wire.refreshable?
+      rescue AuthenticationError => e
+        raise if refreshed || !renewable?(e)
 
         handshake(refreshed: true)
       end
@@ -183,8 +183,8 @@ module Mistri
         options = wire_options(method, params)
         @sent = true
         rpc(method, params, **options)
-      rescue AuthenticationError
-        raise if refreshed || !@wire.refreshable?
+      rescue AuthenticationError => e
+        raise if refreshed || !renewable?(e)
 
         # The token callable resolves fresh on retry; hosts refresh there.
         request(method, params, reconnected: reconnected, refreshed: true, asked: asked)
@@ -201,6 +201,17 @@ module Mistri
         # request it refused for that did not run, so it is sent again.
         @version = nil
         request(method, params, reconnected: reconnected, refreshed: refreshed, asked: true)
+      end
+
+      # A refused token is worth asking for again when the host gives tokens
+      # by a callable. A 403 that asks for more scope is not: a new token of
+      # the same grant has the same scope, so the host signs in again.
+      def renewable?(error)
+        return false unless @wire.refreshable?
+        return false if OAuth.challenge(error)["error"] == "insufficient_scope"
+
+        @wire.token_refused
+        true
       end
 
       # Over HTTP a call in the form of 2026-07-28 repeats the parameters its

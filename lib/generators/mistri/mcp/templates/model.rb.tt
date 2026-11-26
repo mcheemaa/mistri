@@ -22,10 +22,11 @@ class <%= class_name %> < ApplicationRecord
     [connection, flow["authorize_url"]]
   end
 
-  # Finish the flow from the OAuth callback.
-  def self.complete(state:, code:)
+  # Finish the flow from the OAuth callback. iss is the callback's iss
+  # parameter, nil when it had none: pass params[:iss].
+  def self.complete(state:, code:, iss:)
     connection = find_by!(state: state)
-    tokens = Mistri::MCP::OAuth.complete(code: code,
+    tokens = Mistri::MCP::OAuth.complete(code: code, iss: iss,
                                          code_verifier: connection.code_verifier,
                                          client_id: connection.client_id,
                                          client_secret: connection.client_secret,
@@ -42,7 +43,7 @@ class <%= class_name %> < ApplicationRecord
   end
 
   def client
-    Mistri::MCP::Client.new(url: url, token: -> { bearer_token },
+    Mistri::MCP::Client.new(url: url, token: ->(refused: nil) { bearer_token(refused: refused) },
                             allow_non_public: self.class.mcp_allow_non_public)
   end
 
@@ -50,11 +51,23 @@ class <%= class_name %> < ApplicationRecord
     Mistri::MCP.tools(client, **options)
   end
 
-  # A fresh bearer for every request; refreshes ahead of expiry and persists
-  # the rotated refresh token.
-  def bearer_token
-    refresh! if refresh_token.present? && expires_at && expires_at <= 1.minute.from_now
+  # A fresh bearer for every request; refreshes ahead of expiry, or when the
+  # server refused the stored token, and persists the rotated refresh token.
+  # A server retires a refresh token when it is used, so two refreshes at once
+  # would lose the sign-in: the row is locked, and the second process finds
+  # the first one's token there.
+  def bearer_token(refused: nil)
+    return access_token unless stale?(refused)
+
+    with_lock { refresh! if stale?(refused) }
     access_token
+  end
+
+  def stale?(refused)
+    return false if refresh_token.blank?
+    return access_token == refused if refused
+
+    expires_at.present? && expires_at <= 1.minute.from_now
   end
 
   def refresh!

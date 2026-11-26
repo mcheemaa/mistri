@@ -11,7 +11,7 @@ module Mistri
     # RFC 9728 resource metadata, RFC 8414 (or OpenID) server metadata,
     # RFC 7591 registration, and a form-encoded token endpoint.
     class OauthStubServer
-      attr_reader :registrations, :token_requests
+      attr_reader :registrations, :token_requests, :revocations
 
       def initialize(challenge_header: true, registration: true, openid_only: false,
                      resource_scopes: [], as_scopes: [], basic_token_auth: false,
@@ -24,7 +24,7 @@ module Mistri
                      token_error: "invalid_grant", token_error_description: nil,
                      token_auth_methods: nil,
                      registration_secret: "shh", registration_auth_method: nil,
-                     query: nil)
+                     query: nil, revocation_status: 200, registration_client_id: "app-123")
         @challenge_header = challenge_header
         @challenge_scope = challenge_scope
         @challenge_metadata = challenge_metadata
@@ -51,8 +51,11 @@ module Mistri
         @registration_secret = registration_secret
         @registration_auth_method = registration_auth_method
         @query = query
+        @revocation_status = revocation_status
+        @registration_client_id = registration_client_id
         @registrations = []
         @token_requests = []
+        @revocations = []
         @stub = StubServer.new { |socket, request| route(socket, request) }
       end
 
@@ -67,13 +70,7 @@ module Mistri
         verb, path, = request[:line].split
         case [verb, path.split("?").first]
         in ["POST", "/mcp"] then challenge(socket)
-        in ["GET", "/.well-known/oauth-protected-resource/mcp"]
-          if @path_metadata_status
-            @stub.respond_json(socket, { "error" => "path metadata" },
-                               status: @path_metadata_status)
-          else
-            @path_metadata ? resource_metadata(socket, root: false) : not_found(socket)
-          end
+        in ["GET", "/.well-known/oauth-protected-resource/mcp"] then path_metadata(socket)
         in ["GET", "/.well-known/oauth-protected-resource"]
           @root_metadata ? resource_metadata(socket, root: true) : not_found(socket)
         in ["GET", "/.well-known/oauth-authorization-server"] then server_metadata(socket,
@@ -81,9 +78,18 @@ module Mistri
         in ["GET", "/.well-known/openid-configuration"] then server_metadata(socket, openid: true)
         in ["POST", "/register"] then register(socket, request)
         in ["POST", "/token"] then token(socket, request)
+        in ["POST", "/revoke"] then revoke(socket, request)
         else @stub.respond_json(socket, { "error" => "not found" }, status: 404)
         end
         nil
+      end
+
+      def path_metadata(socket)
+        if @path_metadata_status
+          @stub.respond_json(socket, { "error" => "path metadata" }, status: @path_metadata_status)
+        else
+          @path_metadata ? resource_metadata(socket, root: false) : not_found(socket)
+        end
       end
 
       def challenge(socket)
@@ -144,10 +150,18 @@ module Mistri
         @registrations << JSON.parse(request[:body])
         method = @registration_auth_method ||
                  (@basic_token_auth ? "client_secret_basic" : "client_secret_post")
-        @stub.respond_json(socket, { "client_id" => "app-123",
-                                     "client_secret" => @registration_secret,
-                                     "token_endpoint_auth_method" => method },
-                           status: 201)
+        registered = { "client_id" => @registration_client_id,
+                       "client_secret" => @registration_secret,
+                       "token_endpoint_auth_method" => method }
+        # registration_auth_method: false is a server that names no method.
+        registered.delete("token_endpoint_auth_method") if @registration_auth_method == false
+        @stub.respond_json(socket, registered, status: 201)
+      end
+
+      def revoke(socket, request)
+        form = URI.decode_www_form(request[:body]).to_h
+        @revocations << form.merge("_authorization" => request[:headers]["authorization"])
+        @stub.respond_json(socket, {}, status: @revocation_status)
       end
 
       def token(socket, request)

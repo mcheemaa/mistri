@@ -8,3 +8,13 @@ The ranking in lib/mistri/tool_search.rb follows pi's tool search.
 
 Mistri also draws on lessons from truffle-rb, an earlier Ruby port of pi by the
 same author as Mistri.
+
+Parts of Mistri's MCP sign-in are adapted from the Model Context Protocol Ruby
+SDK (https://github.com/modelcontextprotocol/ruby-sdk), licensed under the
+Apache License, Version 2.0 (https://www.apache.org/licenses/LICENSE-2.0):
+the rules for application_type and for the address of a client ID metadata
+document in lib/mistri/mcp/oauth/client_identity.rb, the rule for a resource
+that covers a path in lib/mistri/mcp/oauth/tolerance.rb, and the cases for
+them and for the issuer of a callback in test/test_mcp_oauth_checks.rb. The
+rules were rewritten for Mistri's own sign-in calls, which take no class of
+the SDK.

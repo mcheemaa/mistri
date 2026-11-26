@@ -33,6 +33,19 @@ agent = Mistri.agent("claude-opus-5-5", tools: tools)
 After a 401, Mistri resolves it once more and retries once, so the host can put
 refresh behavior behind the callable.
 
+A callable that takes `refused:` is given the token the server just refused,
+when it is asked again after a 401. It can then replace that token only when
+it is still the stored one, which matters when several processes share a
+connection:
+
+```ruby
+token: ->(refused: nil) { connection.bearer_token(refused: refused) }
+```
+
+After a 403 whose challenge says `insufficient_scope`, Mistri does not ask
+again: a new token of the same sign-in has the same scope. See
+[More scope](#more-scope).
+
 Use `headers:` for fixed application headers. Mistri copies them at client
 construction and rejects framing plus MCP session and protocol headers. A fixed
 Authorization header is permitted; when `token:` is supplied, Mistri owns
@@ -710,6 +723,7 @@ end
 
 tokens = Mistri::MCP::OAuth.complete(
   code: params.fetch(:code),
+  iss: params[:iss],
   code_verifier: flow.fetch("code_verifier"),
   client_id: flow.fetch("client_id"),
   client_secret: flow["client_secret"],
@@ -719,6 +733,23 @@ tokens = Mistri::MCP::OAuth.complete(
   redirect_uri: flow.fetch("redirect_uri"),
   allow_non_public: allow_internal,
 )
+```
+
+`iss:` is the `iss` parameter of the callback, or nil when the callback had
+none. Mistri refuses a callback that names another issuer than the one the
+sign-in was started with, and one that names none when the authorization
+server's metadata says it sends one. It compares the two as they are written,
+and it does so before the code is sent anywhere. This is the defence against
+an authorization server that tries to collect a code meant for another
+(RFC 9207). A host that leaves `iss:` out gets no such check, because Mistri
+cannot see the callback.
+
+A callback may carry `error` in place of a code. Check its issuer the same
+way before the error is shown to anyone:
+
+```ruby
+oauth = Mistri::MCP::OAuth
+oauth.verify_response_issuer(params[:iss], oauth.bound_metadata(flow.fetch("issuer")))
 ```
 
 Refresh tokens can rotate, so persist a returned replacement:
@@ -742,7 +773,10 @@ does this.
 
 Mistri requires S256 PKCE. It follows protected-resource and authorization-server
 discovery, binds metadata to exact resource and issuer identifiers, and honors
-challenge scope. It does not add `offline_access` as gem policy.
+challenge scope. It does not add `offline_access` as gem policy. A host that
+wants a refresh token passes `offline_access: true` to `start`: the scope is
+then added when the authorization server lists it, and only to a scope that
+is being asked for.
 
 When discovery advertises multiple authorization servers, the host must pass
 `issuer:` explicitly. A pre-registered `client_id` always requires the exact
@@ -751,6 +785,113 @@ also accept `client_secret:` and an explicit supported `token_auth_method:`.
 
 OAuth response bodies are uncompressed and bounded to 256 KiB. Provider error
 descriptions are not copied into credential-bearing exceptions.
+
+### How the application names itself
+
+There are three ways, and `start` takes them in this order:
+
+1. **A client set up by hand.** Pass `client_id:`, with `client_secret:` and
+   `token_auth_method:` when the server gave them, and the `issuer:` it was
+   set up at.
+2. **A client ID metadata document.** Pass `client_metadata_url:`, the https
+   address where the application serves the document. A server whose metadata
+   says `client_id_metadata_document_supported` gets that address as the
+   client ID, and nothing is registered. The 2026-07-28 revision prefers this
+   way.
+3. **Dynamic registration**, when neither applies and the server offers it.
+   Mistri says what kind of application it registers: `native` for a loopback
+   redirect URI and `web` for any other.
+
+The document is the same for every server, so one route serves it:
+
+```ruby
+render json: Mistri::MCP::OAuth.client_metadata(
+  url: client_metadata_url,
+  client_name: "YourApp",
+  redirect_uris: [callback_url],
+)
+```
+
+A client is bound to the issuer that gave it. Store the `issuer` beside the
+client ID, and pass both again when the same client signs in later. When the
+server no longer names that issuer, `start` raises
+`Mistri::MCP::OAuth::IssuerChanged` and registers nothing. A host then drops a
+client that was registered dynamically and calls `start` without it, and shows
+the error for one that was set up by hand. Mistri does not register with a
+new authorization server by itself, because whether to trust it is the host's
+decision. A document's address is the same client at every issuer.
+
+### A refused token request
+
+`complete` and `refresh` raise `Mistri::MCP::OAuth::TokenError` when the token
+endpoint refuses. `error.reason` is the code it gave, when that is one of the
+standard ones, and `error.status` its HTTP status.
+`Mistri::MCP::OAuth::InvalidGrantError` is the one a host acts on: the grant
+is spent or revoked, so the person signs in again.
+
+```ruby
+begin
+  tokens = Mistri::MCP::OAuth.refresh(**stored)
+rescue Mistri::MCP::OAuth::InvalidGrantError
+  connection.update!(status: "needs_sign_in")
+end
+```
+
+`Mistri::MCP::OAuth.revoke(token:, **stored)` ends a token at the
+authorization server. It returns false for a server that names no revocation
+endpoint.
+
+### More scope
+
+A server may answer a call with a 403 and a challenge that asks for more
+scope. The `Mistri::AuthenticationError` carries the challenge:
+
+```ruby
+rescue Mistri::AuthenticationError => e
+  asked = Mistri::MCP::OAuth.challenge(e)
+  if asked["error"] == "insufficient_scope"
+    scope = Mistri::MCP::OAuth.step_up_scope(connection.scope, asked["scope"])
+    flow = Mistri::MCP::OAuth.start(url: server_url, scope: scope, **client)
+  end
+end
+```
+
+`step_up_scope` joins what was granted with what is asked, so the new token
+keeps what the old one could do. What was granted is `tokens["scope"]`, or
+`flow["scope"]` when the token response names none. Stop after a few rounds:
+a server that keeps asking is not going to be satisfied.
+
+### Reading how a server signs in
+
+```ruby
+found = Mistri::MCP::OAuth.discover(url: server_url)
+found["issuer"]                                  # the authorization server
+found["scope"]                                   # what a sign-in would ask for
+found["server_metadata"]["registration_endpoint"] # absent: set a client up by hand
+```
+
+`discover` takes the steps `start` takes and stops before it registers
+anything. It returns the resource, the issuer, the scope, and the two
+metadata documents as the servers publish them.
+
+### Tolerant discovery
+
+Exact discovery refuses some servers that the official SDKs connect to.
+`tolerant: true`, on `discover`, `start`, `complete`, `refresh` and `revoke`,
+accepts three things:
+
+- A resource document for the server's origin, or for a path above the
+  server's. That resource is then the one tokens are asked for.
+- An issuer that differs from the one named by one trailing slash.
+- No resource document at all, which is the 2025-03-26 revision: the server's
+  origin is the authorization server, and when it publishes no metadata
+  either, the endpoints are `/authorize`, `/token` and `/register`.
+
+The third applies only when the documents are not published. A server that
+could not be reached, or that answered 429 or a 5xx, ends the sign-in with its
+error. None of the three lets a token be asked for another origin. A host
+that starts a sign-in tolerantly passes `tolerant: true` to every later step
+of it.
 
 ## Optional Rails connection generator
 
@@ -764,6 +905,14 @@ Each row stores one server, OAuth flow state, issuer, encrypted tokens, expiry,
 and scope. The generated model exposes `connect`, `complete`, token refresh, a
 Client, and bridged tools. Set up Active Record encryption before storing
 credentials.
+
+The callback passes its `iss` on: `McpConnection.complete(state: params[:state],
+code: params[:code], iss: params[:iss])`.
+
+A server retires a refresh token when it is used, so two processes that
+refresh one row at the same moment would lose the sign-in. The generated
+`bearer_token` locks the row for the refresh and looks again once it holds the
+lock. The lock is held while the token endpoint answers.
 
 Override the generated class policy when the server is internal:
 

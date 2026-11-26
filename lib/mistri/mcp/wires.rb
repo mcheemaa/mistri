@@ -126,6 +126,13 @@ module Mistri
 
         def refreshable? = @token.respond_to?(:call)
 
+        # The server refused the token last sent. A callable that takes
+        # refused: is given it the next time it is asked, so it can tell a
+        # token it should replace from one another request already replaced.
+        def token_refused
+          @refused = @authorization&.delete_prefix("Bearer ")
+        end
+
         def reset_session
           @session_id = nil
           @protocol_version = nil
@@ -246,7 +253,18 @@ module Mistri
         end
 
         def resolve_token
-          @token.respond_to?(:call) ? @token.call : @token
+          return @token unless @token.respond_to?(:call)
+
+          refused = @refused
+          @refused = nil
+          refused && names_refused? ? @token.call(refused: refused) : @token.call
+        end
+
+        def names_refused?
+          callable = @token.respond_to?(:parameters) ? @token : @token.method(:call)
+          callable.parameters.any? do |kind, name|
+            kind == :keyrest || (%i[key keyreq].include?(kind) && name == :refused)
+          end
         end
 
         def capture_session(meta)
