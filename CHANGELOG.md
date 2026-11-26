@@ -154,7 +154,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   server, and an answer that arrives later is ignored. The handshake is never
   cancelled. Before the next request, the client asks the server one question
   that changes nothing: `ping`, or `server/discover` for a server of
-  2026-07-28. A server that answers within five seconds is kept. A server
+  2026-07-28. A server that answers within `read_timeout` is kept. A server
   that does not is ended, and the request starts a new one.
 - A stdio MCP server's own requests are answered. A `ping` sent while a call
   waited got no answer, and neither did any other request. A request that

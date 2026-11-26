@@ -328,11 +328,14 @@ module Mistri
         end
 
         # Reads until the block returns what it took for the answer. wait
-        # replaces the read timeout for this one request.
-        def call(payload, wait: nil, **)
+        # replaces the read timeout for this one request. whole makes that
+        # time the wait for the answer, where it is the wait for each message.
+        def call(payload, wait: nil, whole: false, **)
           start
-          write(payload, wait || @read_timeout)
-          loop { break if yield(read_record(wait || @read_timeout)) }
+          wait ||= @read_timeout
+          deadline = clock + wait if whole && wait
+          write(payload, wait)
+          loop { break if yield(read_record(deadline ? remaining(deadline) : wait)) }
           nil
         end
 

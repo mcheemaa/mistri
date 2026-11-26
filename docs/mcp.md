@@ -710,8 +710,10 @@ is never cancelled: a server that does not answer `initialize` is ended.
 A timeout does not end a stdio server. A request with no answer leaves a
 doubt about it. Before the next request, the client asks the server one
 question that changes nothing: `ping`, or `server/discover` for a server of
-2026-07-28, which has no `ping`. The server has five seconds to answer, or
-`read_timeout` when that is shorter.
+2026-07-28, which has no `ping`. The server has `read_timeout` to answer, as
+for a request. So a server that handles one request at a time can first finish
+the request before. That time is for the answer, and other messages do not
+extend it.
 
 - A server that answers was slow. It is kept, with everything it holds.
 - A server that does not answer is ended. A line on standard error with the
@@ -741,8 +743,9 @@ Mistri::MCP.tools(client, timeout: nil)  # no limit
 `timeout`, so the tool executor ends the call. The model reads that the tool
 timed out and may have completed, and the agent goes on. The client sends
 `notifications/cancelled` for the call, over stdio and over Streamable HTTP.
-The server and its session are kept, and the next call works. A call that
-waits behind another call to the same server spends its limit waiting.
+The server and its session are kept. Before the next call a stdio server is
+asked for a sign of life, as after a timeout. A call that waits behind another
+call to the same server spends its limit waiting.
 
 A direct `Client#call_tool` has no such limit. A host that puts its own
 `Timeout` around one gets the same cancel and keeps the server.

@@ -46,27 +46,21 @@ module Mistri
       end
 
       # The question is ping, or server/discover since 2026-07-28, which has
-      # no ping. Any answer to it counts, a refusal too. The wait is for the
-      # answer and not for one message, so other messages do not extend it.
-      # A question that fails is no sign of life, and not the failure of the
-      # request that comes after it.
+      # no ping. Any answer to it counts, a refusal too. The server gets the
+      # read timeout for its answer, as for a request, so one that handles a
+      # request at a time can first finish the request before. The time is
+      # for the answer: other messages do not extend it. A question that
+      # fails is no sign of life, and not the failure of the request that
+      # comes after it.
       def sign_of_life?
         id = (@serial += 1)
         question = { jsonrpc: "2.0", id: id, method: stateless? ? "server/discover" : "ping" }
         question[:params] = { _meta: described } if stateless?
-        wait = @wire.probe_wait
-        limit = clock + wait
-        answered = false
-        exchange(question, true, wait: wait) do |record|
-          answered = !answer_in(record, id).nil?
-          answered || clock > limit
-        end
-        answered
+        exchange(question, true, whole: true) { |record| answer_in(record, id) }
+        true
       rescue Mistri::Error
         false
       end
-
-      def clock = Process.clock_gettime(Process::CLOCK_MONOTONIC)
 
       # A record with a method is the server's own request or notice, whatever
       # its id. The answer may carry the id as a string of the same digits.
