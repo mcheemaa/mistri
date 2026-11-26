@@ -485,6 +485,49 @@ first search of the process took 33.5 ms and each later agent's first search
 0.5 ms. Every request carried two tool definitions until a search loaded
 more.
 
+## A client of your own
+
+`Mistri::MCP.tools` and `Mistri::MCP.bridge` take any object that answers as a
+client does. They need two methods and use three more when they are there:
+
+| Method | Needed | What it returns |
+| --- | --- | --- |
+| `tools` | Yes | An array of hashes with `"name"`, and `"description"`, `"inputSchema"` and `"annotations"` when the server sent them |
+| `call_tool(name, arguments)` | Yes | The result of the call: a hash with `"content"`, and `"isError"` and `"structuredContent"` when present |
+| `instructions` | No | The server's instructions, or nil |
+| `resources?` and `read_resource(uri)` | No | Whether the server has resources, and the contents of one |
+
+An error the client raises becomes the tool's error. One that is tagged
+`Mistri::MCP::NotSent`, or is a `Mistri::AuthenticationError`, is told to the
+model as a server that could not be used.
+
+A host uses this to put something in front of a client. One that lists a
+stored set of tools and starts its server on the first call is a few lines:
+
+```ruby
+class LazyServer
+  def initialize(listed) = @listed = listed
+  def tools = @listed
+  def call_tool(name, arguments = {}) = client.call_tool(name, arguments)
+
+  private
+
+  def client = @client ||= Mistri::MCP::Client.new(command: ["a-server"])
+end
+```
+
+The official MCP Ruby SDK's client, the `mcp` gem, answers in another shape:
+its tools are objects, and a call returns the whole response. Wrap it:
+
+```ruby
+sdk = MCP::Client.new(transport: transport)
+sdk.connect(client_info: { name: "YourApp", version: "1.0" })
+tools = Mistri::MCP.tools(Mistri::MCP::SDKClient.new(sdk), prefix: "files")
+```
+
+Mistri does not depend on that gem. The host builds the SDK's client,
+connects it and closes it.
+
 ## Schema authority
 
 Mistri validates the directly reachable portable subset described in

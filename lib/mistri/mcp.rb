@@ -14,9 +14,12 @@ module Mistri
   #   agent = Mistri.agent("claude-opus-5-5",
   #                        tools: Mistri::MCP.tools(client, prefix: "linear"))
   #
-  # The bridge is duck-typed: any client responding to tools (an array of
-  # {"name", "description", "inputSchema"} hashes) and call_tool(name, args)
-  # bridges the same way, so the official mcp gem's client plugs in too.
+  # The bridge takes any client that answers two methods: tools, an array of
+  # {"name", "description", "inputSchema"} hashes, and call_tool(name, args),
+  # the result of the call as a hash. instructions, and resources? with
+  # read_resource(uri), are used when a client has them. A host's own client
+  # bridges the same way, and the official mcp gem's client goes through
+  # Mistri::MCP::SDKClient.
   module MCP
     EMPTY_INPUT_SCHEMA = {
       "type" => "object", "properties" => {}.freeze, "additionalProperties" => false
@@ -420,6 +423,7 @@ require_relative "mcp/negotiation"
 require_relative "mcp/conversation"
 require_relative "mcp/wires"
 require_relative "mcp/client"
+require_relative "mcp/sdk_client"
 require_relative "mcp/oauth"
 
 Mistri::MCP.private_constant :Egress, :Mirror, :WireError, :WireTimeout, :EMPTY_INPUT_SCHEMA,

@@ -5,6 +5,9 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+- `Mistri::MCP::SDKClient` wraps a client of the official MCP Ruby SDK so it
+  goes through `Mistri::MCP.tools`. Mistri still depends on no other gem.
+  The docs say what the bridge needs of any client.
 - A model can read an MCP server's resources. `Client#read_resource` reads
   one and `Client#resources?` says whether the server has any. For a server
   that has, `Mistri::MCP.tools` returns one more tool, `read_resource` under
