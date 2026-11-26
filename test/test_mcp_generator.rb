@@ -19,7 +19,11 @@ if defined?(Mistri::Generators::McpGenerator)
     setup :prepare_destination
 
     def test_the_host_names_the_connection_model
-      run_generator ["ToolConnection"]
+      shown = run_generator ["ToolConnection"]
+
+      assert_includes shown,
+                      "ToolConnection.complete(state: params[:state], code: params[:code], " \
+                      "iss: params[:iss])"
 
       assert_file "app/models/tool_connection.rb" do |model|
         assert_match(/class ToolConnection < ApplicationRecord/, model)
