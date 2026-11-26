@@ -183,7 +183,11 @@ module Mistri
       # connection could be opened to send it on.
       def unsent?(error) = !@sent || Transport.unopened?(error.cause)
 
-      def tagged(error) = error.is_a?(NotSent) ? error : error.dup.extend(NotSent)
+      # A copy, so the error a host owns is not changed. clone keeps a module
+      # the host extended its error with, which dup would drop.
+      def tagged(error)
+        error.is_a?(NotSent) ? error : error.clone(freeze: false).extend(NotSent)
+      end
 
       # What a failure says of the server: that it refused to authorize, or
       # that it could not be used. Its own answer, a call that timed out and

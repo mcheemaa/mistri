@@ -65,7 +65,8 @@ module Mistri
       end
 
       # This client declares no capability, so ping is the one request it
-      # serves. A reply that cannot be delivered does not fail the call. Since
+      # serves. A reply that cannot be delivered does not fail the call,
+      # whether the wire or the host's token callable is why. Since
       # 2026-07-28 a server sends no request and a client no reply.
       def reply_to(record)
         id = record["id"]
@@ -79,17 +80,22 @@ module Mistri
                 end
         @wire.notify({ jsonrpc: "2.0", id: id, **reply })
         nil
-      rescue Mistri::Error
+      rescue StandardError => e
+        raise if ToolExecutor.deadline?(e)
+
         nil
       end
 
       # The handshake is the one request the spec forbids a client to cancel.
+      # A cancel that cannot be sent does not replace what ended the call.
       def cancel(method, id, reason)
         return if method == "initialize"
 
         @wire.cancel({ jsonrpc: "2.0", method: "notifications/cancelled",
                        params: { requestId: id, reason: reason } })
-      rescue Mistri::Error
+      rescue StandardError => e
+        raise if ToolExecutor.deadline?(e)
+
         nil
       end
 

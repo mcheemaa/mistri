@@ -139,7 +139,78 @@ class TestMcpRefusedToken < Minitest::Test
     refute_kind_of Mistri::MCP::NotSent, gone
   end
 
+  def test_a_token_that_fails_after_a_call_was_sent_does_not_say_the_call_did_not_run
+    down = false
+    pings = lambda do |server, socket, id|
+      server.open(socket)
+      down = true
+      server.event(socket, { "jsonrpc" => "2.0", "id" => "p1", "method" => "ping" })
+      sleep 0.2
+      server.event(socket, server.answer(id, "charged"))
+      server.finish(socket)
+    end
+    token = -> { down ? raise(ArgumentError, "the secret store is down") : "new" }
+    client(token, tools: { "charge" => pings }).connect
+
+    result = Mistri::MCP.bridge(@client, { "name" => "charge" }, prefix: "billing").call({})
+
+    assert_equal "charged", result
+    assert_equal 1, @server.sent("tools/call").length
+  end
+
+  def test_a_token_that_fails_at_the_cancel_does_not_replace_the_limit_that_ended_the_call
+    down = false
+    slow = lambda do |server, socket, id|
+      down = true
+      sleep 0.5
+      server.result(socket, id, server.answer(id, "charged")["result"])
+    end
+    token = -> { down ? raise(ArgumentError, "the secret store is down") : "new" }
+    client(token, tools: { "charge" => slow }).connect
+    result = limited("charge", 0.2)
+
+    assert result.error
+    assert_match(/timed out after 0.2s. The tool may have completed partially/, result.content)
+    assert_equal 1, @server.sent("tools/call").length
+  end
+
+  def test_a_limit_that_passes_while_a_reply_is_sent_still_ends_the_call
+    slow = false
+    pings = lambda do |server, socket, id|
+      server.open(socket)
+      slow = true
+      server.event(socket, { "jsonrpc" => "2.0", "id" => "p1", "method" => "ping" })
+      sleep 0.6
+      server.event(socket, server.answer(id, "charged"))
+      server.finish(socket)
+    end
+    client(-> { sleep(slow ? 0.4 : 0) && "new" }, tools: { "charge" => pings }).connect
+
+    assert_match(/timed out after 0.2s/, limited("charge", 0.2).content)
+  end
+
+  def test_a_limit_that_passes_while_a_cancel_is_sent_still_ends_the_call
+    slow = false
+    silent = lambda do |server, socket, _id|
+      server.open(socket)
+      slow = true
+      sleep 1
+      :close
+    end
+    token = -> { sleep(slow ? 0.4 : 0) && "new" }
+    client(token, tools: { "charge" => silent }, read_timeout: 0.2).connect
+
+    assert_match(/timed out after 0.3s/, limited("charge", 0.3).content)
+  end
+
   private
+
+  # The result of one call of a bridged tool, run under its limit.
+  def limited(name, seconds)
+    tool = Mistri::MCP.bridge(@client, { "name" => name }, prefix: "billing", timeout: seconds)
+    call = Mistri::ToolCall.new(id: "c1", name: tool.name, arguments: {})
+    Mistri::ToolExecutor.call([call], { tool.name => tool }).first[1]
+  end
 
   def client(token, tools: TOOLS, **)
     @server = Mistri::Test::McpScriptedServer.new(tools: tools)

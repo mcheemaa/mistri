@@ -88,8 +88,9 @@ module Mistri
           answered = false
           took = ->(record) { answered = yield(record) || answered }
           events = Events.new(max_record_bytes: @max_record_bytes)
-          repeated = stateless? ? repeated(payload, mirror) : {}
-          meta = post(@transport, payload, repeated, replayable: replayable, events: events, &took)
+          headers = unsent_headers
+          headers.merge!(repeated(payload, mirror)) if stateless?
+          meta = post(@transport, payload, headers, replayable: replayable, events: events, &took)
           return if stateless?
 
           capture_session(meta)
@@ -156,17 +157,22 @@ module Mistri
 
         private
 
+        # The headers of a request, resolved before anything of it is written,
+        # so what the host's token callable raises here is tagged NotSent. A
+        # reply and a cancel ask for the token too, after their call was
+        # written, and what it raises then is not tagged.
+        def unsent_headers
+          request_headers
+        rescue StandardError => e
+          raise e.clone(freeze: false).extend(NotSent)
+        end
+
         # The headers are resolved first, so an error from the host's token
-        # callable is not taken for the server's answer. Nothing is written
-        # by then, so it is tagged NotSent. A server that was too slow is
-        # kept, as a slow stdio server is. A refusal keeps its class, status
-        # and body, and its message names an MCP server, not a provider.
-        def post(transport, payload, repeated = {}, **, &)
-          headers = begin
-            request_headers.merge(repeated)
-          rescue StandardError => e
-            raise e.dup.extend(NotSent)
-          end
+        # callable is not taken for the server's answer. A server that was too
+        # slow is kept, as a slow stdio server is. A refusal keeps its class,
+        # status and body, and its message names an MCP server, not a provider.
+        def post(transport, payload, headers = nil, **, &)
+          headers ||= request_headers
           begin
             transport.post_either(@path, body: payload, headers: headers, **, &)
           rescue ProviderError => e

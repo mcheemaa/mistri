@@ -7,6 +7,8 @@ require_relative "support/mcp_stub_server"
 # copy tagged NotSent. The error a caller owns is never changed.
 class TestMcpNotSent < Minitest::Test
   ECHO = { "echo" => { description: "Echoes.", handler: ->(_args) { "echo" } } }.freeze
+  # A module a host tags its own errors with.
+  HostTag = Module.new
   # Raises the error a test set, once, from the next read of a connection.
   FailingRead = Module.new do
     def rbuf_fill
@@ -32,7 +34,7 @@ class TestMcpNotSent < Minitest::Test
   end
 
   def test_an_error_before_the_call_is_sent_is_tagged_on_a_copy_of_it
-    shared = RuntimeError.new("no token").freeze
+    shared = RuntimeError.new("no token").extend(HostTag).freeze
     resolved = 0
     token = -> { [1, 5].include?(resolved += 1) ? raise(shared) : "token" }
     with_server do |server|
@@ -43,6 +45,7 @@ class TestMcpNotSent < Minitest::Test
       assert_kind_of Mistri::MCP::NotSent, at_the_handshake
       assert_equal "no token", at_the_handshake.message
       refute_same shared, at_the_handshake
+      assert_kind_of HostTag, at_the_call, "the copy keeps what the host extended its error with"
       assert_kind_of Mistri::MCP::NotSent, at_the_call, "nothing is written before the token"
       assert_equal 5, resolved
       assert_empty server.calls
