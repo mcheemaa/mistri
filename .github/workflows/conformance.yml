@@ -1,0 +1,40 @@
+name: Conformance
+
+# The official MCP conformance suite against the client, at the version of the
+# suite pinned in the Rakefile. The scenarios that are expected to fail are
+# listed with their reasons in script/conformance/expected_failures.yml.
+on:
+  push:
+    branches: [main]
+  pull_request:
+    paths:
+      - lib/mistri/mcp.rb
+      - lib/mistri/mcp/**
+      - lib/mistri/transport.rb
+      - lib/mistri/transport/**
+      - script/conformance/**
+      - Rakefile
+      - .github/workflows/conformance.yml
+  schedule:
+    - cron: "17 6 * * 1"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  client:
+    runs-on: ubuntu-latest
+    env:
+      BUNDLE_WITHOUT: lint:mysql_test:postgres_test
+    steps:
+      - uses: actions/checkout@v7.0.1
+      - uses: ruby/setup-ruby@v1
+        with:
+          ruby-version: "3.4"
+          bundler-cache: true
+      # The suite is a Node package that the task runs with npx.
+      - uses: actions/setup-node@v7
+        with:
+          node-version: "24"
+      - run: bundle exec rake conformance

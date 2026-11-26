@@ -1,0 +1,11 @@
+# Scenarios of the official conformance suite that Mistri's client is expected
+# to fail, each with its reason. The suite fails the run for any other failure,
+# and for an entry here whose scenario passes.
+client:
+  # The server asks the client a question in the middle of a call. Mistri's
+  # client declares no elicitation and answers such a request with an error.
+  - elicitation-sep1034-client-defaults
+  # The server answers a call by asking for input. The client gives a server
+  # no input, so it ends the call there. It does send state back when a
+  # result carries only state.
+  - sep-2322-client-request-state

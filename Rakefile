@@ -48,4 +48,25 @@ task :integration do
   abort unless results.all? { |_output, status| status.success? }
 end
 
+# The official MCP conformance suite, at a pinned version, against the client.
+# Each revision runs every scenario the suite has for it. A server of the
+# 2025-03-26 revision publishes no resource document, which only tolerant
+# discovery signs in to, so that revision runs with it turned on.
+CONFORMANCE = "@modelcontextprotocol/conformance@0.2.0-alpha.11"
+CONFORMANCE_REVISIONS = {
+  "2025-03-26" => "1", "2025-06-18" => nil, "2025-11-25" => nil, "2026-07-28" => nil
+}.freeze
+
+desc "Run the official MCP conformance suite against the client"
+task :conformance do
+  failed = CONFORMANCE_REVISIONS.reject do |revision, tolerant|
+    system({ "MISTRI_CONFORMANCE_TOLERANT" => tolerant },
+           "npx", "--yes", CONFORMANCE, "client",
+           "--command", "#{Gem.ruby} -Ilib script/conformance/client.rb",
+           "--suite", "all", "--spec-version", revision,
+           "--expected-failures", "script/conformance/expected_failures.yml")
+  end
+  abort "conformance failed for #{failed.keys.join(", ")}" unless failed.empty?
+end
+
 task default: :test
