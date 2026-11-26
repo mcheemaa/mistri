@@ -5,22 +5,6 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
-- A stdio MCP server that stops answering is replaced. After a request with
-  no answer, the client asks the server one question before the next request:
-  `ping`, or `server/discover` for a server of 2026-07-28. A server that
-  answers within five seconds is kept. A server that does not is ended, and
-  the request starts a new one. Before, every later call waited for
-  `read_timeout` until the host closed the client.
-- A sign-in that exact discovery refuses says when tolerant discovery accepts
-  the same server. The error ends with `which tolerant: true accepts` for a
-  resource document that names the server's origin or a path above it, and
-  for an issuer one trailing slash apart. Exact discovery stays the default.
-- A call that an MCP server asked to be sent again is not reported as one that
-  did not run when a later round fails to reach the server. The server took
-  the first round, so `Client#call_tool` raises
-  `Mistri::AmbiguousDeliveryError` when a later round's token callable raises,
-  its connection cannot be opened, or the server does not authorize it.
-  `Client#state` is `:needs_sign_in` after such a refusal, as before.
 - A key of `gates:` that names no tool of the server raises
   `Mistri::ConfigurationError`, as a key of a `parallel:` hash does. A name
   spelled another way, or a symbol, matched no tool and said nothing, so the
@@ -70,8 +54,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - `tolerant: true` on the sign-in calls accepts a resource document for the
   origin or a path above the server, an issuer one trailing slash apart, and
   a server of the 2025-03-26 revision with no resource document. It is off by
-  default. `offline_access: true` on `OAuth.start` adds that scope when the
-  authorization server lists it. It is off by default too.
+  default. An exact refusal says when tolerant discovery accepts the same
+  answer: the error ends with `which tolerant: true accepts` for the first
+  two of the three. `offline_access: true` on `OAuth.start` adds that scope
+  when the authorization server lists it. It is off by default too.
 - The generated MCP connection model locks its row for a token refresh, takes
   the refused token, and passes the callback's `iss`. Two processes that
   refreshed one connection at once lost the sign-in.
@@ -110,8 +96,12 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   before. `client.listing` holds the revision as `"protocolVersion"`, so a
   client built from a stored listing asks nothing. A call that a 2026-07-28
   server answers by asking for input ends as a tool error that says so,
-  because the client declares no elicitation. `Client::PROTOCOL_VERSION` is
-  now `"2026-07-28"`, and `Mistri::MCP::Error` has `data`.
+  because the client declares no elicitation. A call that such a server asks
+  for again with state is sent again, three times at most. The server took
+  the first round, so a later round that is not delivered raises
+  `Mistri::AmbiguousDeliveryError`, and is not reported as a call that did
+  not run. `Client::PROTOCOL_VERSION` is now `"2026-07-28"`, and
+  `Mistri::MCP::Error` has `data`.
 - A JSON-RPC error from an MCP server no longer costs its connection. The
   error was raised while its response was still being read, which closed the
   connection. It is raised once the response is read.
@@ -161,8 +151,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   whatever the server held, such as an open browser page. The client now sends
   `notifications/cancelled` for that request, stops waiting and keeps the
   server, and an answer that arrives later is ignored. The handshake is never
-  cancelled. A server that has stopped for good now stays until the host calls
-  `client.close`.
+  cancelled. Before the next request, the client asks the server one question
+  that changes nothing: `ping`, or `server/discover` for a server of
+  2026-07-28. A server that answers within five seconds is kept. A server
+  that does not is ended, and the request starts a new one.
 - A stdio MCP server's own requests are answered. A `ping` sent while a call
   waited got no answer, and neither did any other request. A request that
   carried the id of the waiting call was taken for its answer:
