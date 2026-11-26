@@ -26,7 +26,11 @@ module Mistri
         def input_items(history, deferred: [], system_messages: false)
           specs = deferred.to_h { |tool| [tool.transform_keys(&:to_sym)[:name], tool] }
           declared = {}
-          history = Reminder.as_user_turns(history) unless system_messages
+          history = if system_messages
+                      Reminder.user_weighted(history)
+                    else
+                      Reminder.as_user_turns(history)
+                    end
           history.flat_map do |msg|
             items = items_for(msg, declared)
             msg.tool? ? items + additions(msg, specs, declared) : items

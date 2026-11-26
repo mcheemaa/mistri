@@ -28,10 +28,14 @@ module Mistri
     # them together when they are sent before any tool is loaded.
     INSTRUCTIONS_BYTES = 2_000
     INSTRUCTIONS_TOGETHER_BYTES = 20_000
+    # The reminder a server's instructions are appended as, by the weight the
+    # host gave them.
+    INSTRUCTION_KINDS = { system: "tool_instructions",
+                          user: Reminder::AS_USER.first }.freeze
     TOOL_ARGUMENT_VALIDATOR = Tool.instance_method(:validate_arguments)
     private_constant :MAX_ARGUMENT_VIOLATIONS, :MAX_ARGUMENT_ERROR_BYTES,
                      :MAX_VIOLATION_SOURCE_BYTES, :INSTRUCTIONS_BYTES,
-                     :INSTRUCTIONS_TOGETHER_BYTES, :TOOL_ARGUMENT_VALIDATOR
+                     :INSTRUCTIONS_TOGETHER_BYTES, :INSTRUCTION_KINDS, :TOOL_ARGUMENT_VALIDATOR
 
     # compaction defaults on so long sessions survive their context window;
     # pass false to disable, or a tuned Compaction. It only ever triggers
@@ -642,7 +646,9 @@ module Mistri
       owed = owed_instructions(messages)
       return messages if owed.empty?
 
-      messages + [@session.append_message(Message.reminder("tool_instructions", *owed))]
+      messages + owed.group_by { |text| @instruction_kinds.fetch(text) }.map do |kind, texts|
+        @session.append_message(Message.reminder(kind, *texts))
+      end
     end
 
     # The note is owed while the conversation holds none, so a compaction that
@@ -666,22 +672,34 @@ module Mistri
         held = (@tools_by_name.keys - @deferred_specs.keys) | loaded_names(messages)
         due = due.select { |_text, names| names.intersect?(held) }
       end
-      sent = messages.select { |message| message.reminder == "tool_instructions" }
+      sent = messages.select { |message| INSTRUCTION_KINDS.value?(message.reminder) }
                      .flat_map { |message| message.content.grep(Content::Text).map(&:text) }
       due.keys - sent
     end
 
-    # Each distinct instructions text as the text block the model reads,
-    # with the names of the tools that carry it.
+    # Each distinct instructions text, under each weight it was given, as
+    # the text block the model reads, with the names of the tools that carry
+    # it. One block that tools of both weights carry is sent once, with the
+    # weight of a user turn, which trusts the server less.
     def tool_instructions
-      @tool_instructions ||=
-        @tools.select { |tool| tool.respond_to?(:instructions) }
-              .group_by { |tool| tool.instructions.to_s.strip }.except("")
-              .to_h do |text, tools|
-                names = tools.map(&:name)
-                ["The server of #{instructed(names)} gives these instructions for using its " \
-                 "tools:\n#{bounded_instructions(text)}", names]
-              end
+      @tool_instructions ||= begin
+        @instruction_kinds = {}
+        carried = @tools.select { |tool| tool.respond_to?(:instructions) }
+                        .group_by { |tool| [tool.instructions.to_s.strip, weight_of(tool)] }
+                        .reject { |(text, _weight), _tools| text.empty? }
+        carried.each_with_object({}) do |((text, weight), tools), blocks|
+          names = tools.map(&:name)
+          block = "The server of #{instructed(names)} gives these instructions for using " \
+                  "its tools:\n#{bounded_instructions(text)}"
+          @instruction_kinds[block] = INSTRUCTION_KINDS.fetch(blocks.key?(block) ? :user : weight)
+          (blocks[block] ||= []).concat(names)
+        end
+      end
+    end
+
+    # A tool that is not the gem's own may carry instructions and no weight.
+    def weight_of(tool)
+      tool.respond_to?(:instructions_as) ? tool.instructions_as : :system
     end
 
     # Each server's tools by their prefix, and a tool without one by its name.
@@ -1271,6 +1289,7 @@ module Mistri
                                                              session: @session, emit: emit,
                                                              app: @context,
                                                              result_limit_for: limits(among, spent),
+                                                             scratchpad: @scratchpad,
                                                              prepared_arguments: true)
     end
 
@@ -1343,7 +1362,7 @@ module Mistri
 
     def hook_context(signal, emit)
       ToolContext.new(session: @session, signal: signal, emit: EventDelivery.wrap(emit),
-                      app: @context)
+                      app: @context, scratchpad: @scratchpad)
     end
 
     # The tool message carries both channels; the :tool_result event exposes

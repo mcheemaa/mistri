@@ -33,6 +33,19 @@ agent = Mistri.agent("claude-opus-5-5", tools: tools)
 After a 401, Mistri resolves it once more and retries once, so the host can put
 refresh behavior behind the callable.
 
+A callable that takes `refused:` is given the token the server just refused,
+when it is asked again after a 401. It can then replace that token only when
+it is still the stored one, which matters when several processes share a
+connection:
+
+```ruby
+token: ->(refused: nil) { connection.bearer_token(refused: refused) }
+```
+
+After a 403 whose challenge says `insufficient_scope`, Mistri does not ask
+again: a new token of the same sign-in has the same scope. See
+[More scope](#more-scope).
+
 Use `headers:` for fixed application headers. Mistri copies them at client
 construction and rejects framing plus MCP session and protocol headers. A fixed
 Authorization header is permitted; when `token:` is supplied, Mistri owns
@@ -41,6 +54,23 @@ Bearer authorization and overwrites it.
 One Client serializes its requests. Parallel Agent tool calls against the same
 client queue rather than interleave. Use distinct clients only when the server
 and host policy allow true parallel connections.
+
+A server answers a request with a JSON body or with an SSE stream. A call
+returns when its answer arrives. Most servers end the stream with the answer,
+and the connection is then kept for the next request. A stream that is still
+open a tenth of a second after the answer is left, and its connection is
+closed.
+
+A server may end a stream before the answer and expect the client back. When
+an event of that stream carried an id, the client waits the `retry` the server
+named, or one second, and asks for the rest with a GET and `Last-Event-ID`. It
+does so once, and not when the wait is longer than `read_timeout`. The call is
+never sent again.
+
+An HTTP status that refuses a request is raised as the transport's error for
+that status, such as `Mistri::ServerError`, with its `status` and `body`. The
+message names the MCP server: `the MCP server answered HTTP 400`, followed by
+the message of a JSON-RPC error when the body holds one.
 
 ### Stdio
 
@@ -64,6 +94,10 @@ tools = Mistri::MCP.tools(
 object per line and bounds the complete record read, including the time after
 its first byte.
 
+A line on the server's stdout that is not JSON is skipped. It is written to the
+host's standard error, where the server's own standard error already goes, and
+the wait for the message goes on.
+
 The server does not inherit the host's environment, which holds provider keys
 and other secrets. It starts with `env:` and these variables from the host
 process:
@@ -86,11 +120,125 @@ host's files.
 in an application or deployment so the executable does not change without a
 code review.
 
-Call `client.close` when a long-lived host is finished. For stdio, it terminates
-the child. For HTTP, it closes the local connection and forgets the negotiated
-session, but does not send the optional MCP DELETE termination request; remote
-resources expire by server policy. The discovered tool cache remains available.
+Call `client.close` when a long-lived host is finished. For stdio, it closes the
+server's input and waits half a second for the server to end. A server that is
+still running is sent SIGTERM, and SIGKILL one second after that. For HTTP, it
+sends a DELETE with the session id, as the spec asks, on a connection that
+waits five seconds at most, and forgets the session whatever the server
+answers. It sends the token it last sent and does not ask the host for a new
+one. The discovered tool cache remains available.
 `call_tool` or `tools(refresh: true)` performs a fresh handshake when needed.
+
+### Requests from a server
+
+In the older form of the protocol a server may send its own requests while a
+call waits for its answer. The client declares no capability, so it answers `ping` with an empty result and
+refuses any other request with JSON-RPC error -32601. Over Streamable HTTP the
+reply is a POST of its own, on a second connection that waits five seconds at
+most, because the first is taken by the stream of the call. A reply and a
+cancel carry the token last sent. The host's token callable is asked only for
+a request.
+
+A request is never taken for the answer to a call, whatever its id. An answer
+is matched by the id of its call, also when the server sends that id back as a
+string.
+
+### What the host is told
+
+```ruby
+client = Mistri::MCP::Client.new(
+  url: server_url,
+  on_notification: ->(method, params) { Rails.logger.info("#{method} #{params}") },
+  progress: true,
+)
+```
+
+`on_notification:` is called with the method and the params of each
+notification the server sends while the client reads: a changed tool list, a
+progress notice, a log line. It runs inside the call, so it must not use the
+client. What it raises is written to standard error with the prefix
+`mistri:`, and the call goes on. A bridged tool's `timeout:` still ends the
+call while it runs. The kept tool list is not changed by a notice. The host
+lists again with `refresh: true` when it decides to.
+
+A notice reaches the host when it arrives on a stream the client reads. Over
+stdio that is the next call at the latest. Over HTTP it is the stream of a
+call, up to a tenth of a second after its answer. A notice that a server
+sends on a stream of its own, outside any call, is not read.
+
+`progress: true` asks for progress with each tool call, by a token that is the
+call's own request id. Each progress notice is a message, so a call that
+reports progress is not ended by `read_timeout`. The limit of the bridged
+tool still holds.
+
+`client.state` is `:idle` before anything was asked, `:connected` once the
+server answered, `:needs_sign_in` after it refused to authorize or the host's
+token callable raised `OAuth::InvalidGrantError`, and `:failed`
+when it could not be reached, its connection broke, a local server could not
+be started, or it answered with an HTTP error. `client.failure` holds the
+reason. A call that timed out, an answer over a limit and an error the server
+answered with leave both as they were. The next answer makes the state
+`:connected` again.
+
+A bridged tool whose server cannot be used tells the model so, and names the
+server by the `prefix:` the host gave it: `No connection to the MCP server
+"tracker" could be established, so tracker__search did not run`, or `the MCP
+server "tracker" needs a sign-in before its tools can be used`. A call to a
+server whose connection could not be opened did not run, and is not reported
+as one that may have completed. A tool whose `timeout:` passes before its
+call is sent says that it did not run, too. That includes a call that waited
+for another call of the same client, which runs one at a time.
+
+### Protocol revisions
+
+The client speaks two forms of the protocol. In the form of 2026-07-28 there
+is no handshake and no session: each request carries the revision, the
+client's name and its capabilities. In the older form, 2025-11-25 and three
+revisions before it, a session opens with `initialize`.
+
+Before its first request the client asks the server which revisions it speaks,
+with `server/discover`. A server that offers 2026-07-28 is used in that form.
+An older server does not know the request, and whatever it answers that is not
+an error of the 2026-07-28 revision leads to the handshake. On stdio so does no
+answer within five seconds, or within `read_timeout` when that is shorter. A
+refusal to authorize, a server error and a lost connection say nothing about
+the revision and are raised as they are.
+
+The answer is kept for the life of the client. `client.listing` holds it as
+`"protocolVersion"`, so a client built from a stored listing asks nothing: in
+the form of 2026-07-28 its first request is the call itself.
+
+A server can move from one form to the other after the answer was kept. When
+a server refuses the handshake of a remembered older revision, or refuses a
+request in the form of 2026-07-28 in a way that may be about its form, the
+client asks it again. A refused sign-in, a timeout, a limit and an HTTP
+status of 500 or above are not about its form. A request is sent a second time only to a
+server that turned out to speak the other form, which refused the first for
+its form. A server that still speaks the same form gave its answer, and that
+is raised.
+
+In the form of 2026-07-28:
+
+- A request from the server gets no reply. The revision allows neither.
+- Over HTTP a call that is given up is cancelled by its closed stream, with no
+  notification, and a stream that ended early is not asked for again.
+- Over HTTP each request repeats its method in `Mcp-Method`, a call repeats
+  its tool in `Mcp-Name`, and each parameter that a tool marks with
+  `x-mcp-header` is repeated in `Mcp-Param-*`. A direct `call_tool` on a
+  client that holds no listing lists the tools first, to learn the marks. A
+  tool whose marks break the rules of the revision is left out of the list and
+  named in a warning on standard error. So is one in a stored listing, once
+  the client knows the server speaks 2026-07-28, and no parameter of such a
+  tool is ever repeated. A tool that was bridged before that stays offered
+  until the host builds its tools again.
+- `close` sends no DELETE, because there is no session.
+- A server may answer a call by asking for input. The client declares no
+  capability to give any, so such a call ends as a tool error that says so,
+  with the server's own message. A result that asks for nothing and carries
+  `requestState` is sent again with it, three times at most.
+- A header that does not match the request is raised as the server's refusal.
+  The spec suggests listing the tools again. The kept listing is the host's
+  pin, so the host decides.
 
 ## Tool discovery
 
@@ -115,9 +263,10 @@ looping or allocating without bound.
 
 Listing a server's tools takes a connection, and a stdio server must be
 started first. With many servers that is too slow to repeat each time an
-agent is built. `client.listing` returns the server's tools, and its
-`instructions` when it sent any, as plain JSON. Store it, and pass it to the
-clients built later:
+agent is built. `client.listing` returns the server's tools, its
+`instructions` when it sent any, the revision it speaks, and whether it has
+resources, as plain JSON.
+Store it, and pass it to the clients built later:
 
 ```ruby
 # Once, in a job.
@@ -145,12 +294,14 @@ A server may send `instructions` in its initialize result: text on how to use
 its tools. `client.instructions` returns it, and `Mistri::MCP.tools` sets it
 on every tool it bridges, as `Tool#instructions`.
 
-The text is the server's, and the host decides whether the model reads it:
+The text is the server's, and the host decides whether the model reads it,
+and with what weight:
 
 ```ruby
 Mistri::MCP.tools(client)                                  # the server's text
 Mistri::MCP.tools(client, instructions: false)             # none
 Mistri::MCP.tools(client, instructions: "Use for orders.") # the host's text
+Mistri::MCP.tools(client, instructions_as: :user)          # as text of a user turn
 ```
 
 An agent appends the instructions of every server to the conversation with
@@ -175,6 +326,43 @@ OpenAI, and otherwise as text of a user turn in a system-reminder block. Each
 block names the tools it is about. A model gives such a message the weight of
 your own instructions, so give a server's instructions the trust you give
 that server.
+
+`instructions_as: :user` gives a server's instructions less weight. They are
+then sent as text of a user turn in a system-reminder block on every provider,
+and never as a system or developer message. The reminder they are appended as
+is `"tool_instructions_as_user"`. When tools of one server are bridged under
+one prefix with both weights, the server's instructions are sent once, as
+text of a user turn.
+
+### What else a server's text can do
+
+A tool's description is text from the server that the model reads as guidance.
+`Mistri::MCP.tools` cuts one at 4,096 characters and ends it with a line that
+says so. `description_limit:` sets another number, which is an integer that
+is not negative, and `nil` sets none. Of
+350 definitions from 32 public servers the longest description has 3,674
+characters.
+
+A server marks a tool that only reads with `readOnlyHint`, and such a tool may
+run beside others in a turn. Nothing checks the hint. `trust_hints: false`
+means no tool is marked by it, only by the host's own `parallel:`.
+
+A server can change a tool's definition after a person approved it.
+`Mistri::MCP.digest(definition)` is the SHA-256 of a definition, as JSON with
+the keys of every object in order, to keep with what was approved.
+`Mistri::MCP.changes(kept, fresh)` takes two listings and returns the names of
+the tools that were added, removed and changed:
+
+```ruby
+kept = store.read("tracker")
+fresh = client.listing(refresh: true)
+Mistri::MCP.changes(kept, fresh)
+# => { "added" => [], "removed" => ["archive"], "changed" => ["search"] }
+```
+
+The client itself never replaces a kept listing. What to do with a changed
+definition is the host's decision. When a listing names one tool twice, the
+first definition is the one compared, as it is the one bridged.
 
 `Mistri::MCP.tools` filters remote names with `allow:` and `deny:`. `prefix:`
 creates local names such as `linear__create_issue` while the remote call still
@@ -253,19 +441,27 @@ An agent can be given the tools of tens or hundreds of servers. Four things
 keep that cheap, and each is a host decision that Mistri supports:
 
 1. List each server once, in a job, and store the listing. Listing takes a
-   connection for each server, so run the servers in parallel and let one
-   failure leave the others:
+   connection for each server, so run the servers in parallel, wait a bounded
+   time for all of them together, and let one failure leave the others:
 
    ```ruby
-   listings = servers.to_h do |name, url|
-     [name, Thread.new { Mistri::MCP::Client.new(url: url).listing }]
-   end
-   listings.each do |name, thread|
-     store.write(name, thread.value)
+   clients = servers.transform_values { |url| Mistri::MCP::Client.new(url: url) }
+   threads = clients.transform_values { |client| Thread.new { client.listing } }
+   deadline = Process.clock_gettime(Process::CLOCK_MONOTONIC) + 30
+   threads.each do |name, thread|
+     left = deadline - Process.clock_gettime(Process::CLOCK_MONOTONIC)
+     store.write(name, thread.value) if thread.join([left, 0].max)
    rescue StandardError => e
      report(name, e)
    end
    ```
+
+   A server that has not answered by then is left for the next run of the
+   job. Its client is still `:idle`, and its thread ends by the client's own
+   timeouts. `client.state` and `client.failure` say how each of the others
+   ended. Mistri has no helper for this: it would start threads inside the
+   host's process, and how many a process may hold, and for how long, is the
+   host's decision.
 
 2. Build the clients from the stored listings and bridge them once for the
    process. Bridging validates each schema, so it is the part worth doing
@@ -311,6 +507,49 @@ server took 21.6 seconds, once. After that, building the 22 clients took
 first search of the process took 33.5 ms and each later agent's first search
 0.5 ms. Every request carried two tool definitions until a search loaded
 more.
+
+## A client of your own
+
+`Mistri::MCP.tools` and `Mistri::MCP.bridge` take any object that answers as a
+client does. They need two methods and use three more when they are there:
+
+| Method | Needed | What it returns |
+| --- | --- | --- |
+| `tools` | Yes | An array of hashes with `"name"`, and `"description"`, `"inputSchema"` and `"annotations"` when the server sent them |
+| `call_tool(name, arguments)` | Yes | The result of the call: a hash with `"content"`, and `"isError"` and `"structuredContent"` when present |
+| `instructions` | No | The server's instructions, or nil |
+| `resources?` and `read_resource(uri)` | No | Whether the server has resources, and the contents of one |
+
+An error the client raises becomes the tool's error. One that is tagged
+`Mistri::MCP::NotSent`, or is a `Mistri::AuthenticationError`, is told to the
+model as a server that could not be used.
+
+A host uses this to put something in front of a client. One that lists a
+stored set of tools and starts its server on the first call is a few lines:
+
+```ruby
+class LazyServer
+  def initialize(listed) = @listed = listed
+  def tools = @listed
+  def call_tool(name, arguments = {}) = client.call_tool(name, arguments)
+
+  private
+
+  def client = @client ||= Mistri::MCP::Client.new(command: ["a-server"])
+end
+```
+
+The official MCP Ruby SDK's client, the `mcp` gem, answers in another shape:
+its tools are objects, and a call returns the whole response. Wrap it:
+
+```ruby
+sdk = MCP::Client.new(transport: transport)
+sdk.connect(client_info: { name: "YourApp", version: "1.0" })
+tools = Mistri::MCP.tools(Mistri::MCP::SDKClient.new(sdk), prefix: "files")
+```
+
+Mistri does not depend on that gem. The host builds the SDK's client,
+connects it and closes it.
 
 ## Schema authority
 
@@ -373,6 +612,53 @@ Large results should live behind a server or host resource. Return an MCP
 payload. Mistri renders the URI for the model and never fetches it automatically;
 fetching credentials, retention, and access policy belong to the host or server.
 
+### Resources
+
+A server that has resources declares so, and `client.resources?` says whether
+it did. `client.read_resource(uri)` returns the contents of one: hashes with
+`"uri"`, `"mimeType"`, and `"text"` or `"blob"`.
+
+For such a server `Mistri::MCP.tools` returns one more tool, `read_resource`
+under the server's prefix. It takes a URI and returns what the server holds
+there. A link in a result of the server's tools then tells the model how to
+follow it:
+
+```text
+[Resource notes://today "Today's notes" (text/plain, 10 bytes). What to buy. Read it with notes__read_resource.]
+```
+
+- `resources: false` leaves the tool out, and a link is then the line
+  `[resource: notes://today]`, as before.
+- `resources: true` offers the tool for a server that returns links and
+  declares no resources.
+- `gates: { "read_resource" => true }` makes a read wait for approval. The
+  tool follows `deferred:` and `timeout:` like the server's own tools. It is
+  marked to run beside other calls, unless `parallel: false` or
+  `parallel: { "read_resource" => false }` says it runs alone.
+- A server that lists a tool named `read_resource` keeps that name, and
+  Mistri's tool is left out.
+
+The tool reads whatever URI the model gives it, from that one server. A host
+that reviews a server's tools one by one reviews this one too, or leaves it
+out.
+
+A result may also hold a resource itself. Its text is shown. Bytes are shown
+when they are an image, read as text when their type is a text type, and
+otherwise kept in the agent's [scratchpad](context-and-workspaces.md), where
+the result says they are:
+
+```text
+[Binary resource notes://report.pdf (application/pdf, 48211 bytes) saved at scratchpad/tool-results/20261126T030609-notes__report-d53873f1.pdf]
+```
+
+An agent with no scratchpad is told the type and the size and that the bytes
+are not shown. A scratchpad whose workspace holds only text, such as one in a
+text column, cannot take them, and the result says so.
+
+`Mistri::MCP.answer(result)`, for a host that bridges tools itself, shows the
+image and reads the text. It has no tool to name and no scratchpad, so a link
+and other bytes are the line `[resource: uri]`.
+
 ## Response boundaries
 
 Provider and MCP JSON bodies, individual SSE lines, and stdio records default
@@ -398,8 +684,48 @@ list answers the same however it replies.
 Byte overflow raises `Mistri::ResponseTooLargeError`. Structural overflow raises
 `Mistri::ResponseTooComplexError`. Both expose `kind` and `limit`.
 
-Either failure resets the wire and negotiated session. The next operation must
-handshake again.
+Either failure closes the connection. Over HTTP the session is kept. Over stdio
+the server is ended, and the next operation starts one and does the handshake
+again.
+
+### The time one call may take
+
+`read_timeout:` is the wait for one message from the server, over stdio and
+over HTTP. A comment that a server sends to keep a stream open is not a
+message and does not start the wait again. When the wait passes, the client
+sends `notifications/cancelled` for that request and stops waiting. It keeps
+the stdio server, or the HTTP session. An answer that arrives later is
+ignored. A list raises `Mistri::MCP::Error`. A tool call raises
+`Mistri::AmbiguousDeliveryError`, because the tool may have run. The handshake
+is never cancelled: a server that does not answer `initialize` is ended.
+
+A stdio server that has stopped for good is not ended by a timeout. Every later
+call waits for the timeout again until the host calls `client.close`. The call
+after that starts a new server.
+
+A call is also written under `read_timeout`. When a stdio server has stopped
+reading its input, a call with large arguments ends there. Half a message is
+then left in that server's input, so the server is ended, and the next call
+starts a new one with a new handshake.
+
+A server that keeps sending messages and never answers the call starts the
+wait again each time, so a bridged tool also has a limit for the whole call:
+
+```ruby
+Mistri::MCP.tools(client)                # 300 seconds, Mistri::MCP::CALL_TIMEOUT
+Mistri::MCP.tools(client, timeout: 900)  # the host's number
+Mistri::MCP.tools(client, timeout: nil)  # no limit
+```
+
+`Mistri::MCP.bridge` takes the same option. The limit is the tool's own
+`timeout`, so the tool executor ends the call. The model reads that the tool
+timed out and may have completed, and the agent goes on. The client sends
+`notifications/cancelled` for the call, over stdio and over Streamable HTTP.
+The server and its session are kept, and the next call works. A call that
+waits behind another call to the same server spends its limit waiting.
+
+A direct `Client#call_tool` has no such limit. A host that puts its own
+`Timeout` around one gets the same cancel and keeps the server.
 
 ### Ambiguous tool delivery
 
@@ -418,7 +744,7 @@ replay the call. A model may choose to issue a new call after reading the error,
 so approval, idempotency, and reconciliation remain host policy.
 
 If a matching result arrived before an invalid trailing SSE record, that result
-remains authoritative. The wire is still reset for the next operation.
+remains authoritative. The connection is closed and the session is kept.
 
 Session-expired and authentication retries occur only through explicit server
 responses that establish the request was not accepted under the old session or
@@ -511,6 +837,7 @@ end
 
 tokens = Mistri::MCP::OAuth.complete(
   code: params.fetch(:code),
+  iss: params[:iss],
   code_verifier: flow.fetch("code_verifier"),
   client_id: flow.fetch("client_id"),
   client_secret: flow["client_secret"],
@@ -520,6 +847,23 @@ tokens = Mistri::MCP::OAuth.complete(
   redirect_uri: flow.fetch("redirect_uri"),
   allow_non_public: allow_internal,
 )
+```
+
+`iss:` is the `iss` parameter of the callback, or nil when the callback had
+none. Mistri refuses a callback that names another issuer than the one the
+sign-in was started with, and one that names none when the authorization
+server's metadata says it sends one. It compares the two as they are written,
+and it does so before the code is sent anywhere. This is the defence against
+an authorization server that tries to collect a code meant for another
+(RFC 9207). A host that leaves `iss:` out gets no such check, because Mistri
+cannot see the callback.
+
+A callback may carry `error` in place of a code. Check its issuer the same
+way before the error is shown to anyone:
+
+```ruby
+oauth = Mistri::MCP::OAuth
+oauth.verify_response_issuer(params[:iss], oauth.bound_metadata(flow.fetch("issuer")))
 ```
 
 Refresh tokens can rotate, so persist a returned replacement:
@@ -543,7 +887,10 @@ does this.
 
 Mistri requires S256 PKCE. It follows protected-resource and authorization-server
 discovery, binds metadata to exact resource and issuer identifiers, and honors
-challenge scope. It does not add `offline_access` as gem policy.
+challenge scope. It does not add `offline_access` as gem policy. A host that
+wants a refresh token passes `offline_access: true` to `start`: the scope is
+then added when the authorization server lists it, and only to a scope that
+is being asked for.
 
 When discovery advertises multiple authorization servers, the host must pass
 `issuer:` explicitly. A pre-registered `client_id` always requires the exact
@@ -552,6 +899,114 @@ also accept `client_secret:` and an explicit supported `token_auth_method:`.
 
 OAuth response bodies are uncompressed and bounded to 256 KiB. Provider error
 descriptions are not copied into credential-bearing exceptions.
+
+### How the application names itself
+
+There are three ways, and `start` takes them in this order:
+
+1. **A client set up by hand.** Pass `client_id:`, with `client_secret:` and
+   `token_auth_method:` when the server gave them, and the `issuer:` it was
+   set up at.
+2. **A client ID metadata document.** Pass `client_metadata_url:`, the https
+   address where the application serves the document. A server whose metadata
+   says `client_id_metadata_document_supported` gets that address as the
+   client ID, and nothing is registered. The 2026-07-28 revision prefers this
+   way.
+3. **Dynamic registration**, when neither applies and the server offers it.
+   Mistri says what kind of application it registers: `native` for a loopback
+   redirect URI and `web` for any other.
+
+The document is the same for every server, so one route serves it:
+
+```ruby
+render json: Mistri::MCP::OAuth.client_metadata(
+  url: client_metadata_url,
+  client_name: "YourApp",
+  redirect_uris: [callback_url],
+)
+```
+
+A client is bound to the issuer that gave it. Store the `issuer` beside the
+client ID, and pass both again when the same client signs in later. When the
+server no longer names that issuer, `start` raises
+`Mistri::MCP::OAuth::IssuerChanged` and registers nothing. A host then drops a
+client that was registered dynamically and calls `start` without it, and shows
+the error for one that was set up by hand. Mistri does not register with a
+new authorization server by itself, because whether to trust it is the host's
+decision. A document's address is the same client at every issuer.
+
+### A refused token request
+
+`complete` and `refresh` raise `Mistri::MCP::OAuth::TokenError` when the token
+endpoint refuses. `error.reason` is the code it gave, when that is one of the
+standard ones, and `error.status` its HTTP status.
+`Mistri::MCP::OAuth::InvalidGrantError` is the one a host acts on: the grant
+is spent or revoked, so the person signs in again.
+
+```ruby
+begin
+  tokens = Mistri::MCP::OAuth.refresh(**stored)
+rescue Mistri::MCP::OAuth::InvalidGrantError
+  connection.update!(status: "needs_sign_in")
+end
+```
+
+`Mistri::MCP::OAuth.revoke(token:, **stored)` ends a token at the
+authorization server. It returns false for a server that names no revocation
+endpoint.
+
+### More scope
+
+A server may answer a call with a 403 and a challenge that asks for more
+scope. The `Mistri::AuthenticationError` carries the challenge:
+
+```ruby
+rescue Mistri::AuthenticationError => e
+  asked = Mistri::MCP::OAuth.challenge(e)
+  if asked["error"] == "insufficient_scope"
+    scope = Mistri::MCP::OAuth.step_up_scope(connection.scope, asked["scope"])
+    flow = Mistri::MCP::OAuth.start(url: server_url, scope: scope, **client)
+  end
+end
+```
+
+`step_up_scope` joins what was granted with what is asked, so the new token
+keeps what the old one could do. What was granted is `tokens["scope"]`, or
+`flow["scope"]` when the token response names none. Stop after a few rounds:
+a server that keeps asking is not going to be satisfied.
+
+### Reading how a server signs in
+
+```ruby
+found = Mistri::MCP::OAuth.discover(url: server_url)
+found["issuer"]                                  # the authorization server
+found["scope"]                                   # what a sign-in would ask for
+found["server_metadata"]["registration_endpoint"] # absent: set a client up by hand
+```
+
+`discover` takes the steps `start` takes and stops before it registers
+anything. It returns the resource, the issuer, the scope, and the two
+metadata documents as the servers publish them.
+
+### Tolerant discovery
+
+Exact discovery refuses some servers that the official SDKs connect to.
+`tolerant: true`, on `discover`, `start`, `complete`, `refresh` and `revoke`,
+accepts three things:
+
+- A resource document for the server's origin, or for a path above the
+  server's. That resource is then the one tokens are asked for.
+- An issuer that differs from the one named by one trailing slash.
+- No resource document at all, which is the 2025-03-26 revision: the server's
+  origin is the authorization server, and when it publishes no metadata
+  either, the endpoints are `/authorize`, `/token` and `/register`.
+
+The third applies only when the documents are not published. A server that
+could not be reached, or that answered 429 or a 5xx, ends the sign-in with its
+error. None of the three lets a token be asked for another origin, and a
+client that was registered with another issuer is refused with
+`IssuerChanged`, as it is exactly. A host that starts a sign-in tolerantly
+passes `tolerant: true` to every later step of it.
 
 ## Optional Rails connection generator
 
@@ -565,6 +1020,14 @@ Each row stores one server, OAuth flow state, issuer, encrypted tokens, expiry,
 and scope. The generated model exposes `connect`, `complete`, token refresh, a
 Client, and bridged tools. Set up Active Record encryption before storing
 credentials.
+
+The callback passes its `iss` on: `McpConnection.complete(state: params[:state],
+code: params[:code], iss: params[:iss])`.
+
+A server retires a refresh token when it is used, so two processes that
+refresh one row at the same moment would lose the sign-in. The generated
+`bearer_token` locks the row for the refresh and looks again once it holds the
+lock. The lock is held while the token endpoint answers.
 
 Override the generated class policy when the server is internal:
 

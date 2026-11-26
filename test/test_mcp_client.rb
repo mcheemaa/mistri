@@ -31,9 +31,9 @@ class TestMcpClient < Minitest::Test
 
       methods = server.bodies.map { |b| b["method"] }
 
-      assert_equal %w[initialize notifications/initialized], methods
+      assert_equal %w[server/discover initialize notifications/initialized], methods
 
-      init = server.bodies.first["params"]
+      init = server.bodies[1]["params"]
 
       assert_equal "2025-11-25", init["protocolVersion"]
       assert_equal "mistri", init.dig("clientInfo", "name")
@@ -80,7 +80,7 @@ class TestMcpClient < Minitest::Test
       plain = remote_client(server)
 
       assert_nil plain.instructions
-      assert_equal %w[tools], plain.listing.keys
+      assert_equal %w[tools protocolVersion], plain.listing.keys
       [{ "tools" => "echo" }, [plain.tools], false].each do |malformed|
         assert_raises(Mistri::ConfigurationError) { remote_client(server, listing: malformed) }
       end

@@ -1,6 +1,7 @@
 # frozen_string_literal: true
 
 require_relative "test_helper"
+require "timeout"
 require "tmpdir"
 
 # The stdio wire: a real spawned child process speaking line-delimited
@@ -26,6 +27,17 @@ class TestMcpStdio < Minitest::Test
       tool = message.dig("params", "name")
       exit if tool == "die"
       puts "not json at all" if tool == "corrupt"
+      if message["method"] == "tools/call" && tool == "drip"
+        Thread.new do
+          notice = { "jsonrpc" => "2.0", "method" => "notifications/message",
+                     "params" => { "level" => "info", "data" => "still working" } }
+          loop do
+            puts JSON.generate(notice)
+            sleep 0.02
+          end
+        end
+        next
+      end
       if message["method"] == "tools/call" && tool == "eof"
         result = { "content" => [{ "type" => "text", "text" => "tail" }] }
         response = { "jsonrpc" => "2.0", "id" => message["id"], "result" => result }
@@ -71,6 +83,11 @@ class TestMcpStdio < Minitest::Test
         else {}
         end
       puts JSON.generate({ "jsonrpc" => "2.0", "id" => message["id"], "result" => result })
+      stalled = ENV["STUB_STALL_INPUT"]
+      if stalled && message["method"] == "tools/list" && !File.exist?(stalled)
+        File.write(stalled, Process.pid.to_s)
+        sleep 2
+      end
     end
   SCRIPT
 
@@ -131,6 +148,59 @@ class TestMcpStdio < Minitest::Test
     stdio.close
   end
 
+  def test_a_bridged_tool_stops_at_its_limit_while_the_server_keeps_sending
+    Dir.mktmpdir do |directory|
+      trace = File.join(directory, "trace")
+      stdio = client(env: { "STUB_TRACE" => trace })
+      provider = Mistri::Providers::Fake.new(turns: [
+                                               { tool_calls: [{ name: "drip", arguments: {} }] },
+                                               { tool_calls: [{ name: "echo",
+                                                                arguments: { "text" => "hi" } }] },
+                                               { text: "done" }
+                                             ])
+      listed = [*stdio.tools, { "name" => "drip", "description" => "Never answers." }]
+      tools = listed.map { |spec| Mistri::MCP.bridge(stdio, spec, timeout: 0.3) }
+      agent = Mistri::Agent.new(provider:, tools:)
+
+      result = agent.run("go")
+      stuck, later = agent.session.messages.select(&:tool?)
+      pids = File.readlines(trace, chomp: true).map { |line| line.split(":", 2).first }.uniq
+
+      assert_predicate result, :completed?
+      assert_predicate stuck, :tool_error?
+      assert_match(/timed out after 0\.3s/, stuck.text)
+      assert_equal "echo: hi", later.text
+      assert_equal 1, pids.length, "the server was not started again"
+      assert_includes File.read(trace), ":notifications/cancelled\n", "the call was cancelled"
+    ensure
+      stdio&.close
+    end
+  end
+
+  def test_a_write_that_was_cut_starts_the_server_again
+    Dir.mktmpdir do |directory|
+      trace = File.join(directory, "trace")
+      stdio = client(env: { "STUB_TRACE" => trace,
+                            "STUB_STALL_INPUT" => File.join(directory, "stalled") })
+      stdio.tools
+      cut = Class.new(StandardError)
+
+      assert_raises(cut) do
+        Timeout.timeout(0.3, cut) { stdio.call_tool("echo", { "text" => "x" * 300_000 }) }
+      end
+
+      result = stdio.call_tool("echo", { "text" => "next" })
+      pids = File.readlines(trace, chomp: true).map { |line| line.split(":", 2).first }.uniq
+
+      assert_equal "echo: next", result.dig("content", 0, "text")
+      assert_equal 2, pids.length, "half a message was left in the first server's input"
+      assert_equal 2, File.readlines(trace).count { |line| line.end_with?(":initialize\n") },
+                   "the new server got its own handshake"
+    ensure
+      stdio&.close
+    end
+  end
+
   def test_a_dying_server_raises_loudly
     stdio = client
     stdio.connect
@@ -143,16 +213,15 @@ class TestMcpStdio < Minitest::Test
     stdio.close
   end
 
-  def test_non_protocol_stdout_raises_loudly
+  def test_non_protocol_stdout_is_skipped_and_reported
     stdio = client
     stdio.connect
+    result = nil
 
-    error = assert_raises(Mistri::AmbiguousDeliveryError) do
-      stdio.call_tool("corrupt", {})
-    end
+    _out, reported = capture_io { result = stdio.call_tool("corrupt", {}) }
 
-    assert_kind_of Mistri::MCP::Error, error.cause
-    assert_match(/non-protocol/, error.message)
+    assert_equal "echo:", result.dig("content", 0, "text")
+    assert_match(/wrote a line that is not JSON: "not json at all"/, reported)
   ensure
     stdio.close
   end
@@ -264,11 +333,10 @@ class TestMcpStdio < Minitest::Test
     end
   end
 
-  def test_the_stdio_timeout_covers_the_whole_record
+  def test_the_stdio_timeout_covers_the_whole_record_and_keeps_the_server
     Dir.mktmpdir do |directory|
       trace = File.join(directory, "trace")
-      # Startup exceeds the short response deadline, including on reconnect.
-      stdio = client(env: { "STUB_TRACE" => trace, "STUB_STARTUP_DELAY" => "0.3" })
+      stdio = client(env: { "STUB_TRACE" => trace })
       stdio.connect
       started = Process.clock_gettime(Process::CLOCK_MONOTONIC)
 
@@ -277,20 +345,13 @@ class TestMcpStdio < Minitest::Test
       end
 
       elapsed = Process.clock_gettime(Process::CLOCK_MONOTONIC) - started
-      first_trace = File.readlines(trace, chomp: true)
-      tool_line = first_trace.find { |line| line.end_with?(":tools/call:stall") }
+      tool_lines = File.readlines(trace, chomp: true).grep(%r{:tools/call:stall\z})
 
-      refute_nil tool_line, "the server received the tool call before its response timed out"
+      assert_equal 1, tool_lines.length, "the server received the tool call once"
       assert_kind_of Mistri::MCP::Error, error.cause
       assert_match(/timed out/, error.message)
       assert_operator elapsed, :<, 2
-      assert_equal(1, first_trace.count { |line| line.end_with?(":tools/call:stall") })
-      assert_raises(Errno::ESRCH) { Process.kill(0, tool_line.to_i) }
-
-      stdio.connect
-      pids = File.readlines(trace, chomp: true).map { |line| line.split(":", 2).first }.uniq
-
-      assert_equal 2, pids.length, "the next operation performed a fresh stdio handshake"
+      assert_equal 1, Process.kill(0, tool_lines.first.to_i), "the server is kept"
     ensure
       stdio&.close
     end

@@ -30,7 +30,7 @@ try a better name first. ASCII hyphens only; no em or en dashes anywhere.
 
 ## Tests
 
-Four rings:
+Four rings, and the conformance suite:
 
 1. Hermetic (default, CI): Minitest, the fake provider, recorded wire fixtures.
 2. Differential: where behavior must match truffle-rb (schema emission, partial JSON,
@@ -39,6 +39,11 @@ Four rings:
    or the replay of thinking changes): real provider calls. Keys load from
    `.env.development.local`, which is gitignored and never committed.
 4. End to end: a demo application drives the full loop in a real browser before a release.
+
+Conformance (`bundle exec rake conformance`, CI): the official MCP conformance suite, at the
+version pinned in the Rakefile, against the MCP client. A scenario that is expected to fail
+is listed with its reason in `script/conformance/expected_failures.yml`. Any other failure
+fails the run, and so does a listed scenario that passes.
 
 ## Commits
 

@@ -35,6 +35,10 @@ part. It is the tool's own limit or the agent's, or the call's share of the
 turn's bytes where that is less: the more calls the model makes at once, the
 smaller the part.
 
+`context.scratchpad` is the agent's scratchpad, or nil when it has none. A tool
+that is handed bytes a model cannot read keeps them there and answers with
+the path: `context.scratchpad.save_binary(bytes, "tool_name", ".pdf")`.
+
 Handlers may return:
 
 - a String, delivered to the model as text;

@@ -41,7 +41,7 @@ module Mistri
 
           Callback:
 
-            connection = #{class_name}.complete(state: params[:state], code: params[:code])
+            connection = #{class_name}.complete(state: params[:state], code: params[:code], iss: params[:iss])
 
           Then hand its tools to an agent:
 

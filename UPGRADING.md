@@ -13,6 +13,114 @@ test.
 
 Most hosts need no code change. Read the points that apply to you.
 
+### A bridged MCP tool has a limit of 300 seconds
+
+A tool from `Mistri::MCP.tools` or `Mistri::MCP.bridge` now ends as a tool
+error when one call takes more than 300 seconds in all.
+
+- For a server whose calls rightly take longer, pass the seconds:
+  `Mistri::MCP.tools(client, timeout: 1800)`.
+- For the earlier behaviour, pass `timeout: nil`.
+
+### `Mistri::MCP.tools` returns a tool that reads resources
+
+For a server that declares resources, `Mistri::MCP.tools` now returns one
+more tool than the server lists: `read_resource`, under the server's prefix.
+
+- A host that wants the list as it was passes `resources: false`.
+- A host that gates a server's tools gates this one with
+  `gates: { "read_resource" => true }`, or with `needs_approval: true`.
+- A listing stored before this release has no `"resources"` key, so a client
+  built from it offers no such tool until the server is listed again.
+- A result that held bytes used to show the line `[resource: uri]`. It now
+  shows an image, or the text, or where the bytes were saved.
+
+### MCP sign-in checks more, when the host hands it more
+
+- Pass the callback's `iss` to `OAuth.complete`: `iss: params[:iss]`. Without
+  it nothing changes, and a callback from another authorization server is not
+  told apart.
+- A host that matched the text `invalid_grant` in an error message rescues
+  `Mistri::MCP::OAuth::InvalidGrantError` instead. The message is unchanged.
+- A host that stores a client it registered and passes it to `OAuth.start`
+  with its `issuer:` rescues `Mistri::MCP::OAuth::IssuerChanged`, drops that
+  client and starts again without it. Before, the same case raised
+  `Mistri::MCP::Error` with the same message.
+- After a 403 whose challenge says `insufficient_scope`, the MCP client raises
+  at once. Before, it asked the token callable once more and sent the request
+  again. Read the challenge with `OAuth.challenge(error)`.
+- An application generated the connection model from an earlier release keeps
+  its copy. To get the lock around the refresh, copy `bearer_token` and
+  `stale?` from the new template, and pass `iss:` from the callback.
+- `OAuth.start` returns one more key, `"scope"`.
+
+### A bridged MCP tool says which server could not be used
+
+- The text of a bridged tool's result changed for a server that cannot be
+  used. It names the server by its `prefix:`, and says so when the server
+  needs a sign-in. A host that matched the text
+  `No connection to the MCP server could be established` matches
+  `did not run` instead.
+- `Client#call_tool` raises a `Mistri::ProviderError` tagged
+  `Mistri::MCP::NotSent` when no connection could be opened. Before, it raised
+  `Mistri::AmbiguousDeliveryError`, which says the call may have completed.
+
+### A bridged MCP tool's description is cut at 4,096 characters
+
+A longer description now reaches the model cut, with a line that says so.
+Pass `description_limit: nil` to `Mistri::MCP.tools` for the earlier
+behaviour, or another number.
+
+### The MCP client asks a server which revision it speaks
+
+The client now sends `server/discover` before its first request, and uses the
+2026-07-28 form with a server that offers it.
+
+- A server that speaks only an older revision gets one request more when a
+  client first connects. Store `client.listing` and build clients from it:
+  such a client asks nothing.
+- `client.listing` has a new key, `"protocolVersion"`. A listing stored
+  before this release still works, and its client asks once.
+- A server that offers 2026-07-28 gets no `initialize` and no session. A host
+  that reads `client.server_info` on a client built from a stored listing
+  gets nil, because nothing was asked.
+- Over HTTP in the 2026-07-28 form, a direct `Client#call_tool` on a client
+  that holds no listing lists the tools first.
+- `Mistri::MCP::Client::PROTOCOL_VERSION` is `"2026-07-28"`. The revision the
+  handshake offers is still 2025-11-25.
+
+### MCP over HTTP keeps a session and ends it
+
+- `Client#close` now sends a DELETE with the session id. A server that counts
+  on sessions being left open sees them end.
+- After a failed call the next call uses the same session. Before, the client
+  did the handshake again.
+- A timeout of a list raises `Mistri::MCP::Error`. Before, it raised
+  `Mistri::ProviderError`. Both are a `Mistri::Error`.
+- The message of an HTTP error from an MCP server changed. A host that matched
+  the text `provider request failed` matches the class or `status` instead.
+- `headers:` no longer takes `Last-Event-ID`, `Mcp-Method` or `Mcp-Name`.
+- `read_timeout` is now the wait for one message. A call that takes longer
+  than `read_timeout`, 120 seconds unless the host set another, on a server
+  that sends only comments to keep its stream open, now ends at
+  `read_timeout` with `Mistri::AmbiguousDeliveryError`. Before, each comment
+  started the wait again and the call returned its answer. Pass a longer
+  `read_timeout`, or `progress: true` for a server that reports progress,
+  because a progress notice is a message.
+
+### A timeout no longer ends a stdio MCP server
+
+When `read_timeout` passes, the client cancels that one request and keeps the
+server. Before, the server was ended and the next call started a new one.
+
+- A host that relied on a new server after a timeout calls `client.close`
+  itself. The next call then starts one. A server that has stopped for good
+  makes every call wait for the timeout until then.
+- A line on a stdio server's stdout that is not JSON no longer fails the call.
+  It is written to standard error with the prefix `mistri:`.
+- `client.close` takes up to half a second longer for a stdio server that does
+  not end when its input closes.
+
 ### The calls of a turn run in the order written
 
 A tool used to run at the same time as the other calls of its turn. It now

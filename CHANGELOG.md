@@ -5,6 +5,161 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+- `Mistri::MCP::SDKClient` wraps a client of the official MCP Ruby SDK so it
+  goes through `Mistri::MCP.tools`. Mistri still depends on no other gem.
+  The docs say what the bridge needs of any client.
+- A model can read an MCP server's resources. `Client#read_resource` reads
+  one and `Client#resources?` says whether the server has any. For a server
+  that has, `Mistri::MCP.tools` returns one more tool, `read_resource` under
+  the server's prefix, and a resource link in a result names it.
+  `resources: false` leaves the tool out, and `resources: true` offers it for
+  a server that declares none. `Client#listing` carries `"resources"`.
+- An embedded MCP resource with bytes is no longer dropped. An image is
+  shown, bytes of a text type are read as text, and other bytes are saved to
+  the agent's scratchpad, with the path in the result.
+- `ToolContext#scratchpad` is the agent's scratchpad, with `save_binary` for
+  bytes a tool cannot show.
+- MCP sign-in checks the issuer of a callback. `OAuth.complete` takes `iss:`,
+  the callback's `iss` parameter, and refuses a callback that names another
+  issuer, or names none where the authorization server says it sends one,
+  before the code is sent anywhere (RFC 9207). A host that does not pass it
+  gets no check.
+- A dynamic registration that returns a secret and names no method is
+  accepted. The method is the one Mistri asked for, and with none asked for
+  the secret is not kept. A registration now sends `application_type`.
+- `OAuth.start` takes `client_metadata_url:`. A server that takes a client ID
+  metadata document gets that address as the client ID, and nothing is
+  registered. `OAuth.client_metadata` returns the document to serve.
+- `OAuth.start` raises `OAuth::IssuerChanged` when the server does not name
+  the issuer a client was registered with. It raised `Mistri::MCP::Error`,
+  which `IssuerChanged` is.
+- A refused token request raises `OAuth::TokenError`, with `status` and
+  `reason`, and `OAuth::InvalidGrantError` for a grant that is spent. Both
+  are a `Mistri::MCP::Error`, and the message is unchanged.
+- `Mistri::AuthenticationError` carries the `WWW-Authenticate` header of the
+  refusal as `challenge`. `OAuth.challenge(error)` reads its Bearer
+  parameters, and `OAuth.step_up_scope` joins the granted scope with the one
+  a 403 asks for. `OAuth.start` returns the scope it asked for as `"scope"`.
+  After a 403 for more scope the MCP client no longer asks the token callable
+  a second time.
+- A token callable that takes `refused:` is given the token the server
+  refused when it is asked again after a 401.
+- `OAuth.discover` reads how a server signs in and registers nothing.
+  `OAuth.revoke` ends a token at the authorization server.
+- `tolerant: true` on the sign-in calls accepts a resource document for the
+  origin or a path above the server, an issuer one trailing slash apart, and
+  a server of the 2025-03-26 revision with no resource document. It is off by
+  default. `offline_access: true` on `OAuth.start` adds that scope when the
+  authorization server lists it. It is off by default too.
+- The generated MCP connection model locks its row for a token refresh, takes
+  the refused token, and passes the callback's `iss`. Two processes that
+  refreshed one connection at once lost the sign-in.
+- An MCP client tells its host more. `on_notification:` is called with each
+  notification a server sends while the client reads, such as a changed tool
+  list. The kept list is not changed by it. `progress: true` asks for progress
+  with each tool call. `Client#state` says whether the server answered, could
+  not be used or needs a sign-in, and `Client#failure` says why.
+- A bridged tool whose MCP server cannot be used names the server, by the
+  prefix the host gave it, and says when the server needs a sign-in. A call to
+  a server whose connection could not be opened is reported as a call that did
+  not run. It was reported as one that may have completed. So is a call that
+  the host's token callable ended before it was sent, and one whose time limit
+  passed while it waited for another call. A token callable that raises
+  `OAuth::InvalidGrantError` makes the state `:needs_sign_in`.
+- A bridged MCP tool's description is cut at 4,096 characters, and ends with a
+  line that says so. A description is text from the server that the model
+  reads as guidance, and it had no bound. `description_limit:` on
+  `Mistri::MCP.tools` and `Mistri::MCP.bridge` sets another number, and `nil`
+  sets none.
+- A host has three more choices over what an MCP server's text can do.
+  `instructions_as: :user` sends a server's instructions as text of a user
+  turn on every provider, where they are a system or developer message by
+  default. `trust_hints: false` means no tool is marked to run beside others
+  by the server's `readOnlyHint`. `Mistri::MCP.digest` returns the SHA-256 of
+  a tool's definition and `Mistri::MCP.changes` the names of the tools that a
+  fresh listing adds, removes and changes. `Tool.define` takes
+  `instructions_as:` too.
+- The MCP client speaks the 2026-07-28 revision, which has no handshake and no
+  session. Before its first request it asks the server which revisions it
+  speaks, with `server/discover`, and remembers the answer. A server that
+  offers 2026-07-28 gets requests that carry the revision, the client's name
+  and its capabilities in `_meta`, and over HTTP the headers `Mcp-Method`,
+  `Mcp-Name` and `Mcp-Param-*` for each parameter a tool marks with
+  `x-mcp-header`. An older server gets the handshake of 2025-11-25 as
+  before. `client.listing` holds the revision as `"protocolVersion"`, so a
+  client built from a stored listing asks nothing. A call that a 2026-07-28
+  server answers by asking for input ends as a tool error that says so,
+  because the client declares no elicitation. `Client::PROTOCOL_VERSION` is
+  now `"2026-07-28"`, and `Mistri::MCP::Error` has `data`.
+- A JSON-RPC error from an MCP server no longer costs its connection. The
+  error was raised while its response was still being read, which closed the
+  connection. It is raised once the response is read.
+- A request that the host ends early no longer answers the next one. A
+  `Timeout` around an agent run or an MCP call raises an error that is not a
+  `StandardError`, so nothing closed the connection, and the response stayed
+  half read on it. The next request on the same provider or MCP client read
+  those bytes: a provider's stream raised `Net::HTTPBadResponse`, and
+  `Transport#post` returned the earlier request's answer. A connection is now
+  closed whenever its response was not read to the end. One local streaming
+  request takes the same time as before, 521 and 508 microseconds.
+- A bridged MCP tool stops after 300 seconds. A server that keeps sending
+  messages and never answers a call restarted the read timeout with each one,
+  so the call, and the run with it, had no end. `Mistri::MCP.tools` and
+  `Mistri::MCP.bridge` now take `timeout:`, the seconds one call may take in
+  all: 300 unless the host passes another number, and `nil` for no limit. The
+  call ends as a tool error that says the tool timed out and may have
+  completed. The client sends `notifications/cancelled` for the call, the
+  server and its session are kept, and the next call works. A host's own
+  `Timeout` around `Client#call_tool` ends the same way.
+- A call over Streamable HTTP returns when its answer arrives. It returned when
+  the server ended the stream, and one public server keeps every stream open
+  for ten seconds after the answer. A stream that is still open a tenth of a
+  second after the answer is left and its connection is closed. A stream that
+  ended is read to its end as before, so its connection is kept.
+- A failed call over Streamable HTTP keeps its session. After a timeout, a
+  dropped stream or a response over a limit, the session was forgotten and the
+  next call did the handshake again. The connection is now closed and the
+  session is kept. A timeout sends `notifications/cancelled` and raises
+  `Mistri::MCP::Error` for a list, where it raised `Mistri::ProviderError`. A
+  tool call raises `Mistri::AmbiguousDeliveryError` as before.
+- `read_timeout` is the wait for one message over Streamable HTTP too. A
+  server that sent a comment each second to keep its stream open held a call
+  with no end, because each byte started the wait again.
+- A stream that a server ended before the answer is asked for again. When an
+  event carried an id, the client waits the `retry` the server named, or one
+  second, and sends a GET with `Last-Event-ID`, once. `Last-Event-ID` is no
+  longer accepted in `headers:`.
+- `Client#close` ends an HTTP session with a DELETE, as the spec asks. It waits
+  five seconds at most and forgets the session whatever the server answers.
+- An MCP server that refuses a request is named in the error. The message was
+  `provider request failed`. It is now `the MCP server answered HTTP 400`, with
+  the message of a JSON-RPC error when the body holds one. The class, `status`
+  and `body` are as before.
+- A timeout no longer ends a stdio MCP server. When `read_timeout` passed, the
+  server was ended and the next call started a new one, so one slow call lost
+  whatever the server held, such as an open browser page. The client now sends
+  `notifications/cancelled` for that request, stops waiting and keeps the
+  server, and an answer that arrives later is ignored. The handshake is never
+  cancelled. A server that has stopped for good now stays until the host calls
+  `client.close`.
+- A stdio MCP server's own requests are answered. A `ping` sent while a call
+  waited got no answer, and neither did any other request. A request that
+  carried the id of the waiting call was taken for its answer:
+  `Client#call_tool` returned nil and the bridged tool raised. The client now
+  answers `ping` with an empty result, refuses any other request with error
+  -32601, and takes only a response for an answer. The same holds over
+  Streamable HTTP, where a reply is a POST on a second connection, because
+  the first is taken by the stream of the call.
+- A stdio server that sends ids back as strings can be used. Its answer to the
+  handshake was never matched, so the client timed out.
+- A line that is not JSON no longer ends a stdio MCP server. Some servers print
+  a banner or a debug line on stdout. The line is skipped and written to the
+  host's standard error, and the call goes on.
+- A call to a stdio MCP server that has stopped reading its input ends at
+  `read_timeout`. A call with large arguments had no end. That server is ended
+  and the next call starts a new one with a new handshake.
+- `Client#close` lets a stdio MCP server end by itself. It closes the server's
+  input and waits half a second before SIGTERM, which was sent at once.
 - An image holds strict base64, whatever form it was built from.
   `Content::Image` kept the text it was given, and every provider refuses
   base64 with line breaks, which is what `Base64.encode64` writes. Anthropic

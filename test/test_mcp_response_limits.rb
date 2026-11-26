@@ -26,12 +26,10 @@ class TestMcpResponseLimits < Minitest::Test
         assert_equal(sse ? :sse_line : :json_body, error.cause.kind)
         assert_equal 1, server.calls.length
 
-        client.connect
-        initialize_requests = requests_for(server, "initialize")
+        client.tools
 
-        assert_equal 2, server.initializes, "the next operation performs a fresh handshake"
-        assert_nil initialize_requests.last[:headers]["mcp-session-id"]
-        assert_nil initialize_requests.last[:headers]["mcp-protocol-version"]
+        assert_equal 1, server.initializes, "the session is kept"
+        assert_equal "sess-1", requests_for(server, "tools/list").last[:headers]["mcp-session-id"]
       end
     end
   end
@@ -49,7 +47,7 @@ class TestMcpResponseLimits < Minitest::Test
     end
   end
 
-  def test_a_structurally_complex_tool_response_is_ambiguous_and_resets_the_wire
+  def test_a_structurally_complex_tool_response_is_ambiguous_and_keeps_the_session
     arguments = Mistri.const_get(:ToolArguments, false)
     cases = {
       depth: { "content" => [nested(arguments::MAX_DEPTH + 1)] },
@@ -67,9 +65,9 @@ class TestMcpResponseLimits < Minitest::Test
 
         assert_instance_of Mistri::ResponseTooComplexError, error.cause, label
         assert_equal 1, server.calls.length, label
-        client.connect
+        client.tools
 
-        assert_equal 2, server.initializes, label
+        assert_equal 1, server.initializes, label
       end
     end
   end
@@ -83,9 +81,9 @@ class TestMcpResponseLimits < Minitest::Test
       assert_equal "echo: confirmed", result.dig("content", 0, "text")
       assert_equal 1, server.calls.length
 
-      client.connect
+      client.tools
 
-      assert_equal 2, server.initializes, "the malformed stream forced a clean handshake"
+      assert_equal 1, server.initializes, "the session is kept"
     end
   end
 
@@ -99,9 +97,9 @@ class TestMcpResponseLimits < Minitest::Test
 
       assert_equal "echo: confirmed", result.dig("content", 0, "text")
       assert_equal 1, server.calls.length
-      client.connect
+      client.tools
 
-      assert_equal 2, server.initializes, "the complex stream forced a clean handshake"
+      assert_equal 1, server.initializes, "the session is kept"
     end
   end
 
@@ -114,7 +112,8 @@ class TestMcpResponseLimits < Minitest::Test
 
       methods = server.bodies.map { |body| body["method"] }
 
-      assert_equal %w[initialize initialize notifications/initialized], methods
+      assert_equal %w[server/discover initialize server/discover initialize
+                      notifications/initialized], methods
       assert_nil requests_for(server, "initialize").last[:headers]["mcp-session-id"]
       assert_nil requests_for(server, "initialize").last[:headers]["mcp-protocol-version"]
     end

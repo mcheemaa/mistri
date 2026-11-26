@@ -527,6 +527,15 @@ $ MISTRI_INTEGRATION_MODELS=claude-opus-5-5 bundle exec rake integration
 Keys load from the gitignored `.env.development.local`. A missing key skips that
 provider; inspect the test output before claiming a full three-provider run.
 
+The official MCP conformance suite runs against the MCP client, at the version
+pinned in the Rakefile, for each revision of the specification. It needs Node
+and no key. The scenarios that are expected to fail are listed with their
+reasons in `script/conformance/expected_failures.yml`:
+
+```console
+$ bundle exec rake conformance
+```
+
 A run that called a vendor ends with a report of those calls: for each model
 the calls, the seconds waited, the tokens and their cost at catalog prices,
 then the slowest tests. The cost is an estimate from the usage each call

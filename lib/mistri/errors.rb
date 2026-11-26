@@ -39,6 +39,14 @@ module Mistri
   end
 
   class AuthenticationError < ProviderError
+    # The WWW-Authenticate header of the refusal, when the response had one.
+    attr_reader :challenge
+
+    def initialize(message = nil, challenge: nil, **)
+      @challenge = challenge
+      super(message, **)
+    end
+
     def self.default_message = "invalid or missing API key"
   end
 

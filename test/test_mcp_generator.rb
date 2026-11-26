@@ -19,7 +19,11 @@ if defined?(Mistri::Generators::McpGenerator)
     setup :prepare_destination
 
     def test_the_host_names_the_connection_model
-      run_generator ["ToolConnection"]
+      shown = run_generator ["ToolConnection"]
+
+      assert_includes shown,
+                      "ToolConnection.complete(state: params[:state], code: params[:code], " \
+                      "iss: params[:iss])"
 
       assert_file "app/models/tool_connection.rb" do |model|
         assert_match(/class ToolConnection < ApplicationRecord/, model)
@@ -31,6 +35,10 @@ if defined?(Mistri::Generators::McpGenerator)
         assert_match(/issuer: flow\["issuer"\]/, model)
         assert_equal 4, model.scan("allow_non_public:").length
         assert_match(/def tools/, model)
+        assert_match(/def self\.complete\(state:, code:, iss:\)/, model)
+        assert_match(/OAuth\.complete\(code: code, iss: iss,/, model)
+        assert_match(/token: ->\(refused: nil\) \{ bearer_token\(refused: refused\) \}/, model)
+        assert_match(/with_lock \{ refresh! if stale\?\(refused\) \}/, model)
       end
       assert_migration "db/migrate/create_tool_connections.rb" do |migration|
         assert_match(/t\.string :state/, migration)

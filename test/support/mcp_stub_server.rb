@@ -44,8 +44,11 @@ module Mistri
       end
 
       def url = "#{@stub.origin}/mcp"
-      def requests = @stub.requests
       def stop = @stub.stop
+
+      # The requests that carry a message, and the ones that ended a session.
+      def requests = @stub.requests.reject { |request| request[:line].start_with?("DELETE") }
+      def deletes = @stub.requests - requests
 
       def bodies
         requests.filter_map { |r| JSON.parse(r[:body]) unless r[:body].to_s.empty? }
@@ -54,6 +57,8 @@ module Mistri
       private
 
       def route(socket, request)
+        return @stub.respond_json(socket, "") if request[:line].start_with?("DELETE")
+
         message = JSON.parse(request[:body])
         return unauthorized(socket) if @require_token && !authorized?(request)
         return expire(socket) if expire?(request)
