@@ -245,7 +245,8 @@ looping or allocating without bound.
 Listing a server's tools takes a connection, and a stdio server must be
 started first. With many servers that is too slow to repeat each time an
 agent is built. `client.listing` returns the server's tools, its
-`instructions` when it sent any, and the revision it speaks, as plain JSON.
+`instructions` when it sent any, the revision it speaks, and whether it has
+resources, as plain JSON.
 Store it, and pass it to the clients built later:
 
 ```ruby
@@ -544,6 +545,52 @@ Large results should live behind a server or host resource. Return an MCP
 `resource_link` and a concise description instead of embedding an unbounded
 payload. Mistri renders the URI for the model and never fetches it automatically;
 fetching credentials, retention, and access policy belong to the host or server.
+
+### Resources
+
+A server that has resources declares so, and `client.resources?` says whether
+it did. `client.read_resource(uri)` returns the contents of one: hashes with
+`"uri"`, `"mimeType"`, and `"text"` or `"blob"`.
+
+For such a server `Mistri::MCP.tools` returns one more tool, `read_resource`
+under the server's prefix. It takes a URI and returns what the server holds
+there. A link in a result of the server's tools then tells the model how to
+follow it:
+
+```text
+[Resource notes://today "Today's notes" (text/plain, 10 bytes). What to buy. Read it with notes__read_resource.]
+```
+
+- `resources: false` leaves the tool out, and a link is then the line
+  `[resource: notes://today]`, as before.
+- `resources: true` offers the tool for a server that returns links and
+  declares no resources.
+- `gates: { "read_resource" => true }` makes a read wait for approval. The
+  tool follows `deferred:` and `timeout:` like the server's own tools, and it
+  is marked to run beside other calls.
+- A server that lists a tool named `read_resource` keeps that name, and
+  Mistri's tool is left out.
+
+The tool reads whatever URI the model gives it, from that one server. A host
+that reviews a server's tools one by one reviews this one too, or leaves it
+out.
+
+A result may also hold a resource itself. Its text is shown. Bytes are shown
+when they are an image, read as text when their type is a text type, and
+otherwise kept in the agent's [scratchpad](context-and-workspaces.md), where
+the result says they are:
+
+```text
+[Binary resource notes://report.pdf (application/pdf, 48211 bytes) saved at scratchpad/tool-results/20261126T030609-notes__report-d53873f1.pdf]
+```
+
+An agent with no scratchpad is told the type and the size and that the bytes
+are not shown. A scratchpad whose workspace holds only text, such as one in a
+text column, cannot take them, and the result says so.
+
+`Mistri::MCP.answer(result)`, for a host that bridges tools itself, shows the
+image and reads the text. It has no tool to name and no scratchpad, so a link
+and other bytes are the line `[resource: uri]`.
 
 ## Response boundaries
 

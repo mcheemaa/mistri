@@ -80,6 +80,7 @@ module Mistri
           @server_info = meta["io.modelcontextprotocol/serverInfo"] if meta.is_a?(Hash)
           text = result["instructions"]
           @instructions = (text if text.is_a?(String) && !text.empty?)
+          @resources = offers_resources?(result)
           @described = true
           @version = PROTOCOL_VERSION
           :newest
@@ -132,9 +133,16 @@ module Mistri
         @server_info = result["serverInfo"]
         text = result["instructions"]
         @instructions = (text if text.is_a?(String) && !text.empty?)
+        @resources = offers_resources?(result)
         @described = true
         @wire.notify({ jsonrpc: "2.0", method: "notifications/initialized" })
         @connected = true
+      end
+
+      # A server that has resources declares the capability, in either form.
+      def offers_resources?(result)
+        declared = result["capabilities"]
+        declared.is_a?(Hash) && declared.key?("resources")
       end
 
       def form_refused?(error)

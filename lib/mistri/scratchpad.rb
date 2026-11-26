@@ -35,10 +35,15 @@ module Mistri
     # The name ends in random characters, so agents that share a scratchpad
     # with no conditional write never pick one name.
     def save_result(text, tool_name)
-      name = "#{Time.now.utc.strftime("%Y%m%dT%H%M%S")}-" \
-             "#{tool_name.to_s.gsub(/[^A-Za-z0-9_-]/, "_")}-#{SecureRandom.hex(4)}"
-      path = "#{RESULTS}#{name}.#{json?(text) ? "json" : "txt"}"
+      path = "#{RESULTS}#{named(tool_name)}.#{json?(text) ? "json" : "txt"}"
       create(path, text) || raise(Error, "#{path} is taken")
+    end
+
+    # Bytes a tool was handed that are no text, kept whole beside the results.
+    # extension starts with its dot. A workspace that holds only text raises.
+    def save_binary(bytes, tool_name, extension = ".bin")
+      path = "#{RESULTS}#{named(tool_name)}#{extension}"
+      create(path, bytes.b) || raise(Error, "#{path} is taken")
     end
 
     # After a compaction the earlier note is gone from the conversation, so the
@@ -50,6 +55,11 @@ module Mistri
     end
 
     private
+
+    def named(tool_name)
+      "#{Time.now.utc.strftime("%Y%m%dT%H%M%S")}-" \
+        "#{tool_name.to_s.gsub(/[^A-Za-z0-9_-]/, "_")}-#{SecureRandom.hex(4)}"
+    end
 
     def create(path, text)
       return create_in_two_steps(path, text) unless @atomic

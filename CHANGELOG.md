@@ -5,6 +5,17 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+- A model can read an MCP server's resources. `Client#read_resource` reads
+  one and `Client#resources?` says whether the server has any. For a server
+  that has, `Mistri::MCP.tools` returns one more tool, `read_resource` under
+  the server's prefix, and a resource link in a result names it.
+  `resources: false` leaves the tool out, and `resources: true` offers it for
+  a server that declares none. `Client#listing` carries `"resources"`.
+- An embedded MCP resource with bytes is no longer dropped. An image is
+  shown, bytes of a text type are read as text, and other bytes are saved to
+  the agent's scratchpad, with the path in the result.
+- `ToolContext#scratchpad` is the agent's scratchpad, with `save_binary` for
+  bytes a tool cannot show.
 - MCP sign-in checks the issuer of a callback. `OAuth.complete` takes `iss:`,
   the callback's `iss` parameter, and refuses a callback that names another
   issuer, or names none where the authorization server says it sends one,

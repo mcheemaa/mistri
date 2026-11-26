@@ -23,8 +23,13 @@ module Mistri
   #
   # result_limit is the bytes a result of this call keeps before it is cut,
   # or nil where nothing is cut, so a tool that reads in parts can size a part.
-  ToolContext = Data.define(:session, :signal, :emit, :app, :result_limit) do
-    def initialize(session: nil, signal: nil, emit: nil, app: nil, result_limit: nil)
+  #
+  # scratchpad is the agent's Scratchpad, or nil when it has none. A tool that
+  # is handed bytes a model cannot read keeps them there with save_binary and
+  # answers with the path.
+  ToolContext = Data.define(:session, :signal, :emit, :app, :result_limit, :scratchpad) do
+    def initialize(session: nil, signal: nil, emit: nil, app: nil, result_limit: nil,
+                   scratchpad: nil)
       super
     end
   end

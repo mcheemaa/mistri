@@ -22,6 +22,19 @@ error when one call takes more than 300 seconds in all.
   `Mistri::MCP.tools(client, timeout: 1800)`.
 - For the earlier behaviour, pass `timeout: nil`.
 
+### `Mistri::MCP.tools` returns a tool that reads resources
+
+For a server that declares resources, `Mistri::MCP.tools` now returns one
+more tool than the server lists: `read_resource`, under the server's prefix.
+
+- A host that wants the list as it was passes `resources: false`.
+- A host that gates a server's tools gates this one with
+  `gates: { "read_resource" => true }`, or with `needs_approval: true`.
+- A listing stored before this release has no `"resources"` key, so a client
+  built from it offers no such tool until the server is listed again.
+- A result that held bytes used to show the line `[resource: uri]`. It now
+  shows an image, or the text, or where the bytes were saved.
+
 ### MCP sign-in checks more, when the host hands it more
 
 - Pass the callback's `iss` to `OAuth.complete`: `iss: params[:iss]`. Without

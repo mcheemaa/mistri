@@ -94,7 +94,7 @@ module Mistri
           @tools = nil if refresh
           @tools ||= list_tools
           { "tools" => @tools, "instructions" => @instructions,
-            "protocolVersion" => @version }.compact
+            "protocolVersion" => @version, "resources" => @resources || nil }.compact
         end
       end
 
@@ -112,6 +112,27 @@ module Mistri
         watched do
           @tools = nil if refresh
           @tools ||= list_tools
+        end
+      end
+
+      # Whether the server said it has resources. A client built from a stored
+      # listing answers from the listing.
+      def resources?
+        watched do
+          handshake unless @described
+          @resources == true
+        end
+      end
+
+      # The contents of one resource: hashes with "uri", "mimeType", and "text"
+      # or "blob", which is base64 of its bytes.
+      def read_resource(uri)
+        watched do
+          result = request("resources/read", { uri: uri })
+          contents = result["contents"] if result.is_a?(Hash)
+          return contents if contents.is_a?(Array)
+
+          raise Error, "resources/read returned a malformed result"
         end
       end
 
@@ -331,6 +352,7 @@ module Mistri
 
         @tools = tools
         @instructions = (text unless text.to_s.empty?)
+        @resources = listing["resources"] == true
         @described = true
         @version = version if SUPPORTED_VERSIONS.include?(version)
       end

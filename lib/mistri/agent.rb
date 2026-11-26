@@ -1284,6 +1284,7 @@ module Mistri
                                                              session: @session, emit: emit,
                                                              app: @context,
                                                              result_limit_for: limits(among, spent),
+                                                             scratchpad: @scratchpad,
                                                              prepared_arguments: true)
     end
 
@@ -1356,7 +1357,7 @@ module Mistri
 
     def hook_context(signal, emit)
       ToolContext.new(session: @session, signal: signal, emit: EventDelivery.wrap(emit),
-                      app: @context)
+                      app: @context, scratchpad: @scratchpad)
     end
 
     # The tool message carries both channels; the :tool_result event exposes

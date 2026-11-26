@@ -13,9 +13,13 @@ module Mistri
       # discover: is what the server answers server/discover with: a result,
       # or a lambda given this server, the socket and the id. Without it the
       # server is an older one that does not know the request.
+      # capabilities: is what the handshake declares, and resources: maps a
+      # URI to the contents that resources/read returns for it.
       def initialize(tools: {}, session: "s1", on_get: nil, delete_status: 200, list_wait: 0,
-                     discover: nil, listed: [])
+                     discover: nil, listed: [], capabilities: {}, resources: {})
         @tools = tools
+        @capabilities = capabilities
+        @resources = resources
         @discover = discover
         @listed = listed
         @session = session
@@ -74,6 +78,7 @@ module Mistri
           sleep(@list_wait)
           result(socket, message["id"], { "tools" => @listed })
         when "server/discover" then discover(socket, message["id"])
+        when "resources/read" then read(socket, message)
         when "tools/call"
           @calling = message["id"]
           @tools.fetch(message.dig("params", "name")).call(self, socket, @calling)
@@ -88,6 +93,14 @@ module Mistri
       def refuse(socket, id, code: -32_601, message: "Method not found", data: nil, status: 200)
         error = { "code" => code, "message" => message, "data" => data }.compact
         json(socket, { "jsonrpc" => "2.0", "id" => id, "error" => error }, status: status)
+      end
+
+      def read(socket, message)
+        contents = @resources[message.dig("params", "uri")]
+        return result(socket, message["id"], contents) if contents && !contents.is_a?(Array)
+        return result(socket, message["id"], { "contents" => contents }) if contents
+
+        refuse(socket, message["id"], code: -32_602, message: "Resource not found")
       end
 
       def discover(socket, id)
@@ -114,7 +127,7 @@ module Mistri
 
       def handshake(id)
         { "jsonrpc" => "2.0", "id" => id,
-          "result" => { "protocolVersion" => "2025-11-25", "capabilities" => {},
+          "result" => { "protocolVersion" => "2025-11-25", "capabilities" => @capabilities,
                         "serverInfo" => { "name" => "scripted", "version" => "1" } } }
       end
     end
