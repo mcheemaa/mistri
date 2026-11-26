@@ -80,20 +80,20 @@ module Mistri
     # collisions, and gates marks tools needing human approval
     # (gates: { "create_issue" => true }, or needs_approval: for all). A key
     # of gates that names no tool of the server raises, and so does one of a
-    # parallel hash. A tool
-    # that cannot be bridged is left out: the block is given its definition
-    # and the error, and without a block it is named in a warning. deferred
-    # keeps the server's tools out of the model's sight until a search loads
-    # them. instructions: false keeps the server's instructions out of the
-    # conversation, and a string is sent in their place. parallel says which
-    # tools may run beside others in a turn: nil follows each tool's
-    # readOnlyHint, true or false sets every tool, and a hash sets tools by
-    # remote name and leaves the rest to their hint. trust_hints: false means
-    # no tool is marked by its hint, only by parallel. timeout is the seconds
-    # one call may take in all before the agent stops waiting for it, and nil
-    # sets no limit. description_limit is the characters of a description that
-    # reach the model, and nil sets none. instructions_as: :user sends the
-    # instructions as text of a user turn where they would be a system message.
+    # parallel hash. A tool that cannot be bridged is left out: the block is
+    # given its definition and the error, and without a block it is named in
+    # a warning. deferred keeps the server's tools out of the model's sight
+    # until a search loads them. instructions: false keeps the server's
+    # instructions out of the conversation, and a string is sent in their
+    # place. parallel says which tools may run beside others in a turn: nil
+    # follows each tool's readOnlyHint, true or false sets every tool, and a
+    # hash sets tools by remote name and leaves the rest to their hint.
+    # trust_hints: false means no tool is marked by its hint, only by
+    # parallel. timeout is the seconds one call may take in all before the
+    # agent stops waiting for it, and nil sets no limit. description_limit is
+    # the characters of a description that reach the model, and nil sets
+    # none. instructions_as: :user sends the instructions as text of a user
+    # turn where they would be a system message.
     #
     # A server that has resources gets one more tool, read_resource, which
     # reads one by its URI: a result of the server's tools names them.

@@ -132,12 +132,12 @@ one. The discovered tool cache remains available.
 ### Requests from a server
 
 In the older form of the protocol a server may send its own requests while a
-call waits for its answer. The client declares no capability, so it answers `ping` with an empty result and
-refuses any other request with JSON-RPC error -32601. Over Streamable HTTP the
-reply is a POST of its own, on a second connection that waits five seconds at
-most, because the first is taken by the stream of the call. A reply and a
-cancel carry the token last sent. The host's token callable is asked only for
-a request.
+call waits for its answer. The client declares no capability, so it answers
+`ping` with an empty result and refuses any other request with JSON-RPC error
+-32601. Over Streamable HTTP the reply is a POST of its own, on a second
+connection that waits five seconds at most, because the first is taken by the
+stream of the call. A reply and a cancel carry the token last sent. The host's
+token callable is asked only for a request.
 
 A request is never taken for the answer to a call, whatever its id. An answer
 is matched by the id of its call, also when the server sends that id back as a
