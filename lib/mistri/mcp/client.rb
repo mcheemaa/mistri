@@ -124,7 +124,7 @@ module Mistri
       end
 
       def ensure_connected
-        return if @connected
+        return if @connected && @wire.open?
 
         result = rpc("initialize", {
                        protocolVersion: PROTOCOL_VERSION,
@@ -167,45 +167,100 @@ module Mistri
 
       def rpc(method, params)
         id = (@serial += 1)
-        payload = { jsonrpc: "2.0", id: id, method: method, params: params }
-        result = nil
-        responded = false
         replayable = method != "tools/call"
+        answer = nil
         # A tool may commit its external side effect before the connection dies.
-        @wire.call(payload, replayable: replayable) do |record|
-          next unless record.is_a?(Hash) && record["id"] == id
-
-          responded = true
-          raise rpc_error(record["error"]) if record["error"]
-
-          result = record["result"]
+        exchange({ jsonrpc: "2.0", id: id, method: method, params: params }, replayable) do |record|
+          answer ||= answer_in(record, id)
         end
-        unless responded
-          detail = "the server sent no matching response to #{method}"
-          raise Error, detail if replayable
+        return answer["result"] if answer
 
-          raise AmbiguousDeliveryError, "#{AmbiguousDeliveryError.default_message}: #{detail}"
-        end
+        raise unanswered(method, replayable)
+      rescue WireTimeout => e
+        cancel(method, id, "timed out")
+        raise if replayable
 
-        result
+        raise AmbiguousDeliveryError, unconfirmed(e)
       rescue ResponseTooLargeError, ResponseTooComplexError, WireError => e
         reset_wire
         raise if replayable
-        return result if responded
+        return answer["result"] if answer
 
-        message = "the request was sent but its tool outcome could not be confirmed: " \
-                  "#{e.message}; the operation may have completed; do not retry automatically; " \
-                  "verify external state first"
-        raise AmbiguousDeliveryError, message
+        raise AmbiguousDeliveryError, unconfirmed(e)
       rescue AmbiguousDeliveryError
         reset_wire
-        return result if responded
+        return answer["result"] if answer
 
         raise
       rescue ProviderError => e
         raise SessionExpired if e.status == 404 && @wire.session?
 
         raise
+      end
+
+      # The wait for an answer can be ended from outside the gem: by a tool's
+      # own limit, or by a Timeout the host put around the call. That cancels
+      # the request and keeps the server, as the read timeout does.
+      def exchange(payload, replayable, &)
+        settled = false
+        @wire.call(payload, replayable: replayable, &)
+        settled = true
+      rescue Mistri::Error
+        settled = true
+        raise
+      ensure
+        cancel(payload[:method], payload[:id], "the caller stopped waiting") unless settled
+      end
+
+      # A record with a method is the server's own request or notice, whatever
+      # its id. The answer may carry the id as a string of the same digits.
+      def answer_in(record, id)
+        return unless record.is_a?(Hash)
+        return reply_to(record) if record.key?("method")
+        return unless [id, id.to_s].include?(record["id"])
+        raise rpc_error(record["error"]) if record["error"]
+
+        record
+      end
+
+      # This client declares no capability, so ping is the one request it
+      # serves. A reply that cannot be delivered does not fail the call.
+      def reply_to(record)
+        id = record["id"]
+        return unless id.is_a?(Integer) || (id.is_a?(String) && id.valid_encoding?)
+
+        reply = if record["method"] == "ping"
+                  { result: {} }
+                else
+                  { error: { code: -32_601, message: "Method not found" } }
+                end
+        @wire.notify({ jsonrpc: "2.0", id: id, **reply })
+        nil
+      rescue Mistri::Error
+        nil
+      end
+
+      # The handshake is the one request the spec forbids a client to cancel.
+      def cancel(method, id, reason)
+        return if method == "initialize"
+
+        @wire.notify({ jsonrpc: "2.0", method: "notifications/cancelled",
+                       params: { requestId: id, reason: reason } }, wait: 0)
+      rescue Mistri::Error
+        nil
+      end
+
+      def unanswered(method, replayable)
+        detail = "the server sent no matching response to #{method}"
+        return Error.new(detail) if replayable
+
+        AmbiguousDeliveryError.new("#{AmbiguousDeliveryError.default_message}: #{detail}")
+      end
+
+      def unconfirmed(error)
+        "the request was sent but its tool outcome could not be confirmed: " \
+          "#{error.message}; the operation may have completed; do not retry automatically; " \
+          "verify external state first"
       end
 
       def list_tools

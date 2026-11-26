@@ -39,14 +39,22 @@ module Mistri
         attr_writer :protocol_version
 
         def call(payload, replayable:, &)
+          @reading = true
           capture_session(post(payload, replayable: replayable, &))
           nil
+        ensure
+          @reading = false
         end
 
-        def notify(payload)
+        # The one connection is taken while a response is read.
+        def notify(payload, **)
+          return if @reading
+
           post(payload) { |_record| nil }
           nil
         end
+
+        def open? = true
 
         def session? = !@session_id.nil?
 
@@ -118,7 +126,13 @@ module Mistri
       # for honest local debugging.
       class Stdio
         READ_SIZE = 16 * 1024
+        WRITE_SIZE = 64 * 1024
         BLANK_RECORD = /\A[[:space:]]*\z/
+        TIMED_OUT = "timed out waiting for the MCP server"
+        # Seconds a server gets to end by itself once its input is closed, and
+        # then to end after SIGTERM.
+        EXIT_WAIT = 0.5
+        TERM_WAIT = 1
         # What a runtime needs to start and behave: identity and programs,
         # RubyGems paths, locale and temp files, CA bundles. A name that can
         # carry a credential stays out, proxy settings included.
@@ -128,7 +142,8 @@ module Mistri
           LANG LC_ALL LC_CTYPE TZ TMPDIR
           SSL_CERT_FILE SSL_CERT_DIR NODE_EXTRA_CA_CERTS REQUESTS_CA_BUNDLE CURL_CA_BUNDLE
         ].freeze
-        private_constant :READ_SIZE, :BLANK_RECORD, :INHERITED_ENV
+        private_constant :READ_SIZE, :WRITE_SIZE, :BLANK_RECORD, :TIMED_OUT, :EXIT_WAIT,
+                         :TERM_WAIT, :INHERITED_ENV
 
         def initialize(command:, env: {}, read_timeout: 120,
                        max_record_bytes: DEFAULT_MAX_RECORD_BYTES)
@@ -141,24 +156,27 @@ module Mistri
           @read_timeout = read_timeout
           @max_record_bytes = max_record_bytes
           @pid = nil
+          @cut_write = false
         end
 
+        # Reads until the block returns what it took for the answer.
         def call(payload, **)
           start
-          write(payload)
-          loop do
-            record = read_record
-            yield record
-            break if record.is_a?(Hash) && record["id"] == payload[:id]
-          end
+          write(payload, @read_timeout)
+          loop { break if yield(read_record) }
           nil
         end
 
-        def notify(payload)
-          start
-          write(payload)
+        # wait is the seconds the server may take to read the message. A
+        # server is never started to be sent one.
+        def notify(payload, wait: @read_timeout)
+          write(payload, wait) if open?
           nil
         end
+
+        # False once the server this wire spoke to is gone or cannot be
+        # written to, so the client knows to do the handshake again.
+        def open? = !@pid.nil? && !@cut_write
 
         def session? = false
 
@@ -200,33 +218,52 @@ module Mistri
           child_out.close
         end
 
-        def write(payload)
-          @cut_write = true
-          @stdin.write("#{JSON.generate(payload)}\n")
-          @stdin.flush
+        # Written without blocking, so a server that has stopped reading holds
+        # the caller only until the deadline.
+        def write(payload, wait)
+          line = "#{JSON.generate(payload)}\n".b
+          deadline = wait && (clock + wait)
+          sent = 0
+          while sent < line.bytesize
+            @cut_write = true
+            count = @stdin.write_nonblock(line.byteslice(sent, WRITE_SIZE), exception: false)
+            if count == :wait_writable
+              @cut_write = sent.positive?
+              raise WireTimeout, TIMED_OUT unless @stdin.wait_writable(remaining(deadline))
+            else
+              sent += count
+            end
+          end
           @cut_write = false
         rescue Errno::EPIPE
           raise WireError, "the MCP server closed its input"
         end
 
-        # The spec requires stdout to carry only protocol messages, so a
-        # line that is not one is corruption worth failing loudly on.
+        # stdout carries one message a line. A line that is not JSON is
+        # skipped and written to standard error, where the server's own
+        # standard error goes, and the wait for the message goes on.
         def read_record
-          deadline = if @read_timeout
-                       Process.clock_gettime(Process::CLOCK_MONOTONIC) + @read_timeout
-                     end
+          deadline = @read_timeout && (clock + @read_timeout)
+          loop do
+            line = next_line(deadline)
+            return JSON.parse(line)
+          rescue JSON::ParserError
+            text = line.byteslice(0, 200).force_encoding(Encoding::UTF_8).scrub.strip
+            warn("mistri: the MCP server wrote a line that is not JSON: #{text.inspect}")
+          end
+        end
+
+        def next_line(deadline)
           loop do
             line = complete_record
-            return JSON.parse(line) if line
+            return line if line
 
             oversized_record! if @read_buffer.bytesize > @max_record_bytes
             chunk = read_chunk(deadline)
-            return JSON.parse(eof_record) unless chunk
+            return eof_record unless chunk
 
             @read_buffer << chunk
           end
-        rescue JSON::ParserError
-          raise WireError, "the MCP server wrote non-protocol output on stdout"
         end
 
         def complete_record
@@ -242,19 +279,24 @@ module Mistri
 
         def read_chunk(deadline)
           loop do
-            remaining = deadline && (deadline - Process.clock_gettime(Process::CLOCK_MONOTONIC))
-            if remaining && !remaining.positive?
-              raise WireError, "timed out waiting for the MCP server"
-            end
-
-            ready = @stdout.wait_readable(remaining)
-            raise WireError, "timed out waiting for the MCP server" unless ready
+            raise WireTimeout, TIMED_OUT unless @stdout.wait_readable(remaining(deadline))
 
             room = @max_record_bytes - @read_buffer.bytesize + 1
             chunk = @stdout.read_nonblock([READ_SIZE, room].min, exception: false)
             return chunk unless chunk == :wait_readable
           end
         end
+
+        def remaining(deadline)
+          return unless deadline
+
+          left = deadline - clock
+          raise WireTimeout, TIMED_OUT unless left.positive?
+
+          left
+        end
+
+        def clock = Process.clock_gettime(Process::CLOCK_MONOTONIC)
 
         def eof_record
           raise WireError, "the MCP server exited" if @read_buffer.empty?
@@ -272,16 +314,25 @@ module Mistri
         end
 
         def terminate
-          Process.kill("TERM", @pid)
-          20.times do
-            return if Process.waitpid(@pid, Process::WNOHANG)
+          return if exited?(EXIT_WAIT)
 
-            sleep(0.05)
-          end
+          Process.kill("TERM", @pid)
+          return if exited?(TERM_WAIT)
+
           Process.kill("KILL", @pid)
           Process.waitpid(@pid)
         rescue Errno::ESRCH, Errno::ECHILD
           nil
+        end
+
+        def exited?(seconds)
+          deadline = clock + seconds
+          until Process.waitpid(@pid, Process::WNOHANG)
+            return false if clock >= deadline
+
+            sleep(0.01)
+          end
+          true
         end
       end
     end

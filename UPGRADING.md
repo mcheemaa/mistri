@@ -22,6 +22,19 @@ error when one call takes more than 300 seconds in all.
   `Mistri::MCP.tools(client, timeout: 1800)`.
 - For the earlier behaviour, pass `timeout: nil`.
 
+### A timeout no longer ends a stdio MCP server
+
+When `read_timeout` passes, the client cancels that one request and keeps the
+server. Before, the server was ended and the next call started a new one.
+
+- A host that relied on a new server after a timeout calls `client.close`
+  itself. The next call then starts one. A server that has stopped for good
+  makes every call wait for the timeout until then.
+- A line on a stdio server's stdout that is not JSON no longer fails the call.
+  It is written to standard error with the prefix `mistri:`.
+- `client.close` takes up to half a second longer for a stdio server that does
+  not end when its input closes.
+
 ### The calls of a turn run in the order written
 
 A tool used to run at the same time as the other calls of its turn. It now

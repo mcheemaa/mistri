@@ -19,9 +19,33 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   `Mistri::MCP.bridge` now take `timeout:`, the seconds one call may take in
   all: 300 unless the host passes another number, and `nil` for no limit. The
   call ends as a tool error that says the tool timed out and may have
-  completed. The server and its session are kept and the next call works. A
-  stdio server whose input holds half a message, because a write to it was cut
-  short, is started again before the next call.
+  completed. The client sends `notifications/cancelled` for the call, the
+  server and its session are kept, and the next call works. A host's own
+  `Timeout` around `Client#call_tool` ends the same way.
+- A timeout no longer ends a stdio MCP server. When `read_timeout` passed, the
+  server was ended and the next call started a new one, so one slow call lost
+  whatever the server held, such as an open browser page. The client now sends
+  `notifications/cancelled` for that request, stops waiting and keeps the
+  server, and an answer that arrives later is ignored. The handshake is never
+  cancelled. A server that has stopped for good now stays until the host calls
+  `client.close`.
+- A stdio MCP server's own requests are answered. A `ping` sent while a call
+  waited got no answer, and neither did any other request. A request that
+  carried the id of the waiting call was taken for its answer:
+  `Client#call_tool` returned nil and the bridged tool raised. The client now
+  answers `ping` with an empty result, refuses any other request with error
+  -32601, and takes only a response for an answer. Over Streamable HTTP a
+  request is no longer taken for an answer either, and no reply is sent.
+- A stdio server that sends ids back as strings can be used. Its answer to the
+  handshake was never matched, so the client timed out.
+- A line that is not JSON no longer ends a stdio MCP server. Some servers print
+  a banner or a debug line on stdout. The line is skipped and written to the
+  host's standard error, and the call goes on.
+- A call to a stdio MCP server that has stopped reading its input ends at
+  `read_timeout`. A call with large arguments had no end. That server is ended
+  and the next call starts a new one with a new handshake.
+- `Client#close` lets a stdio MCP server end by itself. It closes the server's
+  input and waits half a second before SIGTERM, which was sent at once.
 - An image holds strict base64, whatever form it was built from.
   `Content::Image` kept the text it was given, and every provider refuses
   base64 with line breaks, which is what `Base64.encode64` writes. Anthropic

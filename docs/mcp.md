@@ -64,6 +64,10 @@ tools = Mistri::MCP.tools(
 object per line and bounds the complete record read, including the time after
 its first byte.
 
+A line on the server's stdout that is not JSON is skipped. It is written to the
+host's standard error, where the server's own standard error already goes, and
+the wait for the message goes on.
+
 The server does not inherit the host's environment, which holds provider keys
 and other secrets. It starts with `env:` and these variables from the host
 process:
@@ -86,11 +90,23 @@ host's files.
 in an application or deployment so the executable does not change without a
 code review.
 
-Call `client.close` when a long-lived host is finished. For stdio, it terminates
-the child. For HTTP, it closes the local connection and forgets the negotiated
+Call `client.close` when a long-lived host is finished. For stdio, it closes the
+server's input and waits half a second for the server to end. A server that is
+still running is sent SIGTERM, and SIGKILL one second after that. For HTTP, it closes the local connection and forgets the negotiated
 session, but does not send the optional MCP DELETE termination request; remote
 resources expire by server policy. The discovered tool cache remains available.
 `call_tool` or `tools(refresh: true)` performs a fresh handshake when needed.
+
+### Requests from a server
+
+A server may send its own requests while a call waits for its answer. The
+client declares no capability, so over stdio it answers `ping` with an empty
+result and refuses any other request with JSON-RPC error -32601. Over
+Streamable HTTP no reply is sent.
+
+A request is never taken for the answer to a call, whatever its id. An answer
+is matched by the id of its call, also when the server sends that id back as a
+string.
 
 ## Tool discovery
 
@@ -403,9 +419,24 @@ handshake again.
 
 ### The time one call may take
 
-`read_timeout:` is the wait for one message. A server that keeps sending
-messages and never answers the call starts that wait again each time, so a
-bridged tool also has a limit for the whole call:
+`read_timeout:` is the wait for one message from the server. When it passes
+over stdio, the client sends `notifications/cancelled` for that request, stops
+waiting and keeps the server. An answer that arrives later is ignored. A list
+raises `Mistri::MCP::Error`. A tool call raises
+`Mistri::AmbiguousDeliveryError`, because the tool may have run. The handshake
+is never cancelled: a server that does not answer `initialize` is ended.
+
+A server that has stopped for good is not ended by a timeout. Every later call
+waits for the timeout again until the host calls `client.close`. The call
+after that starts a new server.
+
+A call is also written under `read_timeout`. When a stdio server has stopped
+reading its input, a call with large arguments ends there. Half a message is
+then left in that server's input, so the server is ended, and the next call
+starts a new one with a new handshake.
+
+A server that keeps sending messages and never answers the call starts the
+wait again each time, so a bridged tool also has a limit for the whole call:
 
 ```ruby
 Mistri::MCP.tools(client)                # 300 seconds, Mistri::MCP::CALL_TIMEOUT
@@ -415,13 +446,13 @@ Mistri::MCP.tools(client, timeout: nil)  # no limit
 
 `Mistri::MCP.bridge` takes the same option. The limit is the tool's own
 `timeout`, so the tool executor ends the call. The model reads that the tool
-timed out and may have completed, and the agent goes on. The server and its
-session are kept, and the next call works. When the limit cuts a message that
-was still being written to a stdio server, that server is started again before
-the next call. A call that waits behind another call to the same server spends
-its limit waiting.
+timed out and may have completed, and the agent goes on. The client sends
+`notifications/cancelled` for the call, over stdio and over Streamable HTTP.
+The server and its session are kept, and the next call works. A call that
+waits behind another call to the same server spends its limit waiting.
 
-A direct `Client#call_tool` has no such limit.
+A direct `Client#call_tool` has no such limit. A host that puts its own
+`Timeout` around one gets the same cancel and keeps the server.
 
 ### Ambiguous tool delivery
 

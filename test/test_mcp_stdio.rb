@@ -171,6 +171,7 @@ class TestMcpStdio < Minitest::Test
       assert_match(/timed out after 0\.3s/, stuck.text)
       assert_equal "echo: hi", later.text
       assert_equal 1, pids.length, "the server was not started again"
+      assert_includes File.read(trace), ":notifications/cancelled\n", "the call was cancelled"
     ensure
       stdio&.close
     end
@@ -193,6 +194,8 @@ class TestMcpStdio < Minitest::Test
 
       assert_equal "echo: next", result.dig("content", 0, "text")
       assert_equal 2, pids.length, "half a message was left in the first server's input"
+      assert_equal 2, File.readlines(trace).count { |line| line.end_with?(":initialize\n") },
+                   "the new server got its own handshake"
     ensure
       stdio&.close
     end
@@ -210,16 +213,15 @@ class TestMcpStdio < Minitest::Test
     stdio.close
   end
 
-  def test_non_protocol_stdout_raises_loudly
+  def test_non_protocol_stdout_is_skipped_and_reported
     stdio = client
     stdio.connect
+    result = nil
 
-    error = assert_raises(Mistri::AmbiguousDeliveryError) do
-      stdio.call_tool("corrupt", {})
-    end
+    _out, reported = capture_io { result = stdio.call_tool("corrupt", {}) }
 
-    assert_kind_of Mistri::MCP::Error, error.cause
-    assert_match(/non-protocol/, error.message)
+    assert_equal "echo:", result.dig("content", 0, "text")
+    assert_match(/wrote a line that is not JSON: "not json at all"/, reported)
   ensure
     stdio.close
   end
@@ -331,11 +333,10 @@ class TestMcpStdio < Minitest::Test
     end
   end
 
-  def test_the_stdio_timeout_covers_the_whole_record
+  def test_the_stdio_timeout_covers_the_whole_record_and_keeps_the_server
     Dir.mktmpdir do |directory|
       trace = File.join(directory, "trace")
-      # Startup exceeds the short response deadline, including on reconnect.
-      stdio = client(env: { "STUB_TRACE" => trace, "STUB_STARTUP_DELAY" => "0.3" })
+      stdio = client(env: { "STUB_TRACE" => trace })
       stdio.connect
       started = Process.clock_gettime(Process::CLOCK_MONOTONIC)
 
@@ -344,20 +345,13 @@ class TestMcpStdio < Minitest::Test
       end
 
       elapsed = Process.clock_gettime(Process::CLOCK_MONOTONIC) - started
-      first_trace = File.readlines(trace, chomp: true)
-      tool_line = first_trace.find { |line| line.end_with?(":tools/call:stall") }
+      tool_lines = File.readlines(trace, chomp: true).grep(%r{:tools/call:stall\z})
 
-      refute_nil tool_line, "the server received the tool call before its response timed out"
+      assert_equal 1, tool_lines.length, "the server received the tool call once"
       assert_kind_of Mistri::MCP::Error, error.cause
       assert_match(/timed out/, error.message)
       assert_operator elapsed, :<, 2
-      assert_equal(1, first_trace.count { |line| line.end_with?(":tools/call:stall") })
-      assert_raises(Errno::ESRCH) { Process.kill(0, tool_line.to_i) }
-
-      stdio.connect
-      pids = File.readlines(trace, chomp: true).map { |line| line.split(":", 2).first }.uniq
-
-      assert_equal 2, pids.length, "the next operation performed a fresh stdio handshake"
+      assert_equal 1, Process.kill(0, tool_lines.first.to_i), "the server is kept"
     ensure
       stdio&.close
     end
