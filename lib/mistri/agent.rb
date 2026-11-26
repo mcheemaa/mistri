@@ -679,19 +679,22 @@ module Mistri
 
     # Each distinct instructions text, under each weight it was given, as
     # the text block the model reads, with the names of the tools that carry
-    # it.
+    # it. One block that tools of both weights carry is sent once, with the
+    # weight of a user turn, which trusts the server less.
     def tool_instructions
-      @tool_instructions ||=
-        @tools.select { |tool| tool.respond_to?(:instructions) }
-              .group_by { |tool| [tool.instructions.to_s.strip, weight_of(tool)] }
-              .reject { |(text, _weight), _tools| text.empty? }
-              .to_h do |(text, weight), tools|
-                names = tools.map(&:name)
-                block = "The server of #{instructed(names)} gives these instructions for using " \
-                        "its tools:\n#{bounded_instructions(text)}"
-                (@instruction_kinds ||= {})[block] = INSTRUCTION_KINDS.fetch(weight)
-                [block, names]
-              end
+      @tool_instructions ||= begin
+        @instruction_kinds = {}
+        carried = @tools.select { |tool| tool.respond_to?(:instructions) }
+                        .group_by { |tool| [tool.instructions.to_s.strip, weight_of(tool)] }
+                        .reject { |(text, _weight), _tools| text.empty? }
+        carried.each_with_object({}) do |((text, weight), tools), blocks|
+          names = tools.map(&:name)
+          block = "The server of #{instructed(names)} gives these instructions for using " \
+                  "its tools:\n#{bounded_instructions(text)}"
+          @instruction_kinds[block] = INSTRUCTION_KINDS.fetch(blocks.key?(block) ? :user : weight)
+          (blocks[block] ||= []).concat(names)
+        end
+      end
     end
 
     # A tool that is not the gem's own may carry instructions and no weight.

@@ -101,11 +101,12 @@ module Mistri
               complete_argument_validator: nil, deferred: false, instructions: true,
               parallel: nil, timeout: CALL_TIMEOUT, description_limit: DESCRIPTION_LIMIT,
               instructions_as: :system, trust_hints: true, resources: nil)
+      description_limit!(description_limit)
       taken = {}
       listed = client.tools
-      known_marks!(parallel, listed)
-      instructions = instructions_for(client, instructions)
       reader = reader_name(client, listed, resources, prefix)
+      known_marks!(parallel, listed, reader)
+      instructions = instructions_for(client, instructions)
       bridged = listed.filter_map do |tool|
         remote = tool["name"] if tool.is_a?(Hash)
         next if deny.include?(remote) || (allow && !allow.include?(remote))
@@ -128,7 +129,8 @@ module Mistri
       bridged << resource_reader(client, reader, prefix: prefix, deferred: deferred,
                                                  gate: gates.fetch(READ_RESOURCE, needs_approval),
                                                  instructions: instructions, timeout: timeout,
-                                                 instructions_as: instructions_as)
+                                                 instructions_as: instructions_as,
+                                                 parallel: parallel)
     end
 
     # The local name of the tool that reads this server's resources, or nil
@@ -145,11 +147,13 @@ module Mistri
     private_class_method :reader_name
 
     def resource_reader(client, local, prefix:, gate:, deferred:, instructions:, timeout:,
-                        instructions_as:)
+                        instructions_as:, parallel:)
       server = prefix ? "the MCP server #{prefix.to_s.inspect}" : "the MCP server"
+      # A read changes nothing, so it runs beside others unless the host says no.
+      alone = (parallel.is_a?(Hash) ? parallel[READ_RESOURCE] : parallel) == false
       Tool.define(local, "Reads one resource of #{server} by its URI. A result of this " \
                          "server's tools names a resource it can be read from.",
-                  input_schema: READ_RESOURCE_SCHEMA, parallel: true, needs_approval: gate,
+                  input_schema: READ_RESOURCE_SCHEMA, parallel: !alone, needs_approval: gate,
                   deferred: deferred, instructions: instructions, timeout: timeout,
                   instructions_as: instructions_as) do |args, context|
         contents = client.read_resource(args.fetch("uri"))
@@ -175,10 +179,11 @@ module Mistri
 
     # A key that names no tool would leave the tool it was meant for to its
     # hint, which can mark a tool the host set to run alone.
-    def known_marks!(parallel, listed)
+    def known_marks!(parallel, listed, reader)
       return unless parallel.is_a?(Hash)
 
       unknown = parallel.keys - listed.grep(Hash).map { |tool| tool["name"] }
+      unknown -= [READ_RESOURCE] if reader
       return if unknown.empty?
 
       names = unknown.map { |name| label(name) }.join(", ")
@@ -231,6 +236,7 @@ module Mistri
       end
       raise ConfigurationError, "the name is not valid UTF-8" unless utf8?(remote)
 
+      description_limit!(description_limit)
       description = spec["description"].to_s
       raise ConfigurationError, "the description is not valid UTF-8" unless utf8?(description)
 
@@ -284,6 +290,13 @@ module Mistri
     end
     private_class_method :unreachable
 
+    def description_limit!(limit)
+      return if limit.nil? || (limit.is_a?(Integer) && !limit.negative?)
+
+      raise ConfigurationError, "description_limit: must be nil or an integer that is not negative"
+    end
+    private_class_method :description_limit!
+
     def bounded(description, limit)
       return description if limit.nil? || description.length <= limit
 
@@ -303,7 +316,10 @@ module Mistri
     def changes(kept, fresh)
       before, after = [kept, fresh].map do |listing|
         tools = listing.is_a?(Hash) ? listing["tools"] : listing
-        Array(tools).grep(Hash).to_h { |tool| [tool["name"], digest(tool)] }
+        # Of two definitions with one name the first counts, as for the bridge.
+        Array(tools).grep(Hash).each_with_object({}) do |tool, seen|
+          seen[tool["name"]] ||= digest(tool)
+        end
       end
       { "added" => after.keys - before.keys, "removed" => before.keys - after.keys,
         "changed" => before.keys.select { |name| after.key?(name) && after[name] != before[name] } }

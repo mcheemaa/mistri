@@ -115,6 +115,40 @@ class TestMcpUntrustedText < Minitest::Test
     assert_match(/second__\*/, sent["tool_instructions_as_user"])
   end
 
+  def test_one_block_under_two_weights_is_sent_once_as_a_user_turn
+    listed = client(SEARCH, PURGE, instructions: "Search first.")
+    reads = Mistri::MCP.tools(listed, prefix: "files", allow: ["search"])
+    writes = Mistri::MCP.tools(listed, prefix: "files", allow: ["purge"], instructions_as: :user)
+    [reads + writes, writes + reads].each do |tools|
+      agent = Mistri::Agent.new(provider: Mistri::Providers::Fake.new(turns: [{ text: "done" }]),
+                                tools: tools)
+      agent.run("go")
+
+      assert_equal ["tool_instructions_as_user"], agent.session.messages.filter_map(&:reminder)
+    end
+  end
+
+  def test_of_two_definitions_with_one_name_the_first_counts_as_for_the_bridge
+    twice = [SEARCH, SEARCH.merge("description" => "Another.")]
+
+    assert_equal ["search"], Mistri::MCP.changes(twice, [twice.last])["changed"]
+    assert_empty Mistri::MCP.changes(twice, [SEARCH]).values.flatten
+  end
+
+  def test_a_limit_that_is_no_count_of_characters_is_refused
+    [-1, "4", 2.5].each do |limit|
+      error = assert_raises(Mistri::ConfigurationError) do
+        Mistri::MCP.tools(client(SEARCH), description_limit: limit)
+      end
+
+      assert_equal "description_limit: must be nil or an integer that is not negative",
+                   error.message
+      assert_raises(Mistri::ConfigurationError) do
+        Mistri::MCP.bridge(client(SEARCH), SEARCH, description_limit: limit)
+      end
+    end
+  end
+
   def test_a_tool_that_names_no_weight_gets_the_weight_of_a_reminder
     plain = Class.new(Mistri::Tool) { undef_method :instructions_as }
                  .define("plain", "Plain.", instructions: "Use with care.") { "ok" }

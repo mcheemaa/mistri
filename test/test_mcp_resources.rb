@@ -176,6 +176,20 @@ class TestMcpResources < Minitest::Test
                  Mistri::MCP.tools(@client, resources: false).first.call({})
   end
 
+  def test_the_hosts_choice_of_what_runs_alone_reaches_the_tool_that_reads
+    client
+    marks = ->(parallel) { Mistri::MCP.tools(@client, parallel: parallel).last.parallel? }
+
+    assert marks.call(nil)
+    assert marks.call(true)
+    refute marks.call(false)
+    refute marks.call({ "read_resource" => false })
+    assert marks.call({ "links" => false })
+    assert_raises(Mistri::ConfigurationError) do
+      Mistri::MCP.tools(@client, resources: false, parallel: { "read_resource" => false })
+    end
+  end
+
   def test_embedded_bytes_that_are_no_image_and_no_text_are_kept_in_the_scratchpad
     workspace = Mistri::Workspace::Memory.new
     context = Mistri::ToolContext.new(scratchpad: SCRATCHPAD.new(workspace))
