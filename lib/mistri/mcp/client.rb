@@ -215,7 +215,8 @@ module Mistri
       def request(method, params, reconnected: false, refreshed: false, asked: false)
         ensure_connected
         options = wire_options(method, params)
-        @sent = true
+        # A list that a call needed first is not the call.
+        @sent = true if method == "tools/call"
         rpc(method, params, **options)
       rescue AuthenticationError => e
         raise if refreshed || !renewable?(e)

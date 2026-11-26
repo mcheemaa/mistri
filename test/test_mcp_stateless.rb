@@ -106,6 +106,18 @@ class TestMcpStateless < Minitest::Test
     assert_equal 2, @server.sent("server/discover").length, "the server is asked, not the call"
   end
 
+  def test_a_call_whose_listing_failed_first_was_not_sent
+    client({}, read_timeout: 0.3).connect
+    @server.list_wait = 0.6
+    tool = Mistri::MCP.bridge(@client, { "name" => "empty" }, prefix: "billing")
+
+    result = tool.call({})
+
+    assert result.error
+    assert_match(/billing__empty did not run: timed out waiting for the MCP server/, result.content)
+    assert_empty @server.sent("tools/call")
+  end
+
   def test_a_request_from_the_server_gets_no_reply
     result = client.call_tool("requests", {})
 
