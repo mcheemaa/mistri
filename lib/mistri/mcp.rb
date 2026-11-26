@@ -78,7 +78,9 @@ module Mistri
     # The server's tools as Mistri tools. allow/deny filter by remote name,
     # prefix namespaces local names ("linear__create_issue") against
     # collisions, and gates marks tools needing human approval
-    # (gates: { "create_issue" => true }, or needs_approval: for all). A tool
+    # (gates: { "create_issue" => true }, or needs_approval: for all). A key
+    # of gates that names no tool of the server raises, and so does one of a
+    # parallel hash. A tool
     # that cannot be bridged is left out: the block is given its definition
     # and the error, and without a block it is named in a warning. deferred
     # keeps the server's tools out of the model's sight until a search loads
@@ -105,7 +107,7 @@ module Mistri
       taken = {}
       listed = client.tools
       reader = reader_name(client, listed, resources, prefix)
-      known_marks!(parallel, listed, reader)
+      { parallel:, gates: }.each { |option, keyed| known_keys!(option, keyed, listed, reader) }
       instructions = instructions_for(client, instructions)
       bridged = listed.filter_map do |tool|
         remote = tool["name"] if tool.is_a?(Hash)
@@ -177,19 +179,21 @@ module Mistri
     end
     private_class_method :saver
 
-    # A key that names no tool would leave the tool it was meant for to its
-    # hint, which can mark a tool the host set to run alone.
-    def known_marks!(parallel, listed, reader)
-      return unless parallel.is_a?(Hash)
+    # A key that names no tool leaves the tool it was meant for without what
+    # the host set: without its approval, or to a hint that can mark a tool
+    # the host set to run alone. A key may name a tool that allow or deny
+    # leaves out.
+    def known_keys!(option, keyed, listed, reader)
+      return unless keyed.is_a?(Hash)
 
-      unknown = parallel.keys - listed.grep(Hash).map { |tool| tool["name"] }
+      unknown = keyed.keys - listed.grep(Hash).map { |tool| tool["name"] }
       unknown -= [READ_RESOURCE] if reader
       return if unknown.empty?
 
       names = unknown.map { |name| label(name) }.join(", ")
-      raise ConfigurationError, "parallel: names no tool of this server: #{names}"
+      raise ConfigurationError, "#{option}: names no tool of this server: #{names}"
     end
-    private_class_method :known_marks!
+    private_class_method :known_keys!
 
     def claim(taken, local, remote)
       holder = taken[local]

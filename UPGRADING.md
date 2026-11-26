@@ -22,6 +22,19 @@ error when one call takes more than 300 seconds in all.
   `Mistri::MCP.tools(client, timeout: 1800)`.
 - For the earlier behaviour, pass `timeout: nil`.
 
+### A key of `gates:` that names no tool raises
+
+`Mistri::MCP.tools(client, gates: { "create_issue" => true })` now raises
+`Mistri::ConfigurationError` for a key that names no tool the server lists.
+Before, such a key was ignored and the tool ran with no approval.
+
+- Keys are remote names, as strings. A symbol names no tool.
+- A host that passes one hash to several servers gives each server the keys
+  of its own tools:
+  `gates: GATED.slice(*client.tools.map { |tool| tool["name"] })`.
+- A server that drops or renames a gated tool makes `MCP.tools` raise until
+  the hash is changed.
+
 ### `Mistri::MCP.tools` returns a tool that reads resources
 
 For a server that declares resources, `Mistri::MCP.tools` now returns one

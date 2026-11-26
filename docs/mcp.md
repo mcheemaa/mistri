@@ -407,7 +407,9 @@ name calls. A host that stores local names or holds approvals across runs for
 such a server should raise from the block.
 
 `needs_approval:` gates every bridged tool. `gates:` sets policy by remote name
-and overrides the shared default.
+and overrides the shared default. A key of `gates:` that names no tool of the
+server raises `Mistri::ConfigurationError`: a name spelled another way, or a
+symbol, would leave the tool it was meant for to run with no approval.
 
 A bridged tool is marked `parallel` when its server lists it with
 `readOnlyHint: true`, so it runs beside its marked neighbours in a turn. Any

@@ -5,6 +5,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+- A key of `gates:` that names no tool of the server raises
+  `Mistri::ConfigurationError`, as a key of a `parallel:` hash does. A name
+  spelled another way, or a symbol, matched no tool and said nothing, so the
+  tool it was meant for ran with no approval.
 - `Mistri::MCP::SDKClient` wraps a client of the official MCP Ruby SDK so it
   goes through `Mistri::MCP.tools`. Mistri still depends on no other gem.
   The docs say what the bridge needs of any client.
