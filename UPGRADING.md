@@ -13,6 +13,22 @@ test.
 
 Most hosts need no code change. Read the points that apply to you.
 
+### The cost of some models changed with the vendors' prices
+
+- `gpt-5.6-terra` and `gpt-5.6-luna` cost less, as OpenAI now bills them.
+  `gpt-5.6-sol` is on OpenAI's promotional price until the end of
+  November 30, 2026, Pacific time.
+- `gemini-3.5-flash` is priced as `gemini-3.6-flash`, which is the model that
+  answers it.
+- A host with a cost budget on one of these models reaches it later.
+
+### Gemini 4 compacts earlier than Gemini 3
+
+Input, thinking and output share the window of a Gemini 4 model. Automatic
+compaction starts at 978,944 tokens on these models. A host that moves a
+session from a Gemini 3 model to a Gemini 4 model does nothing, and sees the
+first compaction earlier.
+
 ### OpenAI receives the system prompt as a developer message
 
 On OpenAI's own origin the system prompt is now the first item of `input`, a
