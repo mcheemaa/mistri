@@ -5,6 +5,13 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+- A Gemini 4 answer that needs more than the 65,536 tokens of one request is
+  continued. When the API ends a request with `CONTINUATION`, Mistri sends the
+  same request again with the API's token and goes on in the same message, up
+  to 32 requests. Such an answer was stored as finished where its first
+  request ended. Its usage counts every request.
+- The Gemini provider takes `max_tokens:`, as the Anthropic provider does.
+  Without it a Gemini turn gets the API's default, which is one request.
 - `Usage#context` is what sits in the model's context after a turn that took
   more than one request, where the counts are the sum of every request.
   `Usage#context_tokens` is that figure for any turn, and the context level

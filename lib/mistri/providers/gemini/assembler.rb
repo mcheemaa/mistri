@@ -13,6 +13,12 @@ module Mistri
       #
       # Thought signatures ride on individual parts and are captured onto the
       # block they arrived with, verbatim, for replay.
+      #
+      # One answer can take several requests. A request that ends with
+      # CONTINUATION leaves its text open, because the next one goes on in the
+      # middle of a sentence. Each request is billed, so their usage is added
+      # up, and every request after the first reads the earlier output again
+      # as its prompt, so the context is kept as a figure of its own.
       class Assembler
         def initialize(model:, catalog_pricing: true, service_tier: nil)
           @model = model
@@ -24,7 +30,12 @@ module Mistri
           @usage = Usage.new
           @finish_reason = nil
           @terminal = false
+          @requests = 1
         end
+
+        # The window divided by the fewest tokens one request returns.
+        MAX_REQUESTS = 32
+        CONTINUATION = "CONTINUATION"
 
         # Finish reasons that are the provider's verdict on the content
         # itself: a retry of the same input meets the same filter, and a
@@ -73,12 +84,31 @@ module Mistri
           Array(candidate.dig("content", "parts")).each_with_index do |part, index|
             fold_part(part, part_boundary: index.positive?, &)
           end
+          @token = candidate["continuationToken"] if candidate["continuationToken"]
           @finish_reason = candidate["finishReason"] if candidate["finishReason"]
           @terminal = true if @finish_reason || @block_reason
-          close_current(&) if @terminal
+          close_current(&) if @terminal && @finish_reason != CONTINUATION
           ingest_usage(record)
         end
         private :after_terminal, :record_error, :fold_record
+
+        # Called when a request has ended. Returns the token to send the same
+        # request again with when the answer goes on, and nil when it is over.
+        def continue
+          return nil unless @finish_reason == CONTINUATION && @error.nil?
+          return cannot_continue("carried no token to go on with") unless @token
+          if @requests >= MAX_REQUESTS
+            return cannot_continue("went on past #{MAX_REQUESTS} requests")
+          end
+
+          @requests += 1
+          bank_usage
+          @finish_reason = nil
+          @terminal = false
+          token = @token
+          @token = nil
+          token
+        end
 
         # A stream that ended without a finishReason was truncated, not
         # cancelled: fail it so the loop can treat it as retryable.
@@ -237,8 +267,28 @@ module Mistri
           ProviderError.new("generation stopped: #{@finish_reason}")
         end
 
+        def cannot_continue(reason)
+          @error = ProviderError.new("the answer #{reason}")
+          nil
+        end
+
+        def bank_usage
+          @first_prompt ||= @usage.prompt_tokens
+          invalidate_cost unless @usage_authoritative
+          @earlier = @earlier ? @earlier + @usage : @usage
+          @usage = Usage.new
+          @usage_authoritative = false
+        end
+
+        def answer_usage
+          return @usage unless @earlier
+
+          total = @earlier + @usage
+          total.with(context: @first_prompt + total.output)
+        end
+
         def stop_reason
-          return StopReason::LENGTH if @finish_reason == "MAX_TOKENS"
+          return StopReason::LENGTH if ["MAX_TOKENS", CONTINUATION].include?(@finish_reason)
           return StopReason::TOOL_USE if @blocks.any?(ToolCall)
 
           StopReason::STOP
@@ -259,7 +309,7 @@ module Mistri
           blocks = @blocks.dup
           blocks << build_current if @current
           Message.assistant(content: blocks, model: @model, provider: :gemini,
-                            usage: @usage, **meta)
+                            usage: answer_usage, **meta)
         end
 
         def parse_usage(raw)
