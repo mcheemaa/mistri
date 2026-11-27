@@ -9,6 +9,11 @@ module Mistri
   # writes are separate fields, so a cached token is never double-billed.
   # `reasoning` is the thinking slice of `output`. `cache_write_1h` is the slice
   # of `cache_write` held for an hour, which bills at twice the input rate.
+  #
+  # A turn that took several requests counts every request, because each one
+  # is billed, and every request after the first reads the earlier ones again.
+  # `context` is then what sits in the model's context once the turn ends. It
+  # stays outside the released Data shape, as Cost#known does.
   class Usage < Data.define(:input, :output, :cache_read, :cache_write,
                             :cache_write_1h, :reasoning, :cost)
     # Dollar amounts plus whether every contributing token had known pricing.
@@ -57,8 +62,9 @@ module Mistri
     end
 
     def initialize(input: 0, output: 0, cache_read: 0, cache_write: 0,
-                   cache_write_1h: 0, reasoning: 0, cost: Cost.unknown)
-      super
+                   cache_write_1h: 0, reasoning: 0, cost: Cost.unknown, context: nil)
+      @context = context if context
+      super(input:, output:, cache_read:, cache_write:, cache_write_1h:, reasoning:, cost:)
     end
 
     def self.zero = new(cost: Cost.zero)
@@ -77,8 +83,28 @@ module Mistri
                   total: c.fetch("total", 0).to_f }
       known = c.fetch("known", false) == true
       known ||= !c.key?("known") && counts.values.all?(&:zero?) && amounts.values.all?(&:zero?)
-      new(**counts, cost: Cost.new(**amounts, known:))
+      new(**counts, cost: Cost.new(**amounts, known:), context: h["context"]&.to_i)
     end
+
+    def self._load(payload) = from_h(JSON.parse(payload))
+
+    def context = defined?(@context) ? @context : nil
+
+    # The tokens in the model's context once this turn ended.
+    def context_tokens = context || (prompt_tokens + output)
+
+    def with(**changes)
+      self.class.new(**self.class.members.to_h { |member| [member, public_send(member)] },
+                     context:, **changes)
+    end
+
+    def ==(other) = super && context == other.context
+
+    alias eql? ==
+
+    def hash = [super, context].hash
+
+    def _dump(_level) = JSON.generate(to_h)
 
     def prompt_tokens = input + cache_read + cache_write
 
@@ -110,7 +136,10 @@ module Mistri
                      cost: cost + other.cost)
     end
 
-    def to_h = super.merge(cost: cost.to_h)
+    def to_h
+      serialized = super.merge(cost: cost.to_h)
+      context ? serialized.merge(context:) : serialized
+    end
 
     private
 

@@ -115,8 +115,7 @@ module Mistri
         return nil unless message.assistant? && message.usage
         return nil if %i[aborted error].include?(message.stop_reason)
 
-        usage = message.usage
-        total = usage.input + usage.cache_read + usage.cache_write + usage.output
+        total = message.usage.context_tokens
         total.positive? ? total : nil
       end
 
