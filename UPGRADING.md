@@ -13,6 +13,20 @@ test.
 
 Most hosts need no code change. Read the points that apply to you.
 
+### OpenAI receives the system prompt as a developer message
+
+On OpenAI's own origin the system prompt is now the first item of `input`, a
+message with the role `developer`. The request holds no `instructions`.
+
+- Most hosts do nothing. On GPT-6.2 the system prompt is read from the cache
+  from the second request on. On earlier models the cost does not change.
+- A gateway or a test that reads `instructions` from the request body reads
+  the first input item.
+- A session on GPT-6.2 that began on an earlier release loses the reasoning of
+  its earlier turns once, on its first request after the upgrade. The stream
+  says so with `:thinking_dropped`.
+- Another origin still receives `instructions`.
+
 ### A bridged MCP tool has a limit of 300 seconds
 
 A tool from `Mistri::MCP.tools` or `Mistri::MCP.bridge` now ends as a tool

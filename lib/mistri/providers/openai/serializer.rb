@@ -69,7 +69,10 @@ module Mistri
         # A reminder as a developer message. The API takes one anywhere in the
         # input, so it is sent where the conversation holds it.
         def developer_item(msg)
-          texts = msg.content.grep(Content::Text).map(&:text)
+          developer_message(msg.content.grep(Content::Text).map(&:text))
+        end
+
+        def developer_message(texts)
           { role: "developer", content: texts.map { |text| { type: "input_text", text: } } }
         end
 

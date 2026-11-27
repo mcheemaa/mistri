@@ -51,9 +51,10 @@ module Mistri
         @defers_tools.nil? ? @official && Models.tool_loading?(@model) : @defers_tools
       end
 
-      # The API takes a developer message anywhere in a conversation, and a
-      # reminder is sent as one. Another origin may refuse the role, and
-      # receives a reminder as text of a user turn.
+      # The API takes a developer message anywhere in a conversation. A
+      # reminder is sent as one, and so is the system prompt. Another origin
+      # may refuse the role, and receives a reminder as text of a user turn
+      # and the system prompt as instructions.
       def system_messages? = @official
 
       def stream(messages:, system: nil, tools: [], signal: nil, **overrides, &emit)
@@ -82,16 +83,12 @@ module Mistri
       def official_origin?(origin) = origin.to_s.delete_suffix("/") == DEFAULT_ORIGIN
 
       def build_body(model, messages, system, tools, overrides)
-        body = {
-          model: model,
-          input: Serializer.input_items(messages,
-                                        deferred: overrides.fetch(:deferred_tools, []),
-                                        system_messages: system_messages?),
-          stream: true,
-          store: false,
-          include: ["reasoning.encrypted_content"]
-        }
-        body[:instructions] = system if system && !system.empty?
+        input = Serializer.input_items(messages,
+                                       deferred: overrides.fetch(:deferred_tools, []),
+                                       system_messages: system_messages?)
+        body = { model: model, input: input, stream: true, store: false,
+                 include: ["reasoning.encrypted_content"] }
+        place_system(body, system) if system && !system.empty?
         body[:tools] = Serializer.tools(tools) if tools.any?
         service_tier = overrides.fetch(:service_tier, @service_tier)
         body[:service_tier] = service_tier if service_tier
@@ -103,6 +100,17 @@ module Mistri
                                     schema: Schema.strict(schema, all_required: true) } }
         end
         body
+      end
+
+      # GPT-6.2 and later append top-level instructions after the input,
+      # where no cache breakpoint reaches them, so the system prompt leads
+      # the input. Earlier models cache both forms as one prefix.
+      def place_system(body, system)
+        if system_messages?
+          body[:input].unshift(Serializer.developer_message([system]))
+        else
+          body[:instructions] = system
+        end
       end
 
       def headers

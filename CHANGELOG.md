@@ -5,6 +5,11 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+- On OpenAI's own origin the system prompt is sent as a developer message at
+  the start of the input, and no longer as `instructions`. GPT-6.2 appends
+  `instructions` after the input and never caches them, so each request paid
+  for the whole system prompt. Earlier models cache both forms as one prefix.
+  Another origin still receives `instructions`.
 - `gpt-6.2-sol`, `gpt-6.2-astra` and `gpt-6-sol` are in the model catalog,
   with their windows and prices.
 - The catalog's prices for `gpt-5.6-terra` and `gpt-5.6-luna` are OpenAI's
