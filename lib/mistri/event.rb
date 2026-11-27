@@ -31,8 +31,9 @@ module Mistri
     # :subagent_report announces a background child's terminal outcome
     # (agent, session_id, status; content carries the report), so a UI that
     # watched the spawn can settle the child's lane the moment it ends.
-    # :thinking_dropped follows :start when the provider discarded replayed
-    # thinking it could no longer verify; content carries its reasons.
+    # :thinking_dropped says the provider discarded replayed thinking it could
+    # no longer verify; content carries its reasons. Anthropic sends it after
+    # :start, and OpenAI only with the finished response.
     TYPES = %i[
       start
       thinking_dropped

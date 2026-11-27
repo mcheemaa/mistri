@@ -5,6 +5,9 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+- An OpenAI stream emits `:thinking_dropped` when the API removed replayed
+  reasoning, with its reasons, as an Anthropic stream does. GPT-6.2 removes
+  reasoning after a change to the history before it and still answers 200.
 - On OpenAI's own origin the system prompt is sent as a developer message at
   the start of the input, and no longer as `instructions`. GPT-6.2 appends
   `instructions` after the input and never caches them, so each request paid

@@ -515,7 +515,37 @@ class TestOpenAIAssembler < Minitest::Test # rubocop:disable Metrics/ClassLength
     assert_equal %i[toolcall_start toolcall_delta toolcall_end error], events.map(&:type)
   end
 
+  def test_reasoning_the_api_removed_is_reported_once
+    events = []
+    message = drive(events, [finished_with([removed("prefix_mismatch"),
+                                            removed("prefix_mismatch"),
+                                            removed("model_mismatch")])])
+    reports = events.select { |event| event.type == :thinking_dropped }
+
+    assert_equal ["prefix_mismatch, model_mismatch"], reports.map(&:content)
+    assert_equal :stop, message.stop_reason
+    assert_equal %i[thinking_dropped done], events.last(2).map(&:type)
+  end
+
+  def test_reasoning_that_was_kept_or_left_out_by_design_is_not_reported
+    events = []
+    [nil, [], [removed("turn_boundary")], [{ "type" => "something_new" }],
+     [{ "type" => "reasoning", "action" => "kept", "reason" => "prefix_mismatch" }]]
+      .each { |transformations| drive(events, [finished_with(transformations)]) }
+
+    assert_empty(events.select { |event| event.type == :thinking_dropped })
+  end
+
   private
+
+  def removed(reason)
+    { "type" => "reasoning", "id" => "rs_1", "action" => "removed", "reason" => reason }
+  end
+
+  def finished_with(transformations)
+    { "type" => "response.completed",
+      "response" => { "status" => "completed", "input_transformations" => transformations } }
+  end
 
   def tool_argument_limit
     Mistri.const_get(:ToolArguments, false)::MAX_BYTES
