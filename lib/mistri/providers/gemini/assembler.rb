@@ -159,10 +159,14 @@ module Mistri
         def fold_part(part, part_boundary: false, &)
           if part.key?("functionCall")
             fold_function_call(part, &)
-          elsif part.key?("text")
+          elsif part.key?("text") && !hollow?(part)
             fold_text(part, part["thought"] ? :thinking : :text, part_boundary:, &)
           end
         end
+
+        # The API ends a turn that calls a tool with a text part of no text.
+        # Without a signature it holds nothing to show and nothing to replay.
+        def hollow?(part) = part["text"].to_s.empty? && part["thoughtSignature"].nil?
 
         def terminal_content?(record)
           return true if record["error"]
