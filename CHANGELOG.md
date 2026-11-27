@@ -5,6 +5,12 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+- `gpt-6.2-sol`, `gpt-6.2-astra` and `gpt-6-sol` are in the model catalog,
+  with their windows and prices.
+- The catalog's prices for `gpt-5.6-terra` and `gpt-5.6-luna` are OpenAI's
+  current ones, which are lower. `gpt-5.6-sol` holds its promotional price
+  until the end of November 30, 2026, Pacific time, and its list price from
+  then on. The cost that Mistri reports for these models changes with them.
 - A key of `gates:` that names no tool of the server raises
   `Mistri::ConfigurationError`, as a key of a `parallel:` hash does. A name
   spelled another way, or a symbol, matched no tool and said nothing, so the
