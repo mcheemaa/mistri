@@ -5,6 +5,14 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+- `gemini-4-carbon`, `gemini-4-argon`, `gemini-4-neon` and `gemini-4-hydrogen`
+  are in the model catalog. Input, thinking and output share their window, so
+  automatic compaction starts at 978,944 tokens on them, where a Gemini 3
+  model starts at 1,032,192. Carbon and Argon hold their introductory price
+  through November 30, 2026, and their list price from then on.
+- `gemini-3.6-flash` and `gemini-3.5-flash-lite` are in the catalog. Google
+  answers a request for `gemini-3.5-flash` with `gemini-3.6-flash`, so the
+  older id resolves to that row and is priced as it.
 - An OpenAI stream emits `:thinking_dropped` when the API removed replayed
   reasoning, with its reasons, as an Anthropic stream does. GPT-6.2 removes
   reasoning after a change to the history before it and still answers 200.

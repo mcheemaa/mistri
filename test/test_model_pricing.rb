@@ -142,6 +142,31 @@ class TestModelPricing < Minitest::Test
     assert_in_delta 18.0, rates[:output]
   end
 
+  def test_gemini_4_prices_and_the_end_of_the_introductory_price
+    intro = { input: 2.0, output: 10.0, cache_read: 0.1 }
+    list = { input: 4.0, output: 20.0, cache_read: 0.2 }
+    large = Mistri::Usage.new(input: 900_000)
+
+    %w[gemini-4-carbon gemini-4-argon].each do |id|
+      assert_equal intro, Mistri::Models.rates(id, at: Time.utc(2026, 11, 30, 23, 59, 59))
+      assert_equal list, Mistri::Models.rates(id, at: Time.utc(2026, 12, 1))
+      assert_equal list, Mistri::Models.rates(id, usage: large, at: Time.utc(2026, 12, 1))
+    end
+    assert_equal({ input: 3.0, output: 15.0, cache_read: 0.15 },
+                 Mistri::Models.rates("gemini-4-neon", usage: large))
+    assert_equal({ input: 1.5, output: 7.5, cache_read: 0.075 },
+                 Mistri::Models.rates("gemini-4-hydrogen", usage: large))
+  end
+
+  def test_the_earlier_gemini_flash_models_carry_their_published_rates
+    assert_equal({ input: 0.75, output: 3.75, cache_read: 0.075 },
+                 Mistri::Models.rates("gemini-3.6-flash", at: Time.utc(2026, 12, 31)))
+    assert_equal({ input: 1.5, output: 7.5, cache_read: 0.15 },
+                 Mistri::Models.rates("gemini-3.5-flash", at: Time.utc(2027, 1, 1)))
+    assert_equal({ input: 0.3, output: 2.5, cache_read: 0.03 },
+                 Mistri::Models.rates("gemini-3.5-flash-lite"))
+  end
+
   def test_flat_pricing_does_not_change_for_large_prompts
     usage = Mistri::Usage.new(input: 900_000)
 

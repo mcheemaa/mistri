@@ -28,8 +28,10 @@ class TestModels < Minitest::Test
       assert_equal 1_050_000, Mistri::Models.find(model).context_window
     end
     assert_equal 400_000, Mistri::Models.find("gpt-5-nano").context_window
-    %w[gemini-3.5-flash gemini-3.1-pro-preview gemini-3.8-flash].each do |model|
+    %w[gemini-4-carbon gemini-4-argon gemini-4-neon gemini-4-hydrogen gemini-3.8-flash
+       gemini-3.6-flash gemini-3.5-flash-lite gemini-3.1-pro-preview].each do |model|
       assert_equal 1_048_576, Mistri::Models.find(model).context_window
+      assert_equal 65_536, Mistri::Models.max_output(model)
     end
     assert_equal 1_000_000,
                  Mistri::Models.find("claude-opus-4-8-20260701").context_window
@@ -39,8 +41,18 @@ class TestModels < Minitest::Test
     %w[gpt-6-astra gpt-6.1-sol gpt-6.1-terra claude-opus-5-5 claude-fable-5-1].each do |id|
       assert_equal 128_000, Mistri::Models.shared_output(id)
     end
-    assert_nil Mistri::Models.shared_output("gemini-3.1-pro-preview")
-    assert_nil Mistri::Models.shared_output("future-model")
+    %w[gemini-4-carbon gemini-4-argon gemini-4-neon gemini-4-hydrogen].each do |id|
+      assert_equal 65_536, Mistri::Models.shared_output(id)
+    end
+    %w[gemini-3.8-flash gemini-3.6-flash gemini-3.5-flash gemini-3.5-flash-lite
+       gemini-3.1-pro-preview future-model].each do |id|
+      assert_nil Mistri::Models.shared_output(id)
+    end
+  end
+
+  def test_a_model_the_api_answers_with_another_resolves_to_that_model
+    assert_equal "gemini-3.6-flash", Mistri::Models.find("gemini-3.5-flash").id
+    refute Mistri::Models::CATALOG.key?("gemini-3.5-flash")
   end
 
   def test_pricing_participates_in_model_value_semantics_and_marshalling
