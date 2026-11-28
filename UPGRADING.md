@@ -17,7 +17,8 @@ Most hosts need no code change. Read the points that apply to you.
 
 The request that writes a compaction's summary now holds the agent's system
 prompt, its tools and the messages up to the cut, and ends with the summary
-prompt. Before, it held one text and the compactor's own system prompt.
+prompt, as a system message where the provider takes one. Before, it held one
+text and the compactor's own system prompt.
 
 - Most hosts do nothing. The request reads the session's prompt cache and
   costs less.
@@ -27,8 +28,9 @@ prompt. Before, it held one text and the compactor's own system prompt.
 - A custom provider, a gateway or a test that looked for the text
   `<conversation>` in the summary request finds the conversation's own
   messages, and the summary prompt in the last one.
-- A reply that calls a tool is not a summary. A configured `fallback:` is
-  then asked with the text, as for any other failure.
+- A reply that calls a tool is not a summary. The same provider is then asked
+  once more, with the text. After any other failure a configured `fallback:`
+  is asked with the text, as before.
 
 ### A compaction keeps what `keep_recent:` says, and the level reads higher
 

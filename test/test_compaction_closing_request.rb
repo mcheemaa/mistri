@@ -4,7 +4,8 @@ require_relative "test_helper"
 
 # An agent's summary request repeats the conversation up to the cut as its
 # turns sent it and ends with the summary prompt, so it reads the session's
-# prompt cache. A fallback, and a compaction outside an agent, get the text.
+# prompt cache. A fallback, and a compaction outside an agent, get the text,
+# and so does a provider whose reply went on with the conversation.
 class TestCompactionClosingRequest < Minitest::Test
   COMPACTOR = Mistri::Compactor
 
@@ -19,6 +20,7 @@ class TestCompactionClosingRequest < Minitest::Test
 
     assert_equal ["q1 " * 50, "a1 " * 200, COMPACTOR::CLOSING_CHECKPOINT_PROMPT],
                  request[:messages].map(&:text)
+    assert_equal "compaction", request[:messages].last.reminder
     assert_equal "Be exact.", request[:options][:system]
     assert_equal(["read"], request[:options][:tools].map { |spec| spec[:name] })
     assert_equal 2_000, request[:options][:max_tokens]
@@ -70,21 +72,48 @@ class TestCompactionClosingRequest < Minitest::Test
                  provider.requests.first[:messages].last(2).map(&:text)
   end
 
-  def test_a_fallback_is_given_the_text_when_the_reply_to_the_request_is_no_summary
-    provider = Mistri::Providers::Fake.new(turns: [{ tool_calls: [{ name: "read" }] }])
-    fallback = Mistri::Providers::Fake.new(turns: [{ text: "From the text." }])
+  def test_the_prompt_is_a_user_message_for_a_provider_with_no_system_message_in_a_conversation
+    provider = Class.new(Mistri::Providers::Fake) { def system_messages? = false }
+                    .new(turns: [{ text: "Summary." }])
+    agent = Mistri::Agent.new(provider:, session: seeded_session, compaction: settings)
+
+    agent.compact
+    closing = provider.requests.first[:messages].last
+
+    assert_predicate closing, :user?
+    assert_equal COMPACTOR::CLOSING_CHECKPOINT_PROMPT, closing.text
+  end
+
+  def test_a_provider_that_went_on_with_the_conversation_is_asked_again_with_the_text
+    usage = Mistri::Usage.new(input: 10, output: 5)
+    provider = Mistri::Providers::Fake.new(turns: [{ tool_calls: [{ name: "read" }], usage: },
+                                                   { text: "From the text.", usage: }])
+    agent = Mistri::Agent.new(provider:, session: seeded_session, compaction: settings)
+
+    result = agent.compact
+    text = provider.requests.last
+
+    assert_equal 2, provider.requests.length
+    assert_equal 1, text[:messages].length
+    assert_includes text[:messages].first.text, "<conversation>"
+    assert_equal COMPACTOR::SUMMARIZER_SYSTEM, text[:options][:system]
+    refute text[:options][:cache]
+    assert_equal "From the text.", agent.session.last_compaction["summary"]
+    assert_equal [20, 10], [result[:usage].input, result[:usage].output]
+  end
+
+  def test_a_failed_request_goes_to_the_fallback_and_not_to_the_text_of_the_same_provider
+    provider = Mistri::Providers::Fake.new(turns: [{ error: "overloaded" }])
+    fallback = Mistri::Providers::Fake.new(turns: [{ text: "From the fallback." }])
     fallback.define_singleton_method(:model) { "fake-2" }
     agent = Mistri::Agent.new(provider:, session: seeded_session,
                               compaction: settings(fallback:))
 
     agent.compact
-    request = fallback.requests.first
 
-    assert_equal 1, request[:messages].length
-    assert_includes request[:messages].first.text, "<conversation>"
-    assert_equal COMPACTOR::SUMMARIZER_SYSTEM, request[:options][:system]
-    refute request[:options][:cache]
-    assert_equal "From the text.", agent.session.last_compaction["summary"]
+    assert_equal 1, provider.requests.length
+    assert_includes fallback.requests.first[:messages].first.text, "<conversation>"
+    assert_equal "From the fallback.", agent.session.last_compaction["summary"]
   end
 
   def test_a_compaction_outside_an_agent_sends_the_text

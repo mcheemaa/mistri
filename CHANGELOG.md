@@ -7,13 +7,15 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 - An agent's compaction asks for its summary with the conversation itself:
   the system prompt, the tools and the messages up to the cut as the turns
-  sent them, then the summary prompt as a user message. The request reads the
+  sent them, then the summary prompt, as a system message where the provider
+  takes one in a conversation. The request reads the
   session's prompt cache, and the summarizer reads every tool result whole.
   On one conversation the request read 91 to 97 percent of its prompt from
   the cache on Claude, GPT and Gemini and cost 60 to 68 percent less. It runs
   with the host's thinking and reasoning settings, where the summary request
-  ran with the API's default. A `fallback:`, and `Compactor.call` outside an
-  agent, still send the part before the cut as one text.
+  ran with the API's default. A reply that calls a tool is asked for again
+  with the text. A `fallback:`, and `Compactor.call` outside an agent, still
+  send the part before the cut as one text.
   `Compactor.call` takes `request:` for this.
 - The summary request of a compaction writes no cache. On Anthropic it carries
   no breakpoint, and on OpenAI from GPT-5.6 on it is sent with

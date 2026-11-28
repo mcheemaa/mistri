@@ -119,9 +119,9 @@ module Mistri
       #{LENGTH_RULE}
     PROMPT
 
-    # The summary prompt for a request that repeats the conversation itself:
-    # it comes last, as a user message, and has to take the model out of the
-    # conversation it has just read.
+    # The summary prompt for a request that repeats the conversation itself.
+    # It comes last and has to take the model out of the conversation it has
+    # just read.
     CLOSING_NOTE = <<~NOTE
       Stop here. The conversation above is being handed to another model, and you now write
       the record of it. You are not a participant: do not answer the conversation, do not
@@ -180,7 +180,7 @@ module Mistri
         emit&.call(Event.new(type: :compacting))
         tokens_before = session.context_level(provider: estimator).tokens
         asks = { text: prompt_for(head, previous, settings),
-                 closing: closing_request(request, sent, previous, settings) }
+                 closing: closing_request(provider, request, sent, previous, settings) }
         reply, usage, failures = attempt(summarizers(provider, settings), settings, budget, asks)
         reject(session, failures.join("; "), trigger, tokens_before, usage, &emit) unless reply
 
@@ -234,14 +234,19 @@ module Mistri
       end
 
       # The conversation up to the cut as its turns sent it, with the summary
-      # prompt after it. Nil without the request of a turn.
-      def closing_request(request, sent, previous, settings)
+      # prompt after it. Nil without the request of a turn. The prompt is a
+      # system message where the provider takes one in a conversation: as a
+      # user message, a model in the middle of a tool loop went on with the
+      # loop in two of four tries.
+      def closing_request(provider, request, sent, previous, settings)
         return nil unless request
 
         arguments = request.call(sent)
         prompt = previous ? CLOSING_UPDATE_PROMPT : CLOSING_CHECKPOINT_PROMPT
         prompt += "\nAdditional focus: #{settings.instructions}\n" if settings.instructions
-        arguments.merge(messages: arguments.fetch(:messages) + [Message.user(prompt)])
+        system = provider.respond_to?(:system_messages?) && provider.system_messages?
+        closing = system ? Message.reminder("compaction", prompt) : Message.user(prompt)
+        arguments.merge(messages: arguments.fetch(:messages) + [closing])
       end
 
       def counter(provider, request)
@@ -273,9 +278,10 @@ module Mistri
         usage = nil
         failures = []
         summarizers.each_with_index do |summarizer, position|
-          reply = summarize(summarizer, settings, asks[:text], (asks[:closing] if position.zero?))
+          replies = summarize(summarizer, settings, asks[:text], (asks[:closing] if position.zero?))
+          reply = replies.last
           reply = reply.with(model: summarizer.model) unless reply.model
-          measured = reply.usage || Usage.new
+          measured = replies.map { |given| given.usage || Usage.new }.reduce(:+)
           usage = usage ? usage + measured : measured
           failure = summary_failure(reply)
           return [reply, usage, failures] unless failure
@@ -291,13 +297,20 @@ module Mistri
       # cache and the summarizer reads every tool result whole. It runs with
       # the host's thinking and tools, because the cached messages depend on
       # both. A fallback cannot read that cache, and a compaction outside an
-      # agent has no request to repeat: each is given the text.
+      # agent has no request to repeat: each is given the text. So is a
+      # provider whose reply went on with the conversation, which is the
+      # request failing and not the model. Returns each reply that was given.
       def summarize(provider, settings, text, closing)
         overrides = request_overrides(provider, settings)
-        return provider.stream(**closing, max_tokens: overrides[:max_tokens]) if closing
+        replies = []
+        replies << provider.stream(**closing, max_tokens: overrides[:max_tokens]) if closing
+        return replies unless replies.empty? || went_on?(replies.last)
 
-        provider.stream(messages: [Message.user(text)], system: SUMMARIZER_SYSTEM, **overrides)
+        replies << provider.stream(messages: [Message.user(text)], system: SUMMARIZER_SYSTEM,
+                                   **overrides)
       end
+
+      def went_on?(reply) = reply.stop_reason == StopReason::TOOL_USE || reply.tool_calls?
 
       # The text is the compactor's own request. Its output limit comes from
       # the settings, never from the limit a host set for chat replies, and

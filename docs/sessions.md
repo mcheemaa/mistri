@@ -352,10 +352,14 @@ OpenAI do.
 
 An agent asks for the summary with the conversation itself. The request
 repeats the system prompt, the tools and the messages up to the cut as the
-turns sent them, and ends with the summary prompt as a user message. While
-the session's prompt cache is warm the request reads it, and the summarizer
-reads every tool result whole. The request runs with the host's thinking and
-reasoning settings, because the cached messages depend on them.
+turns sent them, and ends with the summary prompt. The prompt is a system
+message where the provider takes one in a conversation, and a user message
+otherwise. While the session's prompt cache is warm the request reads it, and
+the summarizer reads every tool result whole. The request runs with the
+host's thinking and reasoning settings, because the cached messages depend on
+them. A reply that goes on with the conversation and calls a tool is not a
+summary: the same provider is then asked once more, with the text described
+below.
 
 `max_tokens:` bounds the summary's output on every built-in provider (16,384
 by default, never more than the model's published output limit; sent as
