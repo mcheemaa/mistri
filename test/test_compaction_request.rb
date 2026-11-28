@@ -77,6 +77,54 @@ class TestCompactionRequest < Minitest::Test
     [openai, gemini, anthropic].compact.each(&:close)
   end
 
+  def test_the_summary_request_asks_for_no_cache_write
+    provider = Mistri::Providers::Fake.new(turns: [{ text: "Summary." }])
+
+    Mistri::Compactor.call(session: history, provider:, settings: settings)
+
+    options = provider.requests.first[:options]
+
+    assert options.key?(:cache)
+    refute options[:cache]
+  end
+
+  def test_anthropic_sets_no_breakpoint_on_a_request_that_asks_for_no_cache
+    anthropic = Mistri::Providers::Anthropic.new(api_key: "k", model: "claude-opus-5-5")
+    marked = ->(body) { JSON.generate(body).scan("cache_control").length }
+
+    ordinary = anthropic.send(:build_body, "claude-opus-5-5", HISTORY, "Be exact.", [], {})
+    summary = anthropic.send(:build_body, "claude-opus-5-5", HISTORY, "Be exact.", [],
+                             { cache: false })
+
+    assert_equal 2, marked.call(ordinary)
+    assert_equal 0, marked.call(summary)
+  ensure
+    anthropic&.close
+  end
+
+  def test_openai_writes_no_cache_for_such_a_request_on_a_model_that_bills_the_write
+    openai = Mistri::Providers::OpenAI.new(api_key: "k")
+    gateway = Mistri::Providers::OpenAI.new(api_key: "k", origin: "https://gateway.example")
+    options = lambda do |provider, model, overrides|
+      provider.send(:build_body, model, HISTORY, nil, [], overrides)[:prompt_cache_options]
+    end
+
+    assert_equal({ mode: "explicit" }, options.call(openai, "gpt-6.2-sol", { cache: false }))
+    assert_nil options.call(openai, "gpt-6.2-sol", {})
+    assert_nil options.call(openai, "gpt-5.5", { cache: false })
+    assert_nil options.call(gateway, "gpt-6.2-sol", { cache: false })
+  ensure
+    [openai, gateway].compact.each(&:close)
+  end
+
+  def test_the_cache_options_are_read_from_the_version_in_a_model_id
+    taken = %w[gpt-5.6-sol gpt-6-luna gpt-6.2-astra gpt-7 gpt-5.6-sol-2026-11-01]
+    refused = %w[gpt-5.5 gpt-5.4 gpt-5-nano claude-opus-5-5 gemini-4-argon custom]
+
+    assert(taken.all? { |id| Mistri::Models.cache_options?(id) })
+    assert(refused.none? { |id| Mistri::Models.cache_options?(id) })
+  end
+
   def test_the_summary_limit_must_be_a_positive_integer
     [nil, 0, -1, 1.5, "400", false].each do |value|
       error = assert_raises(ArgumentError) { Mistri::Compaction.new(max_tokens: value) }

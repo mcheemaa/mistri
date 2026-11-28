@@ -235,11 +235,13 @@ module Mistri
       # The summary is the compactor's own request. Its output limit comes
       # from the settings, never from the limit a host set for chat replies,
       # and it runs with the API's default thinking and reasoning, so a host
-      # thinking budget or reasoning effort cannot shape or outsize it.
+      # thinking budget or reasoning effort cannot shape or outsize it. No
+      # later request has its text as a prefix, so it writes no cache.
       # Commercial settings (keys, origin, service tier) stay the host's.
       def request_overrides(provider, settings)
         ceiling = Models.max_output(provider.model)
-        { max_tokens: [settings.max_tokens, ceiling].compact.min, thinking: nil, reasoning: nil }
+        { max_tokens: [settings.max_tokens, ceiling].compact.min, thinking: nil, reasoning: nil,
+          cache: false }
       end
 
       def summary_failure(reply)

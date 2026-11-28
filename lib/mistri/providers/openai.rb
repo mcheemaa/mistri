@@ -108,6 +108,7 @@ module Mistri
         reasoning = overrides.fetch(:reasoning, @reasoning)
         body[:reasoning] = reasoning if reasoning
         body[:max_output_tokens] = overrides[:max_tokens] if overrides[:max_tokens]
+        body[:prompt_cache_options] = { mode: "explicit" } if writes_no_cache?(model, overrides)
         if (schema = overrides[:output_schema])
           body[:text] = { format: { type: "json_schema", name: "output", strict: true,
                                     schema: Schema.strict(schema, all_required: true) } }
@@ -124,6 +125,12 @@ module Mistri
         else
           body[:instructions] = system
         end
+      end
+
+      # A request of one kind, such as a summary, would pay to write a cache
+      # that nothing reads. The explicit mode with no breakpoint writes none.
+      def writes_no_cache?(model, overrides)
+        overrides[:cache] == false && @official && Models.cache_options?(model)
       end
 
       def headers

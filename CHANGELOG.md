@@ -5,6 +5,12 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+- The summary request of a compaction writes no cache. On Anthropic it carries
+  no breakpoint, and on OpenAI from GPT-5.6 on it is sent with
+  `prompt_cache_options` in the explicit mode. Before, its whole text was
+  billed as a cache write that no later request could read: 20,553 tokens on
+  Claude and 15,396 on GPT for one session of 21 turns. A provider is asked
+  for this with `cache: false` among the options of `stream`.
 - The context level is the provider's own count wherever one can be had.
   `agent.context_usage` has one more key, `estimated`: how many of its tokens
   Mistri estimated, which is zero after each answer.

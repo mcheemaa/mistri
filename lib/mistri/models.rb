@@ -220,6 +220,7 @@ module Mistri
                              claude-opus-4-6 claude-sonnet-5 claude-sonnet-4-6
                              claude-haiku-4-5].freeze
     TOOL_LOADING_FROM = [5, 4].freeze
+    CACHE_OPTIONS_FROM = [5, 6].freeze
     SYSTEM_MESSAGES_FROM = { "opus" => [4, 8], "sonnet" => [5, 5], "haiku" => [5, 5],
                              "fable" => [5], "mythos" => [5] }.freeze
 
@@ -262,6 +263,15 @@ module Mistri
       return false if version.nil? || id.to_s.include?("-nano")
 
       (version.split(".").map(&:to_i) <=> TOOL_LOADING_FROM) >= 0
+    end
+
+    # OpenAI bills a cache write from gpt-5.6 on, and takes
+    # prompt_cache_options to say where one ends. An earlier model writes for
+    # nothing and refuses the option. The version is read from the id, as for
+    # tool_loading?.
+    def self.cache_options?(id)
+      version = id.to_s[/\Agpt-(\d+(?:\.\d+)?)/, 1]
+      !version.nil? && (version.split(".").map(&:to_i) <=> CACHE_OPTIONS_FROM) >= 0
     end
 
     # Anthropic takes a system message in the middle of a conversation from

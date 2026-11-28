@@ -110,14 +110,15 @@ module Mistri
       def build_body(model, messages, system, tools, overrides)
         definitions = Serializer.tools(tools, overrides[:deferred_tools])
         deferred = Serializer.referable(definitions)
+        cache = overrides.fetch(:cache, @cache)
         body = {
           model: model,
           max_tokens: max_tokens_for(model, overrides),
           stream: true,
-          messages: Serializer.messages(messages, cache: @cache, deferred:,
+          messages: Serializer.messages(messages, cache:, deferred:,
                                                   system_messages: system_messages?(model))
         }
-        system_blocks = Serializer.system_blocks(system, cache: @cache)
+        system_blocks = Serializer.system_blocks(system, cache:)
         body[:system] = system_blocks if system_blocks
         body[:tools] = definitions if definitions.any?
         service_tier = overrides.fetch(:service_tier, @service_tier)
