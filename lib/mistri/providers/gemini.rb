@@ -77,7 +77,7 @@ module Mistri
       rescue EventDelivery::Failure => e
         raise EventDelivery.unwrap(e, delivery)
       rescue Error => e
-        assembler.fail_stream(e, &emit)
+        assembler.fail_stream(too_long(e), &emit)
       end
 
       # The API's own count of the input tokens of the request that stream
@@ -97,6 +97,15 @@ module Mistri
       def close = @transport.close
 
       private
+
+      # The API refuses an input longer than the window with status 400 and
+      # a message that the input token count exceeds the maximum number of
+      # tokens allowed.
+      def too_long(error)
+        ContextTooLongError.from(error) do |status, body|
+          status == 400 && body.include?("exceeds the maximum number of tokens")
+        end
+      end
 
       def official_origin?(origin) = origin.to_s.delete_suffix("/") == DEFAULT_ORIGIN
 

@@ -97,9 +97,14 @@ module Mistri
     # and framing slack. An explicit reserve remains host policy. With no
     # window and no threshold in tokens there is none, and nothing triggers.
     def threshold_tokens(window, max_output: nil)
-      net = window && (window - effective_reserve(max_output))
       own = share?(threshold) ? window && (window * threshold).floor : threshold
-      [own, net].compact.min
+      [own, ceiling(window, max_output:)].compact.min
+    end
+
+    # The most tokens a request may hold in a window: the window less the
+    # reserve. Nil with no window.
+    def ceiling(window, max_output: nil)
+      window && (window - effective_reserve(max_output))
     end
 
     def needed?(tokens, window, max_output: nil)

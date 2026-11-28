@@ -29,7 +29,7 @@ class TestCompactionText < Minitest::Test
     provider = Mistri::Providers::Fake.new(turns: [{ text: "Summary." }])
     session = history(3_000, 9_000, 30_000)
 
-    Mistri::Compactor.call(session:, provider:, settings: settings(window: 7_000))
+    Mistri::Compactor.call(session:, provider:, settings: settings(window: 6_000))
     text = provider.requests.first[:messages].first.text
     kept = text.scan(/START_\d.*?END_\d/m).map(&:length)
 
@@ -46,7 +46,7 @@ class TestCompactionText < Minitest::Test
     provider = Mistri::Providers::Fake.new(turns: [{ text: "Summary." }])
     session = history(3_000, 9_000)
 
-    Mistri::Compactor.call(session:, provider:, settings: settings(window: 2_100))
+    Mistri::Compactor.call(session:, provider:, settings: settings(window: 1_100))
     text = provider.requests.first[:messages].first.text
 
     assert_equal [FLOOR, FLOOR], text.scan(/START_\d.*?END_\d/m).map(&:length)
@@ -57,7 +57,7 @@ class TestCompactionText < Minitest::Test
     fallback = Known.new(turns: [{ text: "Summary." }])
     session = history(9_000)
 
-    Mistri::Compactor.call(session:, provider:, settings: settings(window: 2_100, fallback:))
+    Mistri::Compactor.call(session:, provider:, settings: settings(window: 3_100, fallback:))
     own, other = [provider, fallback].map { |asked| asked.requests.first[:messages].first.text }
 
     assert_includes own, CUT
@@ -74,7 +74,7 @@ class TestCompactionText < Minitest::Test
     grow(session, 1, 20)
 
     Mistri::Compactor.call(session:, provider:, instructions: "Keep the ids.",
-                           settings: settings(window: 6_000))
+                           settings: settings(window: 5_000))
     text = provider.requests.last[:messages].first.text
 
     assert_includes text, "<previous-summary>\nFirst."

@@ -1,6 +1,7 @@
 # frozen_string_literal: true
 
 require "json"
+require_relative "compactor/text"
 
 module Mistri
   # Compacts a session in place: everything before a cut point is summarized
@@ -265,7 +266,7 @@ module Mistri
         previous = earlier&.fetch("summary", nil)
         asks = { text: lambda { |summarizer|
           room = room_for(summarizer, settings, own: summarizer.equal?(provider))
-          prompt_for(head, previous, focus, room, estimator_for(summarizer))
+          read_in_parts(summarizer, settings, [head, previous, focus], room)
         } }
         return asks unless request
 
@@ -291,13 +292,13 @@ module Mistri
         ->(left) { Compaction.count(provider, request.call(left)) } if request
       end
 
-      # The tokens of text a summarizer can read: its window less the output
-      # limit of the summary and the reserve. A host's window is the session's
-      # own model's. Nil when none is known.
+      # The tokens of text a summarizer can read: its window less the
+      # reserve, as the start point near the window is found. A host's window
+      # is the session's own model's. Nil when none is known.
       def room_for(summarizer, settings, own:)
         window = Models.find(summarizer.model)&.context_window
         window = settings.window || window if own
-        window && (window - request_overrides(summarizer, settings)[:max_tokens] - settings.reserve)
+        settings.ceiling(window, max_output: Models.shared_output(summarizer.model))
       end
 
       def prompt_for(messages, previous, focus, room = nil, estimator = nil)
@@ -307,7 +308,7 @@ module Mistri
         ending << "\nAdditional focus: #{focus}\n" if focus
         frame = ["<conversation>\n", "\n</conversation>\n\n#{ending}"]
         room &&= room - Compaction.estimate(Message.user(frame.join), estimator)
-        frame.join(serialize(messages, room, estimator))
+        frame.join(Text.of(messages, room, estimator))
       end
 
       # The fallback is a different model or nothing: the same model behind a
@@ -350,7 +351,8 @@ module Mistri
       # cannot read that cache, and a compaction outside an agent has no
       # request to repeat: each is given the text. So is a provider whose
       # reply went on with the conversation, which is the request failing and
-      # not the model. Returns each reply that was given.
+      # not the model, and a provider that refused the messages as longer
+      # than its window. Returns each reply that was given.
       def summarize(provider, settings, asks)
         overrides = request_overrides(provider, settings)
         replies = []
@@ -358,15 +360,42 @@ module Mistri
           replies << provider.stream(**asks[:native], max_tokens: overrides[:max_tokens])
           return replies unless (asks[:refused] = summary_failure(replies.last))
         end
-        if asks[:closing]
+        if asks[:closing] && !too_long?(replies.last)
           replies << provider.stream(**asks[:closing], max_tokens: overrides[:max_tokens])
-          return replies unless went_on?(replies.last)
+          return replies unless went_on?(replies.last) || too_long?(replies.last)
         end
-        replies << provider.stream(messages: [Message.user(asks[:text].call(provider))],
-                                   system: SUMMARIZER_SYSTEM, **overrides)
+        replies.concat(asks[:text].call(provider))
       end
 
       def went_on?(reply) = reply.stop_reason == StopReason::TOOL_USE || reply.tool_calls?
+
+      def too_long?(reply) = !reply.nil? && ErrorData.too_long?(reply.error)
+
+      # The text of the conversation, read in as many requests as it takes.
+      # The parts are made by the estimate. A part the provider still refuses
+      # as too long is halved and asked again, and a refused request bills
+      # nothing. Each part after the first updates the summary so far, so
+      # nothing of the history is dropped. Returns each reply that was given.
+      def read_in_parts(provider, settings, (head, previous, focus), room)
+        overrides = request_overrides(provider, settings)
+        estimator = estimator_for(provider)
+        waiting = Text.parts(head, room && (room - overrides[:max_tokens]), estimator)
+        replies = []
+        while (part = waiting.shift)
+          prompt = prompt_for(part, previous, focus, room, estimator)
+          reply = provider.stream(messages: [Message.user(prompt)], system: SUMMARIZER_SYSTEM,
+                                  **overrides)
+          next waiting.unshift(*part.each_slice((part.length + 1) / 2)) if halve?(reply, part)
+
+          replies << reply
+          break if summary_failure(reply)
+
+          previous = summary_of(reply)
+        end
+        replies
+      end
+
+      def halve?(reply, part) = too_long?(reply) && part.length > 1
 
       # The text is the compactor's own request. Its output limit comes from
       # the settings, never from the limit a host set for chat replies, and
@@ -436,64 +465,6 @@ module Mistri
                              reason: run[:trigger], error_message: run[:fallback_reason],
                              duration:, **sizes))
         { summary:, usage:, duration:, **sizes }
-      end
-
-      # The summarizer reads a plain-text rendering: tool calls by name and
-      # arguments, results as text, thinking never (it stays in its turn). A
-      # tool result is whole when the text fits the room. When it does not,
-      # one length makes it fit, so the longest results are cut first, and
-      # never to less than the cut made when no window is known.
-      def serialize(messages, room = nil, estimator = nil)
-        texts = messages.map { |message| text_of(message) }
-        return render(messages, texts, TOOL_RESULT_MAX_CHARS) unless room
-
-        whole = render(messages, texts)
-        tokens = Compaction.estimate(Message.user(whole), estimator)
-        return whole if tokens <= room
-
-        results = messages.zip(texts).filter_map { |message, text| text.length if message.tool? }
-        fitting = (room * whole.length / tokens) - (whole.length - results.sum)
-        render(messages, texts, [shared_limit(results.sort, fitting), TOOL_RESULT_MAX_CHARS].max)
-      end
-
-      def render(messages, texts, limit = nil)
-        messages.zip(texts).map do |message, text|
-          text = truncate_tool_result(text, limit) if limit && message.tool?
-          "#{message.role.to_s.upcase}:\n#{text}"
-        end.join("\n\n")
-      end
-
-      # The largest length such that the results, each cut to it, hold no
-      # more than the characters given.
-      def shared_limit(lengths, chars)
-        lengths.each_with_index do |length, index|
-          share = chars / (lengths.length - index)
-          return share if length > share
-
-          chars -= length
-        end
-        chars
-      end
-
-      def text_of(message)
-        message.content.filter_map do |block|
-          case block
-          when Content::Text then block.text
-          when Content::Image then "[image]"
-          when ToolCall then "[called #{block.name} with #{JSON.generate(block.arguments)}]"
-          end
-        end.join("\n")
-      end
-
-      # Large tool output remains durable and unchanged on ordinary model
-      # requests; only the lossy summary wire is bounded, with both ends kept.
-      def truncate_tool_result(text, limit)
-        return text if text.length <= limit
-
-        marker = "\n[tool result truncated; original length: #{text.length} characters]\n"
-        visible = limit - marker.length
-        head = (visible * 0.75).floor
-        "#{text[0, head]}#{marker}#{text[-(visible - head), visible - head]}"
       end
     end
   end

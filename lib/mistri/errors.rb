@@ -107,6 +107,21 @@ module Mistri
     def self.default_message = "provider rejected the request"
   end
 
+  # The provider refused the request because its input is longer than the
+  # model's context window. A compaction can make the next request fit.
+  class ContextTooLongError < InvalidRequestError
+    def self.default_message = "the request is longer than the model's context window"
+
+    # error as this type when the block says that its status and body are
+    # the provider's refusal of an input that is too long.
+    def self.from(error)
+      return error unless error.is_a?(ProviderError) && error.status
+      return error unless yield(error.status, error.body.to_s)
+
+      new(status: error.status, body: error.body)
+    end
+  end
+
   # Tool arguments or structured output that violate their declared schema.
   class SchemaError < Error; end
 
@@ -169,6 +184,10 @@ module Mistri
   # reasons.
   module ErrorData
     module_function
+
+    # Whether the data of an errored message says that the request was
+    # longer than the model's context window.
+    def too_long?(error) = !error.nil? && error["type"] == "ContextTooLongError"
 
     def for(reason)
       case reason

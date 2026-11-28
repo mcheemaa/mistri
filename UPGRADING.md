@@ -33,6 +33,21 @@ the API for the summary. Mistri sends its own cut and its own summary prompt.
   provider. Such a run ends with an error that says so.
 - For the summary Mistri writes itself, set `Compaction.new(native: false)`.
 
+### A request that is too long has its own error type, and is recovered once
+
+A provider's refusal of an input longer than the model's context window was an
+errored message of the type `ProviderError` on Anthropic and Gemini and
+`InvalidRequestError` on OpenAI. It is now `ContextTooLongError` on all
+three.
+
+- A host that reads `message.error["type"]` to recognise this refusal reads
+  the new type. `Mistri::ErrorData.too_long?(message.error)` asks the same.
+- An agent with compaction no longer ends the run on this refusal. It compacts
+  once and sends the turn again. A host that counted on the error to start
+  its own recovery sets `compaction: false` or removes that recovery.
+- `event.reason` of `:compacting`, `:compaction` and `:compaction_failed`,
+  and the entry's `"trigger"`, can now be `:overflow`.
+
 ### On GPT, OpenAI writes the compaction, and nobody can read it
 
 On OpenAI's own origin a compaction now ends its request with a trigger, and

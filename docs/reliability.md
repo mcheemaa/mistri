@@ -127,6 +127,12 @@ The subscriber receives `:retry` with `attempt`, `max_attempts`, and `delay`.
 Only the accepted provider attempt's `:done` or `:error` event is released, so a
 recovered retry does not flash a terminal failure and then retract it.
 
+A request that a provider refuses as longer than the model's context window is
+not retried as it is. Its error has the type `ContextTooLongError`, and an
+agent with compaction compacts once and sends the turn again. See
+[Compaction](sessions.md#compaction). A custom provider reports the same type
+in the error of its errored message to get the same recovery.
+
 MCP `tools/call` is intentionally different. Once sent, a missing response is
 an ambiguous side effect and is not replayed by the Client. The Agent bridge
 returns that exception as an error-marked tool result. See

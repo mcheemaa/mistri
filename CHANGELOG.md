@@ -5,6 +5,18 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+- A turn that a provider refuses as longer than the model's context window
+  is recovered once: the agent compacts, with the reason `:overflow` in the
+  events and the entry, and sends the turn again. Before, the run ended with
+  the provider's error, and so did the next run. The errored message of such
+  a refusal has the new type `ContextTooLongError`, a kind of
+  `InvalidRequestError`, on Anthropic, OpenAI and Gemini.
+- A part to summarize that is itself longer than the window is read in parts.
+  The provider's own compaction and the conversation with the summary prompt
+  are refused there, so the text is asked, each next part updates the summary
+  so far, and a part that is still refused is halved.
+- `Compaction#ceiling(window, max_output:)` returns the most tokens a request
+  may hold in a window: the window less the reserve.
 - The text a summarizer reads when it cannot be given the conversation itself
   now holds every tool result whole when the text fits the summarizer's
   context window. Before, each result over 2,000 characters was shortened,

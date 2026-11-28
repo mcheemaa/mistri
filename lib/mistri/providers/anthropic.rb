@@ -92,7 +92,7 @@ module Mistri
       rescue EventDelivery::Failure => e
         raise EventDelivery.unwrap(e, delivery)
       rescue Error => e
-        assembler.fail_stream(e, &emit)
+        assembler.fail_stream(too_long(e), &emit)
       end
 
       # The API's own count of the input tokens of the request that stream
@@ -110,6 +110,14 @@ module Mistri
       def close = @transport.close
 
       private
+
+      # The API refuses an input longer than the window with status 400 and
+      # "prompt is too long", and a request of too many bytes with 413.
+      def too_long(error)
+        ContextTooLongError.from(error) do |status, body|
+          status == 413 || (status == 400 && body.include?("prompt is too long"))
+        end
+      end
 
       def official_origin?(origin) = origin.to_s.delete_suffix("/") == DEFAULT_ORIGIN
 

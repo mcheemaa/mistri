@@ -590,14 +590,14 @@ module Mistri
       nil
     end
 
-    def automatic_compaction_exhausted?
-      @session.compaction_failures(trigger: :automatic) >= Compaction::AUTOMATIC_ATTEMPTS
+    def automatic_compaction_exhausted?(trigger = :automatic)
+      @session.compaction_failures(trigger:) >= Compaction::AUTOMATIC_ATTEMPTS
     end
 
-    def compact_automatically(&emit)
+    def compact_automatically(trigger: :automatic, &emit)
       delivery = EventDelivery.wrap(emit)
       Compactor.call(session: @session, provider: @provider, settings: @compaction,
-                     trigger: :automatic, budget: @budget, request: method(:request_for),
+                     trigger:, budget: @budget, request: method(:request_for),
                      &delivery)
     rescue EventDelivery::Failure => e
       raise EventDelivery.unwrap(e, delivery)
@@ -632,17 +632,17 @@ module Mistri
     # (:done or :error) holds at a gate, so retries stay invisible to the
     # model and a recovered retry never shows the subscriber an error it
     # walks back. Only the accepted attempt persists and terminates.
+    #
+    # A turn the provider refuses as longer than the model's window gets one
+    # compaction and is sent again, once in a turn.
     def run_turn(signal, output_schema = nil, &emit)
       replayed = @session.messages
       said = said_since_user(replayed)
-      history = noting_scratchpad(sending_instructions(listing_deferred_tools(replayed)))
-      history = @transform_context.reduce(history) do |messages, transform|
-        transform.call(messages)
-      end
-      history = Reminder.as_user_turns(history) unless system_messages?
+      history = history_of(replayed)
       attempt = 0
       usage = Usage.zero
       schema = provider_output_schema(output_schema)
+      shortened = nil
       loop do
         held = nil
         gate = emit && ->(event) { event.terminal? ? held = event : emit.call(event) }
@@ -661,11 +661,42 @@ module Mistri
           wait(pause, signal)
           next unless signal&.aborted?
         end
+        if (shortened = shortened ? nil : shorten_after_refusal(message, attempt, &emit))
+          usage += shortened[:usage]
+          next history = history_of(@session.messages) if shortened[:tokens_after]
+        end
         emit&.call(held) if held
         @session.append_message(message)
         reserve_tool_call_ids(message.tool_calls)
         return [message, usage, said]
       end
+    end
+
+    def history_of(replayed)
+      history = noting_scratchpad(sending_instructions(listing_deferred_tools(replayed)))
+      history = @transform_context.reduce(history) do |messages, transform|
+        transform.call(messages)
+      end
+      system_messages? ? history : Reminder.as_user_turns(history)
+    end
+
+    # The provider refused the turn as longer than the model's window, so the
+    # level the gem held was too low or the window is another model's. One
+    # compaction, whatever the level says. The refused attempt is recorded
+    # as a retry, as any attempt that is thrown away. Nil when the refusal
+    # is another one or nothing can be compacted; a failed compaction returns
+    # its usage alone, and the refusal stands.
+    def shorten_after_refusal(message, attempt, &)
+      return nil unless @compaction && ErrorData.too_long?(message.error)
+      return nil if automatic_compaction_exhausted?(:overflow)
+
+      compacted = compact_automatically(trigger: :overflow, &)
+      return nil unless compacted
+
+      compacted = compacted.merge(usage: compacted[:usage] || Usage.new)
+      validate_usage!(compacted[:usage], kind: "compaction", &)
+      record_retry(message, message.error, attempt, 0.0, &) if compacted[:tokens_after]
+      compacted
     end
 
     # A provider that does not state that it takes a system message in a
@@ -818,7 +849,7 @@ module Mistri
       note = format("attempt %<attempt>d failed (%<reason>s); retrying in %<pause>.1fs",
                     attempt: attempt, reason: reason, pause: pause)
       emit&.call(Event.new(type: :retry, content: note, attempt: attempt,
-                           max_attempts: @retries.attempts, delay: pause.round(2),
+                           max_attempts: @retries&.attempts, delay: pause.round(2),
                            message: message))
     end
 

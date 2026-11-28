@@ -378,10 +378,13 @@ module Mistri
           classify_error(code, message, unknown: InvalidRequestError)
         end
 
+        # A streamed request longer than the window is answered with status
+        # 200 and then fails with the code context_length_exceeded.
         def classify_error(code, message, unknown:)
           klass = if code.include?("rate_limit") then RateLimitError
                   elsif code.include?("server") then ServerError
                   elsif code.include?("timeout") then ProviderError
+                  elsif code == "context_length_exceeded" then ContextTooLongError
                   elsif code.empty? then unknown
                   else InvalidRequestError
                   end

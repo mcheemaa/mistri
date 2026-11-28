@@ -419,8 +419,7 @@ A `fallback:` cannot read that cache, and `Mistri::Compactor.call` without an
 agent has no request to repeat. Each sends the part before the cut as one
 text with its own system prompt, with the API's default thinking and
 reasoning, and with no cache write. The text holds every tool result whole
-when it fits the summarizer's context window, less the summary's output limit
-and the reserve. When it does not fit, the longest results are shortened
+when it fits the summarizer's context window, less the reserve. When it does not fit, the longest results are shortened
 first, to one length that makes it fit, with both ends kept. For a model
 whose window is not known, each result over 2,000 characters is shortened.
 
@@ -475,7 +474,7 @@ compaction keeps about that many tokens as the provider counts them.
 
 Manual `compact` returns nil when there is no useful cut. During a compaction,
 `:compacting` announces that work began, with what started it in
-`event.reason`, `:manual` or `:automatic`, and the level in
+`event.reason`, `:manual`, `:automatic` or `:overflow`, and the level in
 `event.tokens_before`. The later `:compaction` event carries the visible
 summary in `event.content`, the same reason, `tokens_before`, `tokens_after`
 and the seconds it took in `event.duration`. The compaction entry stores them
@@ -500,7 +499,8 @@ Only a normally completed summary with nonblank text and no tool calls can
 become a checkpoint. A truncated or otherwise incomplete response leaves the
 previous summary and retained context unchanged, emits `:compaction_failed`
 with the reason in `event.error_message`, and appends a `compaction_failed`
-entry carrying the reason and its trigger (`manual` or `automatic`), so the
+entry carrying the reason and its trigger (`manual`, `automatic` or
+`overflow`), so the
 failure shows in `entries` and `transcript` and survives an agent rebuilt in
 another process. Manual `compact` raises `Mistri::CompactionError` with the
 attempt's usage in `error.usage`. Automatic compaction counts that usage
@@ -508,8 +508,26 @@ toward the run and its budget, then continues with the existing context if
 the budget permits. It tries again on a later turn while the context stays
 over the threshold, and stops after three failed automatic attempts in a row
 until a compaction succeeds; manual attempts are recorded but do not count.
-If the context no longer fits, the next request can still fail with a
-provider context-limit error.
+
+When a provider refuses a turn because its input is longer than the model's
+context window, the errored message has the type `ContextTooLongError`. An
+agent with compaction then compacts once, with the reason `:overflow`,
+whatever the level says, and sends the turn again. The refused attempt is
+recorded as a retry, so the subscriber receives `:compacting`, `:compaction`
+and then `:retry`. A second refusal ends the run with the error, and after
+three failed compactions of this kind in a row the agent stops trying. Under a
+cost budget a refused request ends the run first, as any request does that
+returns no priced usage.
+
+A part to summarize can itself be longer than the window: after a move to a
+model with a smaller window, or when compaction was off for a long time. The
+provider then refuses its own compaction and the conversation with the summary
+prompt, and the text is asked. When the text fits no single request, it is
+read in parts. The first part gets the summary prompt, and each next part
+updates the summary so far, so nothing of the history is dropped. A part that
+the provider still refuses as too long is halved and asked again; a refused
+request bills nothing. A summary that went through several parts was rewritten
+that many times, and a small model can lose an early fact on the way.
 
 The summary and kept-tail boundary append to the session. Provider replay then
 uses the visible summary plus the retained tail, while the full original log
