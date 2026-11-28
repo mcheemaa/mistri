@@ -5,9 +5,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
-- On GPT, OpenAI compacts on a trigger, on its own origin, for every GPT-5
-  model and later. Mistri decides the cut and ends the request with the
-  trigger. The sealed item is stored as it came on the compaction entry and
+- On GPT, OpenAI compacts on a trigger, on its own origin. Mistri decides the
+  cut and ends the request with the trigger. The sealed item is stored as it came on the compaction entry and
   sent back first, and the kept turns keep their reasoning. Nobody can read
   the item, so `event.content`, the entry's `"summary"` and the result's
   `:summary` are nil for such a compaction, and `instructions:` do not apply.

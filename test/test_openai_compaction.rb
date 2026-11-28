@@ -39,17 +39,17 @@ class TestOpenAICompaction < Minitest::Test
     assert_equal "user", input.last[:role]
   end
 
-  def test_the_api_compacts_for_every_gpt_5_model_and_later_on_its_own_origin
+  def test_the_api_compacts_on_its_own_origin_and_no_other_origin_is_asked
     gateway = Mistri::Providers::OpenAI.new(api_key: "k", origin: "https://gateway.example")
-    taken = %w[gpt-5-nano gpt-5.4 gpt-5.6-sol gpt-6.2-sol gpt-7 gpt-6.2-sol-2026-11-01]
-    refused = %w[gpt-4.1 gpt-4o o4-mini custom]
+    older = Mistri::Providers::OpenAI.new(api_key: "k", model: "gpt-4.1")
 
-    assert(taken.all? { |id| @provider.compacts?(id) })
-    assert(refused.none? { |id| @provider.compacts?(id) })
+    assert_predicate @provider, :compacts?
+    assert_predicate older, :compacts?
     refute_predicate gateway, :compacts?
     assert_predicate @provider, :summary_after_kept?
   ensure
     gateway&.close
+    older&.close
   end
 
   def test_the_streamed_reply_is_the_sealed_item

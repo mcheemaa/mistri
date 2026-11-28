@@ -222,7 +222,7 @@ module Mistri
     TOOL_LOADING_FROM = [5, 4].freeze
     CACHE_OPTIONS_FROM = [5, 6].freeze
     COMPACTION_FROM = { "opus" => [4, 6], "sonnet" => [4, 6], "haiku" => [5, 5],
-                        "fable" => [5], "mythos" => [5], "gpt" => [5] }.freeze
+                        "fable" => [5], "mythos" => [5] }.freeze
     SYSTEM_MESSAGES_FROM = { "opus" => [4, 8], "sonnet" => [5, 5], "haiku" => [5, 5],
                              "fable" => [5], "mythos" => [5] }.freeze
 
@@ -288,17 +288,12 @@ module Mistri
     end
 
     # Anthropic writes a compaction's summary on demand from these versions
-    # of each family on, and OpenAI compacts on a trigger for every GPT-5
-    # model and later. The version is read from the id, as for
+    # of each family on. The version is read from the id, as for
     # system_messages?.
     def self.compaction?(id)
       family, version = id.to_s.match(/\Aclaude-([a-z]+)-(\d+(?:-\d{1,2})?)(?:-\d{8})?\z/)&.captures
-      unless family
-        family = "gpt"
-        version = id.to_s[/\Agpt-(\d+(?:\.\d+)?)/, 1]
-      end
       from = COMPACTION_FROM[family]
-      !from.nil? && !version.nil? && (version.split(/[-.]/).map(&:to_i) <=> from) >= 0
+      !from.nil? && (version.split("-").map(&:to_i) <=> from) >= 0
     end
 
     def self.rates(id, usage: nil, at: Time.now) = find(id)&.rates(usage:, at:)

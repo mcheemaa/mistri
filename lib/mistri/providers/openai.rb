@@ -60,9 +60,10 @@ module Mistri
       def system_messages? = @official
 
       # The API writes a compaction itself when a request ends with a
-      # trigger. The compactor calls stream with compaction:, and the reply
-      # holds one Content::Compaction that only the API can read.
-      def compacts?(model = @model) = @official && Models.compaction?(model)
+      # trigger, for every model it serves. The compactor calls stream with
+      # compaction:, and the reply holds one Content::Compaction that only
+      # the API can read.
+      def compacts? = @official
 
       # The API removes the reasoning of a turn that follows a summary the
       # caller wrote, so such a summary is placed after the turns it leaves.

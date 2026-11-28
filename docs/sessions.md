@@ -387,7 +387,10 @@ summary: `event.content` and the entry's `"summary"` are nil, and
 `Compaction.new(native: false)` asks for Mistri's own summary instead. On
 OpenAI that summary stands after the turns it leaves and not before them,
 because the API removes the reasoning of a turn that follows a summary the
-caller wrote. Mistri
+caller wrote. One case still costs the kept turns their reasoning there: a
+tool that was loaded in the part the summary replaces. The stream reports it
+with `:thinking_dropped`. OpenAI's own compaction keeps the reasoning in that
+case too. Mistri
 also writes its own when the provider cannot: a model or an `origin:` without
 the feature, a failed request, or a reply with no summary. The `:compaction`
 event says which in `event.status`, `:native` or `:own`, and why the
