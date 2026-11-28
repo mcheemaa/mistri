@@ -137,7 +137,7 @@ class TestAgentCompaction < Minitest::Test
     Mistri::Providers::Gemini::Serializer.contents(replayed)
   end
 
-  def test_only_the_summary_wire_truncates_large_tool_results
+  def test_with_no_window_known_only_the_summary_text_cuts_a_large_tool_result
     session = Mistri::Session.new(store: Mistri::Stores::Memory.new)
     call = Mistri::ToolCall.new(id: "c1", name: "inspect", arguments: {})
     output = "START:#{"x" * 3_000}MIDDLE_SENTINEL#{"y" * 3_000}:END"
@@ -153,8 +153,8 @@ class TestAgentCompaction < Minitest::Test
     Mistri::Compactor.call(session:, provider:,
                            settings: Mistri::Compaction.new(keep_recent: 10))
 
-    summarized = Mistri::Compactor.send(:text_of, tool_result)
     prompt = provider.requests.first[:messages].first.text
+    summarized = prompt[/START:.*:END/m]
 
     stored = session.entries.find do |entry|
       entry["type"] == "message" && entry.dig("message", "tool_name") == "inspect"

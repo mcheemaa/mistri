@@ -417,9 +417,12 @@ summary.
 
 A `fallback:` cannot read that cache, and `Mistri::Compactor.call` without an
 agent has no request to repeat. Each sends the part before the cut as one
-text with its own system prompt, with each tool result over 2,000 characters
-shortened, with the API's default thinking and reasoning, and with no cache
-write.
+text with its own system prompt, with the API's default thinking and
+reasoning, and with no cache write. The text holds every tool result whole
+when it fits the summarizer's context window, less the summary's output limit
+and the reserve. When it does not fit, the longest results are shortened
+first, to one length that makes it fit, with both ends kept. For a model
+whose window is not known, each result over 2,000 characters is shortened.
 
 `fallback:` names a second summarizer, a provider or a model id, that gets one
 try when the session's provider cannot write a usable summary for any reason,

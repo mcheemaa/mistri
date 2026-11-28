@@ -5,6 +5,14 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+- The text a summarizer reads when it cannot be given the conversation itself
+  now holds every tool result whole when the text fits the summarizer's
+  context window. Before, each result over 2,000 characters was shortened,
+  so a summary from that text never held what stood in the middle of a long
+  result. When the text does not fit, the longest results are shortened
+  first. A model with no known window keeps the cut at 2,000 characters.
+  The text is larger for a session with long results, 1.6 times at the
+  median in a set of real sessions.
 - On GPT, OpenAI compacts on a trigger, on its own origin. Mistri decides the
   cut and ends the request with the trigger. The sealed item is stored as it came on the compaction entry and
   sent back first, and the kept turns keep their reasoning. Nobody can read
