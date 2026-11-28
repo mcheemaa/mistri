@@ -309,7 +309,7 @@ class TestAgentCompaction < Minitest::Test
 
   def assert_summary_handoff(provider, secret)
     first_summary, second_summary = provider.requests.values_at(1, 3).map do |request|
-      request[:messages].first.text
+      JSON.generate(request[:messages].map(&:to_h))
     end
     final_request = provider.requests.last[:messages]
     remembered = final_request.select { |message| JSON.generate(message.to_h).include?(secret) }

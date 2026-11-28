@@ -350,14 +350,25 @@ before 4 publishes an independent input limit, so its automatic reserve remains
 input-oriented. Gemini 4 shares its window with the output, as Anthropic and
 OpenAI do.
 
-The summary is the compactor's own request. `max_tokens:` bounds its output
-on every built-in provider (16,384 by default, never more than the model's
-published output limit; sent as Anthropic `max_tokens`, OpenAI
-`max_output_tokens`, and Gemini `maxOutputTokens`, each of which counts
-thinking or reasoning toward the limit). The request runs with the API's
-default thinking and reasoning, so a short limit, a thinking budget, or a
-reasoning effort a host set for its own replies never shapes the summary.
-Ordinary turns keep the host's settings.
+An agent asks for the summary with the conversation itself. The request
+repeats the system prompt, the tools and the messages up to the cut as the
+turns sent them, and ends with the summary prompt as a user message. While
+the session's prompt cache is warm the request reads it, and the summarizer
+reads every tool result whole. The request runs with the host's thinking and
+reasoning settings, because the cached messages depend on them.
+
+`max_tokens:` bounds the summary's output on every built-in provider (16,384
+by default, never more than the model's published output limit; sent as
+Anthropic `max_tokens`, OpenAI `max_output_tokens`, and Gemini
+`maxOutputTokens`, each of which counts thinking or reasoning toward the
+limit). A short limit a host set for its own replies never shapes the
+summary.
+
+A `fallback:` cannot read that cache, and `Mistri::Compactor.call` without an
+agent has no request to repeat. Each sends the part before the cut as one
+text with its own system prompt, with each tool result over 2,000 characters
+shortened, with the API's default thinking and reasoning, and with no cache
+write.
 
 `fallback:` names a second summarizer, a provider or a model id, that gets one
 try when the session's provider cannot write a usable summary for any reason,

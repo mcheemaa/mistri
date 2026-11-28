@@ -13,6 +13,23 @@ test.
 
 Most hosts need no code change. Read the points that apply to you.
 
+### An agent's summary request repeats the conversation
+
+The request that writes a compaction's summary now holds the agent's system
+prompt, its tools and the messages up to the cut, and ends with the summary
+prompt. Before, it held one text and the compactor's own system prompt.
+
+- Most hosts do nothing. The request reads the session's prompt cache and
+  costs less.
+- The request runs with the thinking or reasoning setting of the agent's
+  provider. A host that set a large thinking budget pays for thinking in the
+  summary too. `Compaction.new(max_tokens:)` still bounds its output.
+- A custom provider, a gateway or a test that looked for the text
+  `<conversation>` in the summary request finds the conversation's own
+  messages, and the summary prompt in the last one.
+- A reply that calls a tool is not a summary. A configured `fallback:` is
+  then asked with the text, as for any other failure.
+
 ### A compaction keeps what `keep_recent:` says, and the level reads higher
 
 The context level and the turns a compaction keeps are now measured from the

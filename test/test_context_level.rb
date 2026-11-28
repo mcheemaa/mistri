@@ -95,17 +95,13 @@ class TestContextLevel < Minitest::Test
 
   def test_a_compaction_stores_the_count_of_what_it_leaves_and_the_level_reads_it
     session = seeded_session
-    provider = Mistri::Providers::Fake.new(turns: [{ text: "Summary." }])
-    left = nil
+    provider = counting(321, turns: [{ text: "Summary." }])
 
     result = Mistri::Compactor.call(session:, provider:,
                                     settings: Mistri::Compaction.new(keep_recent: 10),
-                                    count: lambda { |messages|
-                                      left = messages
-                                      321
-                                    })
+                                    request: ->(messages) { { messages: } })
 
-    assert_equal session.messages, left
+    assert_equal session.messages, provider.counted.last
     assert_equal 321, session.last_compaction["tokens_after"]
     assert_equal 321, result[:tokens_after]
     assert_equal [321, 0], level_of(session)
@@ -122,11 +118,11 @@ class TestContextLevel < Minitest::Test
   end
 
   def test_a_compaction_whose_count_cannot_be_had_leaves_the_level_estimated
-    [nil, ->(_) {}].each do |count|
+    [nil, ->(messages) { { messages: } }].each do |request|
       session = seeded_session
       provider = Mistri::Providers::Fake.new(turns: [{ text: "Summary." }])
 
-      Mistri::Compactor.call(session:, provider:, count:,
+      Mistri::Compactor.call(session:, provider:, request:,
                              settings: Mistri::Compaction.new(keep_recent: 10))
 
       refute session.last_compaction.key?("tokens_after")
@@ -218,12 +214,16 @@ class TestContextLevel < Minitest::Test
   end
 
   def test_context_usage_keeps_the_estimate_when_the_provider_cannot_count
-    provider = Mistri::Providers::Fake.new(turns: [{ text: "first", usage: USAGE }])
-    agent = agent_with(provider, window: 10_000, reserve: 100)
-    agent.run("q1")
-    agent.session.append_message(Mistri::Message.user("y" * 400))
+    busy = counting(-> { raise ThreadError, "deadlock; recursive locking" },
+                    turns: [{ text: "first", usage: USAGE }])
+    plain = Mistri::Providers::Fake.new(turns: [{ text: "first", usage: USAGE }])
+    [busy, plain].each do |provider|
+      agent = agent_with(provider, window: 10_000, reserve: 100)
+      agent.run("q1")
+      agent.session.append_message(Mistri::Message.user("y" * 400))
 
-    assert_equal 100, agent.context_usage(count: true)[:estimated]
+      assert_equal 100, agent.context_usage(count: true)[:estimated]
+    end
   end
 
   private

@@ -148,6 +148,14 @@ module Mistri
         tails
       end
 
+      # The provider's own count of the input tokens of a request. Nil when
+      # the provider has none or the count fails: an estimate stands then.
+      def count(provider, request)
+        provider.count_tokens(**request) if provider.respond_to?(:count_tokens)
+      rescue Error
+        nil
+      end
+
       def latest_provider(messages)
         messages.reverse_each.find { |message| message.assistant? && message.provider }&.provider
       end

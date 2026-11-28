@@ -173,7 +173,7 @@ module Mistri
     def compact(&)
       exclusive do
         Compactor.call(session: @session, provider: @provider, budget: @budget,
-                       settings: @compaction || Compaction.new, count: method(:count_context), &)
+                       settings: @compaction || Compaction.new, request: method(:request_for), &)
       end
     end
 
@@ -564,15 +564,18 @@ module Mistri
     # request goes to.
     def estimator = Models.find(@provider.model)&.provider
 
-    # The provider's count of the request the next turn would send for these
-    # messages. Nil when the provider has no count or the count fails.
-    def count_context(messages = @session.messages)
-      return nil unless @provider.respond_to?(:count_tokens)
-
+    # The arguments of the stream call a turn would make for these messages.
+    def request_for(messages)
       history = @transform_context.reduce(messages) { |held, transform| transform.call(held) }
       history = Reminder.as_user_turns(history) unless system_messages?
-      @provider.count_tokens(messages: history, system: @system, **tool_options(history))
-    rescue Error, ThreadError
+      { messages: history, system: @system, **tool_options(history) }
+    end
+
+    # The provider's count of the request the next turn would send. Nil when
+    # it cannot be had, as from inside a subscriber of a running stream.
+    def count_context
+      Compaction.count(@provider, request_for(@session.messages))
+    rescue ThreadError
       nil
     end
 
@@ -583,7 +586,7 @@ module Mistri
     def compact_automatically(&emit)
       delivery = EventDelivery.wrap(emit)
       Compactor.call(session: @session, provider: @provider, settings: @compaction,
-                     trigger: :automatic, budget: @budget, count: method(:count_context),
+                     trigger: :automatic, budget: @budget, request: method(:request_for),
                      &delivery)
     rescue EventDelivery::Failure => e
       raise EventDelivery.unwrap(e, delivery)
