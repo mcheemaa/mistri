@@ -5,6 +5,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+- `provider.count_tokens(messages:, system:, tools:)` returns the provider's
+  own count of the input tokens of the request that `stream` would send for
+  the same arguments, on Anthropic, OpenAI and Gemini. Another `origin:`
+  returns nil. A custom provider may answer the same call.
 - A Gemini turn that calls a tool no longer ends with an empty text block.
   The API closes such a turn with a text part of no text. Mistri stored it,
   and sent `:text_start` and `:text_end` for it.

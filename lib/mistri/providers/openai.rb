@@ -16,6 +16,8 @@ module Mistri
     class OpenAI
       DEFAULT_ORIGIN = "https://api.openai.com"
       DEFAULT_REASONING = { summary: "auto" }.freeze
+      # What the count endpoint takes of a request's body.
+      COUNTED = %i[model input instructions tools reasoning text].freeze
 
       def initialize(api_key:, model: "gpt-6.1-sol", origin: DEFAULT_ORIGIN,
                      reasoning: DEFAULT_REASONING, service_tier: nil,
@@ -74,6 +76,17 @@ module Mistri
         raise EventDelivery.unwrap(e, delivery)
       rescue Error => e
         assembler.fail_stream(e, &emit)
+      end
+
+      # The API's own count of the input tokens of the request that stream
+      # would send for the same arguments. It takes about 13 ms for each
+      # 1,000 tokens. Nil on another origin, which may not have the endpoint.
+      def count_tokens(messages:, system: nil, tools: [], **overrides)
+        return nil unless @official
+
+        model = overrides.fetch(:model, @model)
+        body = build_body(model, messages, system, tools, overrides).slice(*COUNTED)
+        @transport.post("/v1/responses/input_tokens", body:, headers:).fetch("input_tokens")
       end
 
       def close = @transport.close

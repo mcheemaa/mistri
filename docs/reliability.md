@@ -558,6 +558,11 @@ Custom providers may return `native_output_schema(schema)` when they can enforce
 the requested task contract. Returning nil leaves the prompt and local
 validation path intact.
 
+A custom provider may answer `count_tokens(messages:, system:, tools:, **)`
+with its own count of the input tokens of the request that `stream` would
+send for the same arguments, or with nil. Mistri then reads the context level
+from it where an estimate could not decide. Without it the estimate stands.
+
 To support cost budgets, return true from `prices_usage?` and attach a known
 cost to every response, commonly with `Mistri::Usage#with_cost`. Missing or
 partial pricing then fails closed at runtime.

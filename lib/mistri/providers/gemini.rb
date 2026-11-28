@@ -29,7 +29,8 @@ module Mistri
         @thinking = thinking
         @max_tokens = max_tokens
         @service_tier = service_tier
-        @catalog_pricing = catalog_pricing.nil? ? official_origin?(origin) : catalog_pricing
+        @official = official_origin?(origin)
+        @catalog_pricing = catalog_pricing.nil? ? @official : catalog_pricing
         @transport = Transport.new(origin: origin, **transport_options)
       end
 
@@ -77,6 +78,20 @@ module Mistri
         raise EventDelivery.unwrap(e, delivery)
       rescue Error => e
         assembler.fail_stream(e, &emit)
+      end
+
+      # The API's own count of the input tokens of the request that stream
+      # would send for the same arguments. It counts a thought signature
+      # lower than a request does, by about 8 tokens for each tool call. Nil
+      # on another origin, which may not have the endpoint.
+      def count_tokens(messages:, system: nil, tools: [], **overrides)
+        return nil unless @official
+
+        model = overrides.fetch(:model, @model)
+        request = build_body(messages, system, tools, overrides)
+                  .slice(:contents, :systemInstruction, :tools).merge(model: "models/#{model}")
+        @transport.post("/v1beta/models/#{model}:countTokens",
+                        body: { generateContentRequest: request }, headers:).fetch("totalTokens")
       end
 
       def close = @transport.close

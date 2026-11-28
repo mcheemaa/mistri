@@ -22,6 +22,8 @@ module Mistri
 
       # Messages API parameters passed through verbatim from a stream override.
       PASSTHROUGH = %i[temperature top_p top_k stop_sequences metadata tool_choice].freeze
+      # What the count endpoint takes of a request's body.
+      COUNTED = %i[model messages system tools thinking tool_choice output_config].freeze
       # The ceiling for an uncatalogued model: high enough for headroom, low
       # enough that every current model accepts it. Catalog a model to unlock
       # its real output limit.
@@ -85,6 +87,18 @@ module Mistri
         raise EventDelivery.unwrap(e, delivery)
       rescue Error => e
         assembler.fail_stream(e, &emit)
+      end
+
+      # The API's own count of the input tokens of the request that stream
+      # would send for the same arguments. It is free and has its own rate
+      # limit. Nil on another origin, which may not have the endpoint.
+      def count_tokens(messages:, system: nil, tools: [], **overrides)
+        return nil unless @official
+
+        model = overrides.fetch(:model, @model)
+        body = build_body(model, messages, system, tools, overrides).slice(*COUNTED)
+        @transport.post("/v1/messages/count_tokens", body:, headers: headers(body))
+                  .fetch("input_tokens")
       end
 
       def close = @transport.close
