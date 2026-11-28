@@ -108,7 +108,8 @@ module Mistri
     # A block is given the messages replay will hold and returns the
     # provider's count of them, which the entry keeps as tokens_after. The
     # entry also keeps the model that wrote the summary, the level before,
-    # what started the compaction and the seconds it took, when given. A
+    # what started the compaction, the seconds it took and the usage of its
+    # requests, when given. A
     # summary that a provider wrote in its own compaction comes with the
     # provider's block: the entry keeps it as it came, replay sends it back
     # first, and summary is its text where it can be read. after: true puts a
@@ -120,7 +121,7 @@ module Mistri
       entry = { "summary" => summary, "kept_from" => kept_from, "carried" => carried,
                 "trigger" => details[:trigger]&.to_s, "provider" => details[:provider]&.to_s }
               .merge(details.slice(:model, :tokens_before, :duration, :block, :fallback_reason,
-                                   :after).transform_keys(&:to_s))
+                                   :after, :usage).transform_keys(&:to_s))
       entry["tokens_after"] = yield(compacted(held, entry)) if block_given?
       append("compaction", entry.compact)
       note_loaded(carried.fetch("loaded", [])) if details[:block]

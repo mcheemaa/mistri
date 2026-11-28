@@ -5,6 +5,9 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+- A compaction entry and a `compaction_failed` entry store the usage of the
+  compaction's own requests as `"usage"`, so the cost of a session can be
+  read from its log.
 - A turn that a provider refuses as longer than the model's context window
   is recovered once: the agent compacts, with the reason `:overflow` in the
   events and the entry, and sends the turn again. Before, the run ended with

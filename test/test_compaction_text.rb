@@ -65,6 +65,26 @@ class TestCompactionText < Minitest::Test
     refute_includes other, CUT
   end
 
+  def test_the_text_names_a_call_marks_an_image_and_leaves_thinking_out
+    session = Mistri::Session.new(store: Mistri::Stores::Memory.new)
+    call = Mistri::ToolCall.new(id: "c1", name: "inspect", arguments: { "part" => 4 })
+    thought = Mistri::Content::Thinking.new(thinking: "Weigh the parts.", signature: "sig")
+    picture = Mistri::Content::Image.new(data: "aGk=", mime_type: "image/png")
+    session.append_message(Mistri::Message.user("look at part 4"))
+    session.append_message(Mistri::Message.assistant(content: [thought, call],
+                                                     stop_reason: :tool_use))
+    session.append_message(Mistri::Message.tool(content: [picture], tool_call_id: "c1",
+                                                tool_name: "inspect"))
+    grow(session, 1, 20)
+    provider = Mistri::Providers::Fake.new(turns: [{ text: "Summary." }])
+
+    Mistri::Compactor.call(session:, provider:, settings: settings)
+    text = provider.requests.first[:messages].first.text
+
+    assert_includes text, %(ASSISTANT:\n[called inspect with {"part":4}]\n\nTOOL:\n[image])
+    refute_includes text.split("</conversation>").first, "Weigh the parts."
+  end
+
   def test_the_room_holds_the_previous_summary_and_the_focus_too
     provider = Mistri::Providers::Fake.new(turns: [{ text: "First. #{"word " * 1_500}" },
                                                    { text: "Second." }])

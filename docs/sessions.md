@@ -478,7 +478,8 @@ Manual `compact` returns nil when there is no useful cut. During a compaction,
 `event.tokens_before`. The later `:compaction` event carries the visible
 summary in `event.content`, the same reason, `tokens_before`, `tokens_after`
 and the seconds it took in `event.duration`. The compaction entry stores them
-as `"trigger"`, `"tokens_before"`, `"tokens_after"` and `"duration"`. An
+as `"trigger"`, `"tokens_before"`, `"tokens_after"` and `"duration"`, with
+the usage of the compaction's own requests as `"usage"`. An
 automatic compaction does not start when nothing has been stored since the
 last one.
 

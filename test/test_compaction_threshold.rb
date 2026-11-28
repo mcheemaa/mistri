@@ -109,8 +109,10 @@ class TestCompactionThreshold < Minitest::Test
   end
 
   def test_the_events_and_the_entry_say_what_started_a_compaction_its_sizes_and_its_time
+    asked = Mistri::Usage.new(input: 700, output: 30)
     provider = Mistri::Providers::Fake.new(turns: [{ text: "first " * 100, usage: USAGE },
-                                                   { text: "Summary." }, { text: "second" }])
+                                                   { text: "Summary.", usage: asked },
+                                                   { text: "second" }])
     agent = Mistri::Agent.new(provider:,
                               compaction: Mistri::Compaction.new(threshold: 900, keep_recent: 10))
     events = []
@@ -127,6 +129,7 @@ class TestCompactionThreshold < Minitest::Test
     assert_kind_of Float, compaction.duration
     assert_equal ["automatic", 1_001], entry.values_at("trigger", "tokens_before")
     assert_kind_of Float, entry["duration"]
+    assert_equal [700, 30], entry["usage"].values_at("input", "output")
   end
 
   def test_a_failed_compaction_says_what_started_it_and_how_long_it_took
@@ -143,6 +146,7 @@ class TestCompactionThreshold < Minitest::Test
     assert_kind_of Float, failed.duration
     assert_equal "manual", entry["trigger"]
     assert_kind_of Float, entry["duration"]
+    assert_equal 0, entry["usage"]["input"]
   end
 
   def test_no_automatic_compaction_starts_when_nothing_was_stored_since_the_last_one

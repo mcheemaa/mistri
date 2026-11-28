@@ -183,7 +183,7 @@ module Mistri
                         instructions || settings.instructions)
         reply, usage, failures = attempt(summarizers(provider, settings), settings, budget, asks)
         reject(run, failures.join("; "), usage, &emit) unless reply
-        run[:fallback_reason] = asks[:refused]
+        run.update(fallback_reason: asks[:refused], usage: usage.to_h)
 
         summary = commit(run, reply, cut, counter(provider, request))
         finish(run, reply, summary, usage, &emit)
@@ -434,7 +434,8 @@ module Mistri
         duration = elapsed(run)
         run[:session].append("compaction_failed",
                              "reason" => failure, "trigger" => run[:trigger].to_s,
-                             "tokens_before" => run[:tokens_before], "duration" => duration)
+                             "tokens_before" => run[:tokens_before], "duration" => duration,
+                             "usage" => usage.to_h)
         emit&.call(Event.new(type: :compaction_failed, error_message: failure,
                              reason: run[:trigger], duration:))
         raise CompactionError.new("summarization failed: #{failure}", usage: usage)
@@ -445,7 +446,7 @@ module Mistri
       def commit(run, reply, cut, count)
         summary = summary_of(reply)
         block = reply.content.grep(Content::Compaction).first
-        details = run.slice(:tokens_before, :trigger, :fallback_reason)
+        details = run.slice(:tokens_before, :trigger, :fallback_reason, :usage)
                      .merge(model: reply.model, duration: elapsed(run),
                             block: block&.data, provider: block&.provider,
                             after: (true if block.nil? && after_kept?(run[:provider])))
