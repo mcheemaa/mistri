@@ -148,7 +148,7 @@ class TestLegacyToolCallIdentity < Minitest::Test
     session.append("approval_decision", "call_id" => second.id, "approved" => true)
     summarizer = Mistri::Providers::Fake.new(turns: [{ text: "Summary." }])
     Mistri::Compactor.call(session:, provider: summarizer,
-                           settings: Mistri::Compaction.new(keep_recent: 34))
+                           settings: Mistri::Compaction.new(keep_recent: 30))
     ran = false
     tool = Mistri::Tool.define("write", "Write.", needs_approval: true) { ran = true }
     provider = Mistri::Providers::Fake.new(turns: [{ text: "I will verify first." }])

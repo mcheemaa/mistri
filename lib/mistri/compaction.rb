@@ -9,8 +9,8 @@ module Mistri
   # model still remembers.
   #
   # The trigger measures real token accounting, not guesses: the last healthy
-  # turn's reported usage plus a character heuristic for whatever came after
-  # it.
+  # turn's reported usage, plus an estimate by a rule measured on each
+  # provider's own counts for whatever came after it.
   class Compaction
     DEFAULT_RESERVE = 16_384
     DEFAULT_KEEP_RECENT = 20_000
@@ -20,10 +20,14 @@ module Mistri
     # full-context request every turn.
     AUTOMATIC_ATTEMPTS = 3
     OUTPUT_SAFETY = 4_096
-    IMAGE_CHARS = 4_800
+    IMAGE_TOKENS = 1_200
+    # For a provider the rule below was not measured on.
     CHARS_PER_TOKEN = 4.0
-    # Claude counts the text of a tool result at about two characters a token.
-    RESULT_CHARS_PER_TOKEN = { anthropic: 2.0 }.freeze
+    # The characters a token holds, measured on each provider's own counts,
+    # for letters and spaces, for digits, and for everything else. The kind of
+    # content moves the figure more than the provider does.
+    CLASS_CHARS_PER_TOKEN = { anthropic: [3.2, 1.6, 1.0], openai: [5.0, 1.2, 1.75],
+                              gemini: [5.3, 0.9, 1.05] }.freeze
 
     SUMMARY_PREFACE = "The earlier part of this conversation was compacted. Another model " \
                       "wrote the handoff summary below from those earlier messages; the " \
@@ -102,11 +106,8 @@ module Mistri
       end
 
       def estimate(message, provider = nil)
-        return (chars(message) / CHARS_PER_TOKEN).ceil unless message.tool?
-
-        text = message.content.grep(Content::Text).sum { |block| block.text.length }
-        per_token = RESULT_CHARS_PER_TOKEN.fetch(provider, CHARS_PER_TOKEN)
-        ((text / per_token) + ((chars(message) - text) / CHARS_PER_TOKEN)).ceil
+        rule = CLASS_CHARS_PER_TOKEN[provider]
+        message.content.sum { |block| tokens_of(block, rule) }.ceil
       end
 
       private
@@ -119,16 +120,22 @@ module Mistri
         total.positive? ? total : nil
       end
 
-      def chars(message)
-        message.content.sum do |block|
-          case block
-          when Content::Text then block.text.length
-          when Content::Thinking then block.thinking.length
-          when Content::Image then IMAGE_CHARS
-          when ToolCall then block.name.length + JSON.generate(block.arguments).length
-          else 0
-          end
+      def tokens_of(block, rule)
+        case block
+        when Content::Image then IMAGE_TOKENS
+        when Content::Text then tokens_in(block.text, rule)
+        when Content::Thinking then tokens_in(block.thinking, rule)
+        else tokens_in("#{block.name}#{JSON.generate(block.arguments)}", rule)
         end
+      end
+
+      def tokens_in(text, rule)
+        return text.length / CHARS_PER_TOKEN unless rule
+
+        words, digits, other = rule
+        spelled = text.count("a-zA-Z \n\t\r")
+        figures = text.count("0-9")
+        (spelled / words) + (figures / digits) + ((text.length - spelled - figures) / other)
       end
     end
   end

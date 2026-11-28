@@ -5,6 +5,13 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+- What no turn has reported is estimated by a rule measured on each provider's
+  own counts. Letters and spaces, digits, and all other characters each hold
+  their own number of characters a token on Anthropic, OpenAI and Gemini.
+  Before, every character was a quarter of a token, and half of one in a tool
+  result after a Claude turn, and a session that no provider had answered read
+  as 41 to 68 percent of the provider's count. `Compaction::IMAGE_CHARS` and
+  `Compaction::RESULT_CHARS_PER_TOKEN` are gone.
 - `provider.count_tokens(messages:, system:, tools:)` returns the provider's
   own count of the input tokens of the request that `stream` would send for
   the same arguments, on Anthropic, OpenAI and Gemini. Another `origin:`

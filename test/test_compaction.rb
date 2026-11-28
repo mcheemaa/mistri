@@ -5,21 +5,38 @@ require_relative "test_helper"
 # The compaction gauge: real usage from the last healthy turn plus estimates
 # for the tail, and the threshold that triggers a compact.
 class TestCompaction < Minitest::Test
-  def test_estimate_uses_a_chars_over_four_heuristic
-    message = Mistri::Message.user("x" * 400)
+  def test_an_estimate_for_an_unmeasured_provider_is_four_characters_a_token
+    message = Mistri::Message.user("x1{}" * 100)
 
     assert_equal 100, Mistri::Compaction.estimate(message)
+    assert_equal 100, Mistri::Compaction.estimate(message, :fake)
   end
 
-  def test_a_tool_result_counts_two_characters_a_token_after_a_claude_turn
+  def test_an_estimate_gives_each_class_of_character_its_own_weight_on_a_measured_provider
+    samples = [("ab cd " * 100), ("12345" * 100), ("{}[]," * 100)]
+    estimates = lambda do |provider|
+      samples.map { |text| Mistri::Compaction.estimate(Mistri::Message.user(text), provider) }
+    end
+
+    assert_equal [188, 313, 500], estimates.call(:anthropic)
+    assert_equal [120, 417, 286], estimates.call(:openai)
+    assert_equal [114, 556, 477], estimates.call(:gemini)
+  end
+
+  def test_an_estimate_counts_an_image_a_tool_call_and_thinking
     image = Mistri::Content::Image.from_bytes("png", mime_type: "image/png")
     result = Mistri::Message.tool(content: ["x" * 400, image], tool_call_id: "a")
+    call = Mistri::ToolCall.new(id: "a", name: "read", arguments: { "path" => "a" })
+    turn = Mistri::Message.assistant(
+      content: [Mistri::Content::Thinking.new(thinking: "y" * 320), call], stop_reason: :tool_use
+    )
     claude = Mistri::Message.assistant(content: "ok", provider: :anthropic, stop_reason: :stop,
                                        usage: Mistri::Usage.new(input: 900, output: 100))
 
-    assert_equal 1_400, Mistri::Compaction.estimate(result, :anthropic)
-    assert_equal 1_300, Mistri::Compaction.estimate(result, :openai)
-    assert_equal 2_400, Mistri::Compaction.context_tokens([claude, result])
+    assert_equal 1_325, Mistri::Compaction.estimate(result, :anthropic)
+    assert_equal 1_280, Mistri::Compaction.estimate(result, :openai)
+    assert_equal 84, Mistri::Compaction.estimate(turn)
+    assert_equal 2_325, Mistri::Compaction.context_tokens([claude, result])
   end
 
   def test_context_tokens_prefers_reported_usage_and_estimates_the_tail
