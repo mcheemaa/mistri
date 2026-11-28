@@ -12,7 +12,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   continued. When the API ends a request with `CONTINUATION`, Mistri sends the
   same request again with the API's token and goes on in the same message, up
   to 32 requests. Such an answer was stored as finished where its first
-  request ended. Its usage counts every request.
+  request ended. Its usage counts every request. An answer that reaches the
+  32 requests fails and is not retried.
 - The Gemini provider takes `max_tokens:`, as the Anthropic provider does.
   Without it a Gemini turn gets the API's default, which is one request.
 - `Usage#context` is what sits in the model's context after a turn that took

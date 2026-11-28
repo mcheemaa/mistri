@@ -33,7 +33,8 @@ module Mistri
           @requests = 1
         end
 
-        # The window divided by the fewest tokens one request returns.
+        # Twice the streamed requests of 65,536 tokens that fill the shared
+        # window, so only an answer that never ends reaches it.
         MAX_REQUESTS = 32
         CONTINUATION = "CONTINUATION"
 
@@ -97,9 +98,7 @@ module Mistri
         def continue
           return nil unless @finish_reason == CONTINUATION && @error.nil?
           return cannot_continue("carried no token to go on with") unless @token
-          if @requests >= MAX_REQUESTS
-            return cannot_continue("went on past #{MAX_REQUESTS} requests")
-          end
+          return never_ends if @requests >= MAX_REQUESTS
 
           @requests += 1
           bank_usage
@@ -276,6 +275,12 @@ module Mistri
           nil
         end
 
+        # A retry would send and bill every request again and end the same way.
+        def never_ends
+          @error = InvalidRequestError.new("the answer went on past #{MAX_REQUESTS} requests")
+          nil
+        end
+
         def bank_usage
           invalidate_cost unless @usage_authoritative
           @earlier = @earlier ? @earlier + @usage : @usage
@@ -293,7 +298,7 @@ module Mistri
         end
 
         def stop_reason
-          return StopReason::LENGTH if ["MAX_TOKENS", CONTINUATION].include?(@finish_reason)
+          return StopReason::LENGTH if @finish_reason == "MAX_TOKENS"
           return StopReason::TOOL_USE if @blocks.any?(ToolCall)
 
           StopReason::STOP

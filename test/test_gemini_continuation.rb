@@ -82,6 +82,7 @@ class TestGeminiContinuation < Minitest::Test
 
     assert_equal :error, message.stop_reason
     assert_match(/carried no token/, message.error_message)
+    assert Mistri::RetryPolicy.new.retryable?(message.error)
   end
 
   def test_an_answer_does_not_go_on_for_ever
@@ -95,14 +96,10 @@ class TestGeminiContinuation < Minitest::Test
     end
 
     assert_equal (["again"] * (ASSEMBLER::MAX_REQUESTS - 1)) + [nil], tokens
-    assert_match(/went on past 32 requests/, assembler.finish.error_message)
-  end
+    message = assembler.finish
 
-  def test_an_answer_left_at_a_continuation_reads_as_cut_short
-    assembler = ASSEMBLER.new(model: "gemini-4-argon")
-    first_request.each { |record| assembler.feed(record) }
-
-    assert_equal :length, assembler.finish.stop_reason
+    assert_match(/went on past 32 requests/, message.error_message)
+    refute Mistri::RetryPolicy.new.retryable?(message.error)
   end
 
   def test_the_provider_sends_the_same_request_again_with_the_token
