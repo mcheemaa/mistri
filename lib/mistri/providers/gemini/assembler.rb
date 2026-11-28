@@ -277,18 +277,19 @@ module Mistri
         end
 
         def bank_usage
-          @first_prompt ||= @usage.prompt_tokens
           invalidate_cost unless @usage_authoritative
           @earlier = @earlier ? @earlier + @usage : @usage
           @usage = Usage.new
           @usage_authoritative = false
         end
 
+        # The last request read every request before it as its prompt, so
+        # its own count is what sits in the context.
         def answer_usage
           return @usage unless @earlier
 
-          total = @earlier + @usage
-          total.with(context: @first_prompt + total.output)
+          last = @usage.prompt_tokens + @usage.output
+          (@earlier + @usage).with(context: (last if last.positive?))
         end
 
         def stop_reason

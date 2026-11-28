@@ -44,6 +44,19 @@ class TestGeminiContinuation < Minitest::Test
     assert_nil assembler.finish.usage.context
   end
 
+  def test_a_last_request_that_reports_no_usage_states_no_context
+    assembler = ASSEMBLER.new(model: "gemini-4-argon")
+    first_request.each { |record| assembler.feed(record) }
+    assembler.continue
+    assembler.feed({ "candidates" => [{ "content" => { "parts" => [{ "text" => " more" }] },
+                                        "finishReason" => "STOP" }] })
+    usage = assembler.finish.usage
+
+    assert_nil usage.context
+    assert_equal 156 + 2_000, usage.context_tokens
+    refute_predicate usage.cost, :known?
+  end
+
   def test_a_signed_part_is_not_merged_with_the_text_that_goes_on_after_it
     assembler = ASSEMBLER.new(model: "gemini-4-argon")
     signed = [{ "candidates" => [{ "content" => { "parts" => [
