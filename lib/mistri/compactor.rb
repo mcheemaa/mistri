@@ -158,34 +158,34 @@ module Mistri
 
     class << self
       # Summarize and cut. Returns {summary:, tokens_before:, tokens_after:,
-      # usage:}, or nil when there is nothing worth compacting. Emits
-      # :compacting and :compaction when a block is given. request turns
-      # messages into the arguments of the stream call a turn would make for
-      # them: an agent passes its own, so the summary request can repeat the
-      # conversation and the provider can count what is left.
+      # usage:, duration:}, or nil when there is nothing worth compacting.
+      # Emits :compacting and :compaction when a block is given, each with
+      # what started the compaction and the sizes. request turns messages
+      # into the arguments of the stream call a turn would make for them: an
+      # agent passes its own, so the summary request can repeat the
+      # conversation and the provider can count what is left. instructions is
+      # a focus for this one summary, in place of the setting's own.
       def call(session:, provider:, settings: Compaction.new, trigger: :manual, budget: nil,
-               request: nil, &emit)
+               request: nil, instructions: nil, &emit)
         replay = session.replay
-        estimator = estimator_for(provider)
-        cut = cut_index(replay, session, settings, estimator)
+        level = session.context_level(provider: estimator_for(provider)).tokens
+        cut = cut_index(replay, session, keep_for(session, provider, settings, level))
         return nil unless cut
 
         previous = session.last_compaction&.fetch("summary", nil)
-        sent = replay.take_while { |(_, index)| index.nil? || index < cut }.map(&:first)
-        # As one text, the synthetic summary rides in <previous-summary>, and
-        # a reminder is left out: it is not the user's words.
-        head = sent.drop(previous ? 1 : 0).reject(&:reminder)
+        sent, head = before_cut(replay, cut, previous)
         return nil if head.empty?
 
-        emit&.call(Event.new(type: :compacting))
-        tokens_before = session.context_level(provider: estimator).tokens
-        asks = { text: prompt_for(head, previous, settings),
-                 closing: closing_request(provider, request, sent, previous, settings) }
+        run = { session:, trigger:, tokens_before: level, started: clock }
+        emit&.call(Event.new(type: :compacting, reason: trigger, tokens_before: level))
+        focus = instructions || settings.instructions
+        asks = { text: prompt_for(head, previous, focus),
+                 closing: closing_request(provider, request, sent, previous, focus) }
         reply, usage, failures = attempt(summarizers(provider, settings), settings, budget, asks)
-        reject(session, failures.join("; "), trigger, tokens_before, usage, &emit) unless reply
+        reject(run, failures.join("; "), usage, &emit) unless reply
 
-        summary = commit(session, reply, cut, tokens_before, counter(provider, request))
-        finish(session, reply, summary, usage, tokens_before, &emit)
+        summary = commit(run, reply, cut, counter(provider, request))
+        finish(run, reply, summary, usage, &emit)
       end
 
       private
@@ -193,9 +193,31 @@ module Mistri
       # Whose rule estimates what no turn has reported.
       def estimator_for(provider) = Models.find(provider.model)&.provider
 
-      def cut_index(replay, session, settings, estimator)
-        tails = session.tail_tokens(provider: estimator)
-        boundary = keep_boundary(replay, tails, settings.keep_recent)
+      def clock = Process.clock_gettime(Process::CLOCK_MONOTONIC)
+
+      def elapsed(run) = (clock - run.fetch(:started)).round(2)
+
+      # The tails of replay and the tokens of them to keep. The fixed part of
+      # a request, its system prompt and tools, is the level less every
+      # message.
+      def keep_for(session, provider, settings, level)
+        tails = session.tail_tokens(provider: estimator_for(provider))
+        window = settings.window || Models.find(provider.model)&.context_window
+        threshold = settings.threshold_tokens(window,
+                                              max_output: Models.shared_output(provider.model))
+        [tails, settings.keep_within(threshold, level - tails.first.to_i)]
+      end
+
+      # The messages before the cut as the turns sent them, and as the text
+      # holds them: there the synthetic summary rides in <previous-summary>,
+      # and a reminder is left out, because it is not the user's words.
+      def before_cut(replay, cut, previous)
+        sent = replay.take_while { |(_, index)| index.nil? || index < cut }.map(&:first)
+        [sent, sent.drop(previous ? 1 : 0).reject(&:reminder)]
+      end
+
+      def cut_index(replay, session, (tails, keep))
+        boundary = keep_boundary(replay, tails, keep)
         return nil unless boundary
 
         candidates = replay.filter_map do |message, index|
@@ -238,12 +260,12 @@ module Mistri
       # system message where the provider takes one in a conversation: as a
       # user message, a model in the middle of a tool loop went on with the
       # loop in two of four tries.
-      def closing_request(provider, request, sent, previous, settings)
+      def closing_request(provider, request, sent, previous, focus)
         return nil unless request
 
         arguments = request.call(sent)
         prompt = previous ? CLOSING_UPDATE_PROMPT : CLOSING_CHECKPOINT_PROMPT
-        prompt += "\nAdditional focus: #{settings.instructions}\n" if settings.instructions
+        prompt += "\nAdditional focus: #{focus}\n" if focus
         system = provider.respond_to?(:system_messages?) && provider.system_messages?
         closing = system ? Message.reminder("compaction", prompt) : Message.user(prompt)
         arguments.merge(messages: arguments.fetch(:messages) + [closing])
@@ -253,11 +275,11 @@ module Mistri
         ->(left) { Compaction.count(provider, request.call(left)) } if request
       end
 
-      def prompt_for(messages, previous, settings)
+      def prompt_for(messages, previous, focus)
         prompt = "<conversation>\n#{serialize(messages)}\n</conversation>\n\n"
         prompt << "<previous-summary>\n#{previous}\n</previous-summary>\n\n" if previous
         prompt << (previous ? UPDATE_PROMPT : CHECKPOINT_PROMPT)
-        prompt << "\nAdditional focus: #{settings.instructions}\n" if settings.instructions
+        prompt << "\nAdditional focus: #{focus}\n" if focus
         prompt
       end
 
@@ -338,28 +360,32 @@ module Mistri
       # failure and its trigger visible across processes so automatic
       # compaction can stop retrying its own failures, and the event tells a
       # subscriber that :compacting ended.
-      def reject(session, failure, trigger, tokens_before, usage, &emit)
-        session.append("compaction_failed", "reason" => failure, "trigger" => trigger.to_s,
-                                            "tokens_before" => tokens_before)
-        emit&.call(Event.new(type: :compaction_failed, error_message: failure))
+      def reject(run, failure, usage, &emit)
+        duration = elapsed(run)
+        run[:session].append("compaction_failed",
+                             "reason" => failure, "trigger" => run[:trigger].to_s,
+                             "tokens_before" => run[:tokens_before], "duration" => duration)
+        emit&.call(Event.new(type: :compaction_failed, error_message: failure,
+                             reason: run[:trigger], duration:))
         raise CompactionError.new("summarization failed: #{failure}", usage: usage)
       end
 
       # The entry keeps the provider's count of what the compaction leaves, so
       # the level is the provider's own until the next turn reports.
-      def commit(session, reply, cut, tokens_before, count)
+      def commit(run, reply, cut, count)
         summary = reply.text.strip
-        session.checkpoint(summary:, kept_from: cut, model: reply.model, tokens_before:) do |left|
-          count&.call(left)
-        end
+        details = run.slice(:tokens_before, :trigger).merge(model: reply.model,
+                                                            duration: elapsed(run))
+        run[:session].checkpoint(summary:, kept_from: cut, **details) { |left| count&.call(left) }
         summary
       end
 
-      def finish(session, reply, summary, usage, tokens_before, &emit)
-        tokens_after = session.context_tokens
-        emit&.call(Event.new(type: :compaction, content: summary, message: reply))
-        { summary: summary, tokens_before: tokens_before,
-          tokens_after: tokens_after, usage: usage }
+      def finish(run, reply, summary, usage, &emit)
+        sizes = { tokens_before: run[:tokens_before], tokens_after: run[:session].context_tokens }
+        duration = elapsed(run)
+        emit&.call(Event.new(type: :compaction, content: summary, message: reply,
+                             reason: run[:trigger], duration:, **sizes))
+        { summary:, usage:, duration:, **sizes }
       end
 
       # The summarizer reads a plain-text rendering: tool calls by name and

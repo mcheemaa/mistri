@@ -44,8 +44,12 @@ provider's own counts.
   after a compaction, reads higher than before, because it is closer to the
   provider's count. A host that compares `context_usage[:tokens]` with a
   number of its own checks that number.
-- `agent.context_usage` returns one more key, `estimated`. A host that matches
-  the whole hash adds it.
+- `agent.context_usage` returns three more keys, `estimated`, `threshold` and
+  `remaining`. A host that matches the whole hash adds them.
+- `Event` has two more members, `tokens_before` and `tokens_after`, and
+  `ToolContext` has one more, `compaction`. A host that builds either with
+  positional values, or matches one with a pattern of every member, adds
+  them. Keywords are unaffected.
 - Near the threshold a turn can begin with one request to the provider's count
   endpoint. It is free. It takes about 0.1 to 0.5 seconds on Anthropic and
   Google, and about 13 ms for each 1,000 tokens on OpenAI.

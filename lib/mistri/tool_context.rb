@@ -27,9 +27,13 @@ module Mistri
   # scratchpad is the agent's Scratchpad, or nil when it has none. A tool that
   # is handed bytes a model cannot read keeps them there with save_binary and
   # answers with the path.
-  ToolContext = Data.define(:session, :signal, :emit, :app, :result_limit, :scratchpad) do
+  #
+  # compaction is the agent's Compaction, or nil when it has none. A worker
+  # with no setting of its own takes its threshold from it.
+  ToolContext = Data.define(:session, :signal, :emit, :app, :result_limit, :scratchpad,
+                            :compaction) do
     def initialize(session: nil, signal: nil, emit: nil, app: nil, result_limit: nil,
-                   scratchpad: nil)
+                   scratchpad: nil, compaction: nil)
       super
     end
   end

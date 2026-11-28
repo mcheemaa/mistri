@@ -333,6 +333,7 @@ crosses the published window minus safe output headroom. Disable it with
 
 ```ruby
 settings = Mistri::Compaction.new(
+  threshold: 0.6,
   reserve: 64_000,
   keep_recent: 24_000,
   max_tokens: 8_192,
@@ -342,6 +343,20 @@ settings = Mistri::Compaction.new(
 
 agent = Mistri.agent("claude-opus-5-5", compaction: settings)
 ```
+
+`threshold:` is the level where a compaction starts: an Integer for tokens,
+or a Float for that share of the window, such as `0.6`. Without it a
+compaction starts near the window. The rule near the window stays under a
+threshold as the net, so the lower of the two applies. A threshold in tokens
+also works for a model with no known window. A share means the same on every
+model. A number of tokens does not, because each provider counts the same
+conversation differently.
+
+A compaction keeps `keep_recent:` tokens of recent turns, and never more than
+half of what the threshold leaves above the fixed part of a request, its
+system prompt and tools. So about half of that room is free for the turns
+that follow. A threshold below the fixed part cannot be met, and such an
+agent compacts on every turn.
 
 An explicit `window:` enables compaction for an uncatalogued deployment. An
 explicit `reserve:` is host policy; the automatic default otherwise protects a
@@ -393,12 +408,19 @@ a model id.
 
 ```ruby
 agent.context_usage
-# => { tokens: 141_000, window: 1_000_000, fraction: 0.141, estimated: 0 }
+# => { tokens: 141_000, window: 1_000_000, fraction: 0.141, estimated: 0,
+#      threshold: 600_000, remaining: 459_000 }
 
 agent.context_usage(count: true)
 
 agent.compact
+agent.compact(instructions: "Keep every date and amount.")
 ```
+
+`threshold` is the level in tokens where a compaction starts, and `remaining`
+the tokens left until it. Both are nil when compaction is off or no level is
+known. `compact(instructions:)` gives the summary a focus for that one time,
+in place of the setting's own `instructions:`.
 
 `tokens` is the provider's own count wherever it has one: the usage of the
 last answer, and after a compaction the provider's count of what it left.
@@ -417,8 +439,18 @@ another `origin:` is not asked, and a count that fails leaves the estimate.
 compaction keeps about that many tokens as the provider counts them.
 
 Manual `compact` returns nil when there is no useful cut. During a compaction,
-`:compacting` announces that work began. The later `:compaction` event carries
-the visible summary in `event.content`.
+`:compacting` announces that work began, with what started it in
+`event.reason`, `:manual` or `:automatic`, and the level in
+`event.tokens_before`. The later `:compaction` event carries the visible
+summary in `event.content`, the same reason, `tokens_before`, `tokens_after`
+and the seconds it took in `event.duration`. The compaction entry stores them
+as `"trigger"`, `"tokens_before"`, `"tokens_after"` and `"duration"`. An
+automatic compaction does not start when nothing has been stored since the
+last one.
+
+A worker with no `compaction:` of its own starts compacting where its parent
+does: it takes the parent's `threshold:`. Give a worker its own setting to
+change that. A tool reads its agent's setting from `context.compaction`.
 
 The summary is a handoff for the model that resumes: seven fixed sections,
 goal and the requests that shaped the work in the user's words, constraints,

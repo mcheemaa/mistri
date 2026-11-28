@@ -106,15 +106,22 @@ module Mistri
     # start there. The start may only move forward, to a turn boundary that
     # keeps every open approval and every steer or report not folded in yet.
     # A block is given the messages replay will hold and returns the
-    # provider's count of them, which the entry keeps as tokens_after.
-    def checkpoint(summary:, kept_from:, model: nil, tokens_before: nil)
+    # provider's count of them, which the entry keeps as tokens_after. The
+    # entry also keeps the model that wrote the summary, the level before,
+    # what started the compaction and the seconds it took, when given.
+    def checkpoint(summary:, kept_from:, **details)
       held = window
       validate_cut!(held, kept_from)
-      entry = { "summary" => summary, "model" => model, "kept_from" => kept_from,
-                "tokens_before" => tokens_before, "carried" => carried_before(held, kept_from) }
+      entry = { "summary" => summary, "model" => details[:model], "kept_from" => kept_from,
+                "tokens_before" => details[:tokens_before], "trigger" => details[:trigger]&.to_s,
+                "duration" => details[:duration], "carried" => carried_before(held, kept_from) }
       entry["tokens_after"] = yield(compacted(held, entry)) if block_given?
       append("compaction", entry.compact)
     end
+
+    # False when the newest entry is a compaction: nothing has been stored
+    # since, so another one would have nothing new to work on.
+    def grown_since_compaction? = window.entries.last&.fetch("type", nil) != "compaction"
 
     # The earliest position replay must keep: the turn of an open approval,
     # or a steer or report that is not folded in yet. Nil when nothing is open.

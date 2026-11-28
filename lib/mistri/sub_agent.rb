@@ -114,9 +114,19 @@ module Mistri
         label.empty? ? fallback : label
       end
 
+      # A worker with no compaction setting of its own starts compacting
+      # where its parent does.
+      def with_parent_threshold(agent_options, parent_context)
+        threshold = parent_context.compaction&.threshold
+        return agent_options if threshold.nil? || agent_options.key?(:compaction)
+
+        agent_options.merge(compaction: Compaction.new(threshold:))
+      end
+
       def run_child(label:, provider:, system:, tools:, task:, parent_context:, schema: nil,
                     agent_options: {})
         ChildAgentOptions.validate!(agent_options)
+        agent_options = with_parent_threshold(agent_options, parent_context)
         store = parent_context.session ? parent_context.session.store : Stores::Memory.new
         child = Session.new(store: store)
         parent_context.session&.append("subagent", "name" => label, "session_id" => child.id)

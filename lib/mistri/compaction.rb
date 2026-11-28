@@ -43,7 +43,7 @@ module Mistri
                       "work already done, do not repeat it, and treat the user's most recent " \
                       "request as the current instruction."
 
-    attr_reader :reserve, :keep_recent, :window, :instructions, :max_tokens, :fallback
+    attr_reader :reserve, :keep_recent, :window, :instructions, :max_tokens, :fallback, :threshold
 
     # window overrides the model catalog's context window (required for
     # models the catalog does not know). A nil reserve selects automatic
@@ -53,11 +53,17 @@ module Mistri
     # and never inherits the limit a host set for its chat replies. fallback
     # names a second summarizer, a provider or a model id, that gets one try
     # when the session's provider cannot write a usable summary; the host
-    # chooses it, so a refusal never changes models silently.
-    def initialize(reserve: nil, keep_recent: DEFAULT_KEEP_RECENT, window: nil,
-                   instructions: nil, max_tokens: DEFAULT_MAX_TOKENS, fallback: nil)
+    # chooses it, so a refusal never changes models silently. threshold is
+    # the level where a compaction starts: an Integer of tokens, or a Float
+    # for that share of the window. The reserve stays under it as the net.
+    def initialize(reserve: nil, keep_recent: DEFAULT_KEEP_RECENT, window: nil, instructions: nil,
+                   max_tokens: DEFAULT_MAX_TOKENS, fallback: nil, threshold: nil)
       unless max_tokens.is_a?(Integer) && max_tokens.positive?
         raise ArgumentError, "max_tokens must be a positive Integer"
+      end
+      unless threshold.nil? || tokens?(threshold) || share?(threshold)
+        raise ArgumentError, "threshold must be a positive Integer of tokens or a Float " \
+                             "share of the window, above 0 and at most 1"
       end
 
       @automatic_reserve = reserve.nil?
@@ -67,24 +73,42 @@ module Mistri
       @instructions = instructions
       @max_tokens = max_tokens
       @fallback = summarizer(fallback)
+      @threshold = threshold
     end
 
     def automatic_reserve? = @automatic_reserve
 
-    # The level above which a compaction is due. Automatic headroom fits
-    # output that shares the context window, plus estimation and framing
-    # slack. An explicit reserve remains host policy. An unknown window has
-    # no threshold and never triggers.
-    def threshold(window, max_output: nil)
-      window && (window - effective_reserve(max_output))
+    # The level in tokens above which a compaction is due: the threshold a
+    # host set, and never more than the window less the reserve. Automatic
+    # headroom fits output that shares the context window, plus estimation
+    # and framing slack. An explicit reserve remains host policy. With no
+    # window and no threshold in tokens there is none, and nothing triggers.
+    def threshold_tokens(window, max_output: nil)
+      net = window && (window - effective_reserve(max_output))
+      own = share?(threshold) ? window && (window * threshold).floor : threshold
+      [own, net].compact.min
     end
 
     def needed?(tokens, window, max_output: nil)
-      limit = threshold(window, max_output:)
+      limit = threshold_tokens(window, max_output:)
       limit ? tokens > limit : false
     end
 
+    # The tokens of recent turns a compaction keeps: keep_recent, and never
+    # more than half of what the threshold leaves above the fixed part of a
+    # request, its system prompt and tools. So about half of that room is
+    # free for the turns that follow.
+    def keep_within(threshold, fixed)
+      return keep_recent unless threshold
+
+      ((threshold - fixed) / 2).clamp(0, keep_recent)
+    end
+
     private
+
+    def tokens?(value) = value.is_a?(Integer) && value.positive?
+
+    def share?(value) = value.is_a?(Float) && value.positive? && value <= 1
 
     # A model id resolves at construction, so a missing key fails where the
     # setting is written rather than in the middle of a run.

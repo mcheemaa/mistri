@@ -192,14 +192,14 @@ class TestContextLevel < Minitest::Test
     agent.run("q1")
 
     assert_equal({ tokens: 1_000, window: 10_000, fraction: 0.1, estimated: 0 },
-                 agent.context_usage)
+                 agent.context_usage.slice(:tokens, :window, :fraction, :estimated))
 
     agent.session.append_message(Mistri::Message.user("y" * 400))
 
     assert_equal({ tokens: 1_100, window: 10_000, fraction: 0.11, estimated: 100 },
-                 agent.context_usage)
+                 agent.context_usage.slice(:tokens, :window, :fraction, :estimated))
     assert_equal({ tokens: 1_234, window: 10_000, fraction: 0.123, estimated: 0 },
-                 agent.context_usage(count: true))
+                 agent.context_usage(count: true).slice(:tokens, :window, :fraction, :estimated))
   end
 
   def test_a_count_is_asked_for_the_history_as_the_provider_receives_it

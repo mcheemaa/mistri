@@ -152,28 +152,34 @@ module Mistri
       end
     end
 
-    # How full the context is: {tokens:, window:, fraction:, estimated:}.
-    # Hosts render meters and near-limit warnings from this; window is nil
-    # for models the catalog does not know unless Compaction#window supplies
-    # one. estimated is how many of the tokens are the gem's estimate: zero
-    # when the number is the provider's own, as it is after each answer.
-    # count: true asks the provider to count the next request, which takes
-    # one round trip; when it cannot, the estimate stands.
+    # How full the context is: {tokens:, window:, fraction:, estimated:,
+    # threshold:, remaining:}. Hosts render meters and near-limit warnings
+    # from this; window is nil for models the catalog does not know unless
+    # Compaction#window supplies one. estimated is how many of the tokens are
+    # the gem's estimate: zero when the number is the provider's own, as it
+    # is after each answer. threshold is the level where a compaction starts
+    # and remaining the tokens left until it, both nil when nothing starts
+    # one. count: true asks the provider to count the next request, which
+    # takes one round trip; when it cannot, the estimate stands.
     def context_usage(count: false)
       level = @session.context_level(provider: estimator)
       counted = count_context if count
       tokens = counted || level.tokens
       window = context_window
+      threshold = compaction_threshold
       { tokens: tokens, window: window, fraction: window && (tokens.to_f / window).round(3),
-        estimated: counted ? 0 : level.estimated }
+        estimated: counted ? 0 : level.estimated, threshold: threshold,
+        remaining: threshold && [threshold - tokens, 0].max }
     end
 
     # Compact now (a UI button, a pre-flight trim before a big task). Returns
     # the Compactor result, or nil when there is nothing worth compacting.
-    def compact(&)
+    # instructions is a focus for this one summary.
+    def compact(instructions: nil, &)
       exclusive do
         Compactor.call(session: @session, provider: @provider, budget: @budget,
-                       settings: @compaction || Compaction.new, request: method(:request_for), &)
+                       settings: @compaction || Compaction.new, request: method(:request_for),
+                       instructions:, &)
       end
     end
 
@@ -541,13 +547,18 @@ module Mistri
     def auto_compact(&)
       return nil unless @compaction
 
-      threshold = @compaction.threshold(context_window,
-                                        max_output: Models.shared_output(@provider.model))
+      threshold = compaction_threshold
       level = threshold && @session.context_level(provider: estimator)
       return nil unless level && compaction_due?(level, threshold)
+      return nil unless @session.grown_since_compaction?
       return nil if automatic_compaction_exhausted?
 
       compact_automatically(&)
+    end
+
+    def compaction_threshold
+      @compaction&.threshold_tokens(context_window,
+                                    max_output: Models.shared_output(@provider.model))
     end
 
     # A compaction starts on the provider's numbers. Where the reported part
@@ -1327,6 +1338,7 @@ module Mistri
                                                              app: @context,
                                                              result_limit_for: limits(among, spent),
                                                              scratchpad: @scratchpad,
+                                                             compaction: @compaction,
                                                              prepared_arguments: true)
     end
 
@@ -1399,7 +1411,8 @@ module Mistri
 
     def hook_context(signal, emit)
       ToolContext.new(session: @session, signal: signal, emit: EventDelivery.wrap(emit),
-                      app: @context, scratchpad: @scratchpad)
+                      app: @context, scratchpad: @scratchpad,
+                      compaction: @compaction)
     end
 
     # The tool message carries both channels; the :tool_result event exposes

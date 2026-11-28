@@ -40,7 +40,7 @@ module Mistri
     def deadline?(error) = error.is_a?(InvocationTimeout)
 
     def call(calls, tools_by_name, signal: nil, max_concurrency: 4, session: nil, emit: nil,
-             app: nil, result_limit_for: nil, scratchpad: nil)
+             app: nil, result_limit_for: nil, scratchpad: nil, compaction: nil)
       call_with_outcomes(
         calls,
         tools_by_name,
@@ -51,6 +51,7 @@ module Mistri
         app:,
         result_limit_for:,
         scratchpad:,
+        compaction:,
         prepared_arguments: false
       ).map { |call, result, seconds, _committed| [call, result, seconds] }
     end
@@ -60,14 +61,14 @@ module Mistri
     # cannot run for queued calls that an abort prevented from starting.
     def call_with_outcomes(calls, tools_by_name, signal: nil, max_concurrency: 4, session: nil,
                            emit: nil, app: nil, result_limit_for: nil, scratchpad: nil,
-                           prepared_arguments: false)
+                           compaction: nil, prepared_arguments: false)
       return [] if calls.empty?
 
       delivery = EventDelivery.wrap(emit, passthrough: [InvocationTimeout])
       context_class = prepared_arguments ? PreparedContext : ToolContext
       context = context_class.new(session: session, signal: signal,
                                   emit: thread_safe(delivery, signal), app: app,
-                                  scratchpad: scratchpad)
+                                  scratchpad: scratchpad, compaction: compaction)
       results = Array.new(calls.length)
       queue = Queue.new
       errors = Queue.new

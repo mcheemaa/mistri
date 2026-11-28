@@ -15,10 +15,14 @@ module Mistri
   # means no duration is available, not necessarily that no side effect ran.
   # tool_error is explicit on :tool_result and does not change Event#error?,
   # which means a terminal provider-turn failure.
+  # A compaction's events say what started it in reason, :manual or
+  # :automatic, the level before and after in tokens_before and tokens_after,
+  # and the seconds it took in duration.
   class Event < Data.define(:type, :content_index, :delta, :content, :tool_call,
                             :reason, :message, :error_message, :partial, :origin,
                             :duration, :attempt, :max_attempts, :delay,
-                            :agent, :session_id, :status, :tool_error)
+                            :agent, :session_id, :status, :tool_error,
+                            :tokens_before, :tokens_after)
     # The stream types come from a provider mid-turn; the loop adds
     # :tool_started when a resolved tool commits to execution, :tool_result
     # after it finishes, :approval_needed when a gated call parks for a human,
@@ -50,7 +54,8 @@ module Mistri
     def initialize(type:, content_index: nil, delta: nil, content: nil, tool_call: nil,
                    reason: nil, message: nil, error_message: nil, partial: nil, origin: nil,
                    duration: nil, attempt: nil, max_attempts: nil, delay: nil,
-                   agent: nil, session_id: nil, status: nil, tool_error: nil)
+                   agent: nil, session_id: nil, status: nil, tool_error: nil,
+                   tokens_before: nil, tokens_after: nil)
       raise ArgumentError, "unknown event type #{type.inspect}" unless TYPES.include?(type)
 
       if type == :tool_result
@@ -79,7 +84,8 @@ module Mistri
     def to_h
       { type:, content_index:, delta:, content:, tool_call: tool_call&.to_h,
         reason:, message: message&.to_h, error_message:, origin:, duration:,
-        attempt:, max_attempts:, delay:, agent:, session_id:, status:, tool_error: }.compact
+        attempt:, max_attempts:, delay:, agent:, session_id:, status:, tool_error:,
+        tokens_before:, tokens_after: }.compact
     end
   end
 end

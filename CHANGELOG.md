@@ -5,6 +5,26 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+- `Compaction.new(threshold:)` sets the level where a compaction starts: an
+  Integer of tokens, or a Float for that share of the window. The rule near
+  the window stays under it as the net. A threshold in tokens works for a
+  model with no known window.
+- `agent.context_usage` returns `threshold`, the level in tokens where a
+  compaction starts, and `remaining`, the tokens left until it.
+- `agent.compact(instructions:)` gives one compaction's summary a focus, and
+  `Compactor.call` takes the same keyword.
+- The compaction events say what started a compaction in `reason`, `:manual`
+  or `:automatic`, the level before and after in `tokens_before` and
+  `tokens_after`, which are new members of `Event`, and the seconds it took
+  in `duration`. The compaction entry stores `"trigger"` and `"duration"`.
+- A compaction keeps at most half of what the threshold leaves above the
+  fixed part of a request, so the turns after it have room. Near the window
+  that half is far above `keep_recent:`, and nothing changes.
+- An automatic compaction does not start when nothing has been stored since
+  the last one.
+- A worker with no `compaction:` of its own takes its parent's `threshold:`.
+  `ToolContext#compaction` is the agent's setting, and `ToolExecutor.call`
+  takes `compaction:` to pass one.
 - An agent's compaction asks for its summary with the conversation itself:
   the system prompt, the tools and the messages up to the cut as the turns
   sent them, then the summary prompt, as a system message where the provider
