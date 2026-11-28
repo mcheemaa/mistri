@@ -327,7 +327,7 @@ entry ID. A crash cannot consume a steer invisibly or require a repair write.
 
 ## Compaction
 
-For a catalogued model, automatic compaction begins when estimated context use
+For a catalogued model, automatic compaction begins when the context level
 crosses the published window minus safe output headroom. Disable it with
 `compaction: false`, or pass policy explicitly:
 
@@ -378,10 +378,28 @@ a model id.
 
 ```ruby
 agent.context_usage
-# => { tokens: 141_000, window: 1_000_000, fraction: 0.141 }
+# => { tokens: 141_000, window: 1_000_000, fraction: 0.141, estimated: 0 }
+
+agent.context_usage(count: true)
 
 agent.compact
 ```
+
+`tokens` is the provider's own count wherever it has one: the usage of the
+last answer, and after a compaction the provider's count of what it left.
+What arrived since is estimated by a rule measured on each provider's counts,
+and `estimated` is how many of the tokens that is. Zero means the number is
+the provider's own. `count: true` asks the provider to count the next request.
+That is one round trip: about 0.1 to 0.5 seconds on Anthropic and Google, and
+about 13 ms for each 1,000 tokens on OpenAI.
+
+Mistri asks for that count itself in two places: once in each compaction, and
+before an automatic compaction when the reported part of the level is under
+the threshold and twice the estimated part would reach it. A provider on
+another `origin:` is not asked, and a count that fails leaves the estimate.
+
+`keep_recent:` is measured from the prompts the turns reported, so a
+compaction keeps about that many tokens as the provider counts them.
 
 Manual `compact` returns nil when there is no useful cut. During a compaction,
 `:compacting` announces that work began. The later `:compaction` event carries

@@ -204,7 +204,7 @@ normally.
 
 ```ruby
 agent.context_usage
-# => { tokens: 141_000, window: 1_000_000, fraction: 0.141 }
+# => { tokens: 141_000, window: 1_000_000, fraction: 0.141, estimated: 0 }
 
 schema = {
   type: "object",

@@ -28,6 +28,14 @@ module Mistri
     # content moves the figure more than the provider does.
     CLASS_CHARS_PER_TOKEN = { anthropic: [3.2, 1.6, 1.0], openai: [5.0, 1.2, 1.75],
                               gemini: [5.3, 0.9, 1.05] }.freeze
+    # The lowest estimate measured was half of the provider's count.
+    ESTIMATE_SPREAD = 2
+
+    # How full the context is, and how many of those tokens are an estimate
+    # and not the provider's own count.
+    Level = Data.define(:tokens, :estimated) do
+      def reported = tokens - estimated
+    end
 
     SUMMARY_PREFACE = "The earlier part of this conversation was compacted. Another model " \
                       "wrote the handoff summary below from those earlier messages; the " \
@@ -63,11 +71,17 @@ module Mistri
 
     def automatic_reserve? = @automatic_reserve
 
-    # Automatic headroom fits output that shares the context window, plus
-    # estimation and framing slack. An explicit reserve remains host policy.
-    # An unknown window never triggers.
+    # The level above which a compaction is due. Automatic headroom fits
+    # output that shares the context window, plus estimation and framing
+    # slack. An explicit reserve remains host policy. An unknown window has
+    # no threshold and never triggers.
+    def threshold(window, max_output: nil)
+      window && (window - effective_reserve(max_output))
+    end
+
     def needed?(tokens, window, max_output: nil)
-      window ? tokens > window - effective_reserve(max_output) : false
+      limit = threshold(window, max_output:)
+      limit ? tokens > limit : false
     end
 
     private
@@ -89,16 +103,49 @@ module Mistri
     end
 
     class << self
-      # Context size for a replay: the last healthy turn's reported tokens
+      def context_tokens(messages, **)
+        level(messages, **).tokens
+      end
+
+      # The level of a replay: the last healthy turn's reported tokens
       # (prompt, cache, and output all sit in context next turn) plus an
-      # estimate of every message after it.
-      def context_tokens(messages, usage_from: 0)
+      # estimate of every message after it. counted is the provider's count of
+      # what a compaction left, which stands in until a turn reports. provider
+      # names whose rule estimates, when it is not the one that wrote the
+      # latest turn.
+      def level(messages, usage_from: 0, counted: nil, provider: nil)
         index = (usage_from...messages.length).reverse_each.find do |position|
           reported(messages[position])
         end
-        base = index ? reported(messages[index]) : 0
-        provider = latest_provider(messages)
-        messages.drop(index ? index + 1 : 0).sum(base) { |message| estimate(message, provider) }
+        base, from = if index then [reported(messages[index]).context_tokens, index + 1]
+                     elsif counted then [counted, usage_from]
+                     else [0, 0]
+                     end
+        provider ||= latest_provider(messages)
+        estimated = messages.drop(from).sum { |message| estimate(message, provider) }
+        Level.new(tokens: base + estimated, estimated:)
+      end
+
+      # The tokens that each message and all after it hold in the context.
+      # The prompt a turn reported is the size of everything before that
+      # turn, so a tail is the level less that prompt. Only a message with no
+      # reported turn at or after it is estimated to the end.
+      def tail_tokens(messages, usage_from: 0, counted: nil, provider: nil)
+        provider ||= latest_provider(messages)
+        total = context_tokens(messages, usage_from:, counted:, provider:)
+        before = nil
+        estimated = 0
+        tails = Array.new(messages.length)
+        (messages.length - 1).downto(0) do |position|
+          message = messages[position]
+          usage = reported(message) if position >= usage_from
+          if usage then before = usage.context_tokens - usage.output
+          elsif before then before = [before - estimate(message, provider), 0].max
+          else estimated += estimate(message, provider)
+          end
+          tails[position] = before ? total - before : estimated
+        end
+        tails
       end
 
       def latest_provider(messages)
@@ -116,8 +163,7 @@ module Mistri
         return nil unless message.assistant? && message.usage
         return nil if %i[aborted error].include?(message.stop_reason)
 
-        total = message.usage.context_tokens
-        total.positive? ? total : nil
+        message.usage if message.usage.context_tokens.positive?
       end
 
       def tokens_of(block, rule)

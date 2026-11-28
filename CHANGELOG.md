@@ -5,6 +5,23 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+- The context level is the provider's own count wherever one can be had.
+  `agent.context_usage` has one more key, `estimated`: how many of its tokens
+  Mistri estimated, which is zero after each answer.
+  `agent.context_usage(count: true)` asks the provider to count the next
+  request.
+- A compaction stores the provider's count of the context it leaves, as
+  `tokens_after` on its entry, and the level reads it until a turn reports.
+  Before, the level after a compaction was an estimate that left out the
+  system prompt and the tools, and read as 36 to 74 percent of the provider's
+  count.
+- `keep_recent:` is measured from the prompts the turns reported. Before, a
+  compaction asked to keep 20,000 tokens kept 22,750 on Claude, 39,462 on GPT
+  and 52,960 on Gemini.
+- Before an automatic compaction, when the reported part of the level is under
+  the threshold and twice the estimated part would reach it, Mistri asks the
+  provider to count the request, and the count decides.
+  `Compaction#threshold` returns the threshold.
 - What no turn has reported is estimated by a rule measured on each provider's
   own counts. Letters and spaces, digits, and all other characters each hold
   their own number of characters a token on Anthropic, OpenAI and Gemini.

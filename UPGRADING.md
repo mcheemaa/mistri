@@ -13,6 +13,24 @@ test.
 
 Most hosts need no code change. Read the points that apply to you.
 
+### A compaction keeps what `keep_recent:` says, and the level reads higher
+
+The context level and the turns a compaction keeps are now measured from the
+provider's own counts.
+
+- A compaction with the default `keep_recent:` of 20,000 keeps about 20,000
+  tokens. Before, it kept up to 52,960. A host that wants the larger tail
+  raises `keep_recent:`.
+- The level of a session that no provider has answered, and of a session right
+  after a compaction, reads higher than before, because it is closer to the
+  provider's count. A host that compares `context_usage[:tokens]` with a
+  number of its own checks that number.
+- `agent.context_usage` returns one more key, `estimated`. A host that matches
+  the whole hash adds it.
+- Near the threshold a turn can begin with one request to the provider's count
+  endpoint. It is free. It takes about 0.1 to 0.5 seconds on Anthropic and
+  Google, and about 13 ms for each 1,000 tokens on OpenAI.
+
 ### The cost of some models changed with the vendors' prices
 
 - `gpt-5.6-terra` and `gpt-5.6-luna` cost less, as OpenAI now bills them.

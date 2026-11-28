@@ -180,7 +180,8 @@ class TestAgentCompaction < Minitest::Test
   end
 
   def test_an_ordinary_turn_reads_history_once_for_the_compaction_check
-    loads = [false, Mistri::Compaction.new].map do |compaction|
+    settings = [false, Mistri::Compaction.new, Mistri::Compaction.new(window: 1_000_000)]
+    off, no_window, window = settings.map do |compaction|
       store = CountingStore.new
       session = Mistri::Session.new(store:)
       session.append_message(Mistri::Message.user("small context"))
@@ -192,7 +193,8 @@ class TestAgentCompaction < Minitest::Test
       store.loads
     end
 
-    assert_equal loads.first + 1, loads.last
+    assert_equal off, no_window, "a model with no known window has no threshold to read for"
+    assert_equal off + 1, window
   end
 
   def test_a_failed_summary_does_not_move_the_replay_boundary

@@ -79,21 +79,21 @@ module Mistri
     # stay open; resume owns those.
     def replay = replay_from(window)
 
-    # Context accounting ignores provider usage reported before the latest
-    # compaction: those prompt counts describe the larger, pre-summary replay.
-    # Until a post-compaction assistant turn reports fresh usage, the compacted
-    # replay is estimated directly.
-    def context_tokens
+    def context_tokens = context_level.tokens
+
+    # The tokens in the context, and how many of them are estimated. provider
+    # names whose rule estimates: the one the next request goes to.
+    def context_level(provider: nil)
       held = window
       replay = replay_from(held)
-      compacted_at = held.entries.rindex { |entry| entry["type"] == "compaction" }
-      usage_from = if compacted_at
-                     position = held.position(compacted_at)
-                     replay.index { |(_, index)| index && index > position } || replay.length
-                   else
-                     0
-                   end
-      Compaction.context_tokens(replay.map(&:first), usage_from:)
+      Compaction.level(replay.map(&:first), provider:, **measured(held, replay))
+    end
+
+    # For each message of replay, the tokens it and all after it hold.
+    def tail_tokens(provider: nil)
+      held = window
+      replay = replay_from(held)
+      Compaction.tail_tokens(replay.map(&:first), provider:, **measured(held, replay))
     end
 
     def last_compaction
@@ -105,12 +105,15 @@ module Mistri
     # entry carries what the loop needs from before it, so a later read can
     # start there. The start may only move forward, to a turn boundary that
     # keeps every open approval and every steer or report not folded in yet.
+    # A block is given the messages replay will hold and returns the
+    # provider's count of them, which the entry keeps as tokens_after.
     def checkpoint(summary:, kept_from:, model: nil, tokens_before: nil)
       held = window
       validate_cut!(held, kept_from)
-      append("compaction", { "summary" => summary, "model" => model, "kept_from" => kept_from,
-                             "tokens_before" => tokens_before,
-                             "carried" => carried_before(held, kept_from) }.compact)
+      entry = { "summary" => summary, "model" => model, "kept_from" => kept_from,
+                "tokens_before" => tokens_before, "carried" => carried_before(held, kept_from) }
+      entry["tokens_after"] = yield(compacted(held, entry)) if block_given?
+      append("compaction", entry.compact)
     end
 
     # The earliest position replay must keep: the turn of an open approval,
@@ -243,6 +246,25 @@ module Mistri
     # The entries from the newest checkpoint on, brought up to date. They
     # are frozen and shared, so a public reader returns copies its caller owns.
     def window = @log.window
+
+    # Context accounting ignores provider usage reported before the latest
+    # compaction: those prompt counts describe the larger, pre-summary replay.
+    # Until a turn after it reports fresh usage, the count the compaction
+    # stored stands in, and without one the replay is estimated.
+    def measured(held, replay)
+      compacted_at = held.entries.rindex { |entry| entry["type"] == "compaction" }
+      return { usage_from: 0 } unless compacted_at
+
+      position = held.position(compacted_at)
+      counted = held.entries[compacted_at]["tokens_after"]
+      { usage_from: replay.index { |(_, index)| index && index > position } || replay.length,
+        counted: (counted if counted.is_a?(Integer) && counted.positive?) }
+    end
+
+    def compacted(held, entry)
+      log = held.entries + [entry.compact.merge("type" => "compaction")]
+      replay_from(Log::Window.new(entries: log, offset: held.offset)).map(&:first)
+    end
 
     # What the checkpoint the window starts at carries from before it.
     def carried(held)

@@ -152,22 +152,28 @@ module Mistri
       end
     end
 
-    # How full the context is: {tokens:, window:, fraction:}. Hosts render
-    # meters and near-limit warnings from this; window is nil for models the
-    # catalog does not know unless Compaction#window supplies one.
-    def context_usage
-      tokens = @session.context_tokens
+    # How full the context is: {tokens:, window:, fraction:, estimated:}.
+    # Hosts render meters and near-limit warnings from this; window is nil
+    # for models the catalog does not know unless Compaction#window supplies
+    # one. estimated is how many of the tokens are the gem's estimate: zero
+    # when the number is the provider's own, as it is after each answer.
+    # count: true asks the provider to count the next request, which takes
+    # one round trip; when it cannot, the estimate stands.
+    def context_usage(count: false)
+      level = @session.context_level(provider: estimator)
+      counted = count_context if count
+      tokens = counted || level.tokens
       window = context_window
-      { tokens: tokens, window: window,
-        fraction: window && (tokens.to_f / window).round(3) }
+      { tokens: tokens, window: window, fraction: window && (tokens.to_f / window).round(3),
+        estimated: counted ? 0 : level.estimated }
     end
 
     # Compact now (a UI button, a pre-flight trim before a big task). Returns
     # the Compactor result, or nil when there is nothing worth compacting.
     def compact(&)
       exclusive do
-        Compactor.call(session: @session, provider: @provider,
-                       settings: @compaction || Compaction.new, budget: @budget, &)
+        Compactor.call(session: @session, provider: @provider, budget: @budget,
+                       settings: @compaction || Compaction.new, count: method(:count_context), &)
       end
     end
 
@@ -535,12 +541,39 @@ module Mistri
     def auto_compact(&)
       return nil unless @compaction
 
-      tokens = @session.context_tokens
-      return nil unless @compaction.needed?(tokens, context_window,
-                                            max_output: Models.shared_output(@provider.model))
+      threshold = @compaction.threshold(context_window,
+                                        max_output: Models.shared_output(@provider.model))
+      level = threshold && @session.context_level(provider: estimator)
+      return nil unless level && compaction_due?(level, threshold)
       return nil if automatic_compaction_exhausted?
 
       compact_automatically(&)
+    end
+
+    # A compaction starts on the provider's numbers. Where the reported part
+    # of the level is under the threshold and the estimated part could carry
+    # it over, the provider counts the request, and the count decides.
+    def compaction_due?(level, threshold)
+      return true if level.reported > threshold
+      return false if level.reported + (Compaction::ESTIMATE_SPREAD * level.estimated) <= threshold
+
+      (count_context || level.tokens) > threshold
+    end
+
+    # Whose rule estimates what no turn has reported: the provider the next
+    # request goes to.
+    def estimator = Models.find(@provider.model)&.provider
+
+    # The provider's count of the request the next turn would send for these
+    # messages. Nil when the provider has no count or the count fails.
+    def count_context(messages = @session.messages)
+      return nil unless @provider.respond_to?(:count_tokens)
+
+      history = @transform_context.reduce(messages) { |held, transform| transform.call(held) }
+      history = Reminder.as_user_turns(history) unless system_messages?
+      @provider.count_tokens(messages: history, system: @system, **tool_options(history))
+    rescue Error, ThreadError
+      nil
     end
 
     def automatic_compaction_exhausted?
@@ -550,7 +583,8 @@ module Mistri
     def compact_automatically(&emit)
       delivery = EventDelivery.wrap(emit)
       Compactor.call(session: @session, provider: @provider, settings: @compaction,
-                     trigger: :automatic, budget: @budget, &delivery)
+                     trigger: :automatic, budget: @budget, count: method(:count_context),
+                     &delivery)
     rescue EventDelivery::Failure => e
       raise EventDelivery.unwrap(e, delivery)
     rescue CompactionError => e

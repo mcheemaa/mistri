@@ -118,10 +118,14 @@ module Mistri
     class << self
       # Summarize and cut. Returns {summary:, tokens_before:, tokens_after:,
       # usage:}, or nil when there is nothing worth compacting. Emits
-      # :compacting and :compaction when a block is given.
-      def call(session:, provider:, settings: Compaction.new, trigger: :manual, budget: nil, &emit)
+      # :compacting and :compaction when a block is given. count is called
+      # with the messages the compaction leaves and returns the provider's
+      # count of the request they make, or nil.
+      def call(session:, provider:, settings: Compaction.new, trigger: :manual, budget: nil,
+               count: nil, &emit)
         replay = session.replay
-        cut = cut_index(replay, session, settings)
+        estimator = estimator_for(provider)
+        cut = cut_index(replay, session, settings, estimator)
         return nil unless cut
 
         previous = session.last_compaction&.fetch("summary", nil)
@@ -131,20 +135,23 @@ module Mistri
         return nil if head.empty?
 
         emit&.call(Event.new(type: :compacting))
-        tokens_before = session.context_tokens
+        tokens_before = session.context_level(provider: estimator).tokens
         prompt = prompt_for(head, previous, settings)
         reply, usage, failures = attempt(prompt, summarizers(provider, settings), settings, budget)
         reject(session, failures.join("; "), trigger, tokens_before, usage, &emit) unless reply
 
-        summary = reply.text.strip
-        session.checkpoint(summary:, kept_from: cut, model: reply.model, tokens_before:)
+        summary = commit(session, reply, cut, tokens_before, count)
         finish(session, reply, summary, usage, tokens_before, &emit)
       end
 
       private
 
-      def cut_index(replay, session, settings)
-        boundary = keep_boundary(replay, settings.keep_recent)
+      # Whose rule estimates what no turn has reported.
+      def estimator_for(provider) = Models.find(provider.model)&.provider
+
+      def cut_index(replay, session, settings, estimator)
+        tails = session.tail_tokens(provider: estimator)
+        boundary = keep_boundary(replay, tails, settings.keep_recent)
         return nil unless boundary
 
         candidates = replay.filter_map do |message, index|
@@ -172,14 +179,12 @@ module Mistri
 
       # Walk back from the tail until the keep budget is spent; the cut then
       # snaps to the next safe turn boundary, so replay keeps at most about
-      # keep_recent tokens of recent turns. A synthesized message has no
-      # position, so the walk goes on to the entry it stands behind.
-      def keep_boundary(replay, keep_recent)
-        kept = 0
-        latest = Compaction.latest_provider(replay.map(&:first))
-        replay.reverse_each do |(message, index)|
-          kept += Compaction.estimate(message, latest)
-          return index if index && kept >= keep_recent
+      # keep_recent tokens of recent turns, as the provider counted them. A
+      # synthesized message has no position, so the walk goes on to the entry
+      # it stands behind.
+      def keep_boundary(replay, tails, keep_recent)
+        replay.each_with_index.reverse_each do |(_, index), position|
+          return index if index && tails.fetch(position) >= keep_recent
         end
         nil
       end
@@ -256,6 +261,16 @@ module Mistri
                                             "tokens_before" => tokens_before)
         emit&.call(Event.new(type: :compaction_failed, error_message: failure))
         raise CompactionError.new("summarization failed: #{failure}", usage: usage)
+      end
+
+      # The entry keeps the provider's count of what the compaction leaves, so
+      # the level is the provider's own until the next turn reports.
+      def commit(session, reply, cut, tokens_before, count)
+        summary = reply.text.strip
+        session.checkpoint(summary:, kept_from: cut, model: reply.model, tokens_before:) do |left|
+          count&.call(left)
+        end
+        summary
       end
 
       def finish(session, reply, summary, usage, tokens_before, &emit)
