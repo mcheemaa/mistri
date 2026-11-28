@@ -219,7 +219,10 @@ module Mistri
           return if @error
 
           item = record["item"]
-          kind = KINDS[item&.fetch("type", nil)]
+          type = item&.fetch("type", nil)
+          return keep_compaction(item) if type == "compaction"
+
+          kind = KINDS[type]
           return unless kind || @current
 
           problem = completed_item_problem(record, item, kind)
@@ -227,6 +230,12 @@ module Mistri
           return if finish_refusal?(item, kind, &)
 
           commit_item(item, kind, &)
+        end
+
+        # A compaction arrives whole and sealed, and is kept as it came: the
+        # API takes it back only unchanged.
+        def keep_compaction(item)
+          @blocks << Content::Compaction.new(provider: :openai, data: item)
         end
 
         def completed_item_problem(record, item, kind)

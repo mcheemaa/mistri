@@ -62,7 +62,7 @@ class TestAnthropicCompaction < Minitest::Test
     gateway = Mistri::Providers::Anthropic.new(api_key: "k", origin: "https://gateway.example")
     taken = %w[claude-opus-5-5 claude-opus-4-6 claude-sonnet-4-6 claude-haiku-5-5 claude-fable-5-2
                claude-mythos-5 claude-opus-5-5-20261101]
-    refused = %w[claude-haiku-4-5 claude-opus-4-5 claude-sonnet-4-5 gpt-6.2-sol custom]
+    refused = %w[claude-haiku-4-5 claude-opus-4-5 claude-sonnet-4-5 custom]
 
     assert(taken.all? { |id| @provider.compacts?(id) })
     assert(refused.none? { |id| @provider.compacts?(id) })

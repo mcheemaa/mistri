@@ -376,7 +376,18 @@ turns keep their thinking, which a summary Mistri wrote would cost them.
 show it and cannot change it. The request, and each request that carries the
 block, sends the beta header `compact-2026-09-04`.
 
-`Compaction.new(native: false)` asks for Mistri's own summary instead. Mistri
+On a GPT model, OpenAI compacts on a
+[trigger](https://developers.openai.com/api/docs/guides/compaction). Mistri
+decides where to cut and ends the request with the trigger. The reply is one
+sealed item that only OpenAI can read. It is stored as it came and sent back
+first, and the kept turns after it keep their reasoning. Nobody can read this
+summary: `event.content` and the entry's `"summary"` are nil, and
+`instructions:` do not reach it.
+
+`Compaction.new(native: false)` asks for Mistri's own summary instead. On
+OpenAI that summary stands after the turns it leaves and not before them,
+because the API removes the reasoning of a turn that follows a summary the
+caller wrote. Mistri
 also writes its own when the provider cannot: a model or an `origin:` without
 the feature, a failed request, or a reply with no summary. The `:compaction`
 event says which in `event.status`, `:native` or `:own`, and why the

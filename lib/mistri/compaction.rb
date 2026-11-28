@@ -43,6 +43,15 @@ module Mistri
                       "work already done, do not repeat it, and treat the user's most recent " \
                       "request as the current instruction."
 
+    # For a summary that stands after the turns it leaves, as OpenAI asks of
+    # one the caller wrote.
+    SUMMARY_PREFACE_AFTER = "The part of this conversation before the messages above was " \
+                            "compacted. Another model wrote the handoff summary below from " \
+                            "those earlier messages; the messages above are the most recent " \
+                            "turns, kept intact. Build on the work already done, do not repeat " \
+                            "it, and treat the user's most recent request as the current " \
+                            "instruction."
+
     attr_reader :reserve, :keep_recent, :window, :instructions, :max_tokens, :fallback, :threshold,
                 :native
 

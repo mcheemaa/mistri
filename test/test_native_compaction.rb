@@ -158,6 +158,69 @@ class TestNativeCompaction < Minitest::Test
     assert_includes note.text, "read_gauge"
   end
 
+  def test_a_sealed_block_is_stored_with_no_summary_and_the_event_holds_no_text
+    provider = Compacting.new(native: sealed_reply)
+    session = seeded_session
+    events = []
+
+    result = Mistri::Agent.new(provider:, session:, compaction: settings)
+                          .compact { |event| events << event }
+
+    assert_nil result[:summary]
+    assert_equal [:native, nil], events.last.to_h.values_at(:status, :content)
+    assert_equal({ "id" => "cmp_1" }, session.last_compaction["block"])
+    refute session.last_compaction.key?("summary")
+    assert_nil session.messages.first.content.first.text
+  end
+
+  def test_the_gem_s_own_summary_after_a_sealed_block_repeats_the_block_and_asks_to_fold_it
+    provider = Compacting.new(native: sealed_reply, turns: [{ text: "Folded." }])
+    session = seeded_session
+    Mistri::Agent.new(provider:, session:, compaction: settings).compact
+    session.append_message(Mistri::Message.user("q3 " * 50))
+    session.append_message(Mistri::Message.assistant(content: "a3", stop_reason: :stop))
+
+    Mistri::Agent.new(provider:, session:, compaction: settings(native: false)).compact
+    asked = provider.requests.last[:messages]
+
+    assert_equal Mistri::Compactor::CLOSING_UPDATE_PROMPT, asked.last.text
+    assert_equal :compaction, asked.first.content.first.type
+    assert_includes session.messages.first.text, "Folded."
+  end
+
+  def test_the_gem_s_own_summary_stands_after_the_kept_turns_where_the_provider_asks
+    session = seeded_session
+    after_kept_agent(session, [{ text: "First." }]).compact
+    kept, summary = session.messages.each_slice(2).to_a
+
+    assert session.last_compaction["after"]
+    assert_equal %w[q2 a2], kept.map(&:text)
+    assert summary.first.text.start_with?(Mistri::Compaction::SUMMARY_PREFACE_AFTER)
+    assert_includes summary.first.text, "First."
+
+    session.append_message(Mistri::Message.user("q3"))
+    order = session.messages.map(&:text).map { |text| text.include?("First.") ? :summary : text }
+
+    assert_equal ["q2", "a2", :summary, "q3"], order
+  end
+
+  def test_a_later_compaction_reads_a_summary_that_stands_after_the_kept_turns
+    session = seeded_session
+    after_kept_agent(session, [{ text: "First." }]).compact
+    session.append_message(Mistri::Message.user("q3 " * 50))
+    session.append_message(Mistri::Message.assistant(content: "a3", stop_reason: :stop))
+    provider = after_kept_agent(session, [{ text: "Second." }]).tap(&:compact)
+                                                               .instance_variable_get(:@provider)
+    sent = provider.requests.last[:messages].map(&:text)
+    cut = session.last_compaction["kept_from"]
+    _, text = Mistri::Compactor.send(:before_cut, session.replay, cut)
+
+    assert_equal "q2", sent.first
+    assert_includes sent[2], "First."
+    assert_includes session.messages.last.text, "Second."
+    refute(text.any? { |message| message.text.to_s.include?("Second.") })
+  end
+
   def test_another_provider_refuses_a_session_that_holds_a_block
     block = Mistri::Content::Compaction.new(provider: :anthropic, data: BLOCK, text: "S")
     history = [Mistri::Message.assistant(content: [block], provider: :anthropic),
@@ -194,6 +257,18 @@ class TestNativeCompaction < Minitest::Test
   private
 
   def settings(**) = Mistri::Compaction.new(keep_recent: 10, **)
+
+  def sealed_reply
+    Mistri::Message.assistant(
+      content: [Mistri::Content::Compaction.new(provider: :fake, data: { "id" => "cmp_1" })],
+      stop_reason: :stop, model: "fake-1", usage: Mistri::Usage.new(input: 40, output: 9)
+    )
+  end
+
+  def after_kept_agent(session, turns)
+    provider = Class.new(Mistri::Providers::Fake) { def summary_after_kept? = true }.new(turns:)
+    Mistri::Agent.new(provider:, session:, compaction: settings)
+  end
 
   def seeded_session(thinking: false)
     session = Mistri::Session.new(store: Mistri::Stores::Memory.new)

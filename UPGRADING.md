@@ -33,6 +33,25 @@ the API for the summary. Mistri sends its own cut and its own summary prompt.
   provider. Such a run ends with an error that says so.
 - For the summary Mistri writes itself, set `Compaction.new(native: false)`.
 
+### On GPT, OpenAI writes the compaction, and nobody can read it
+
+On OpenAI's own origin a compaction now ends its request with a trigger, and
+the API returns one sealed item in place of a summary.
+
+- A host that shows the summary has nothing to show for these compactions:
+  `event.content`, the entry's `"summary"` and `result[:summary]` are nil.
+  `event.status` is `:native`. For a summary a person can read, set
+  `Compaction.new(native: false)`.
+- `Compaction.new(instructions:)` and `agent.compact(instructions:)` do not
+  reach OpenAI's own compaction. They apply to the summary Mistri writes.
+- A session whose latest compaction OpenAI wrote does not run on another
+  provider, and a fallback of another provider cannot fold that item into a
+  later summary.
+- With `native: false`, a new compaction on OpenAI puts Mistri's summary
+  after the kept turns. A host that reads `session.messages.first` as the
+  summary reads the first kept turn there. Sessions compacted before this
+  release replay as they did.
+
 ### An agent's summary request repeats the conversation
 
 The request that writes a compaction's summary now holds the agent's system

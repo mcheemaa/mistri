@@ -59,6 +59,15 @@ module Mistri
       # and the system prompt as instructions.
       def system_messages? = @official
 
+      # The API writes a compaction itself when a request ends with a
+      # trigger. The compactor calls stream with compaction:, and the reply
+      # holds one Content::Compaction that only the API can read.
+      def compacts?(model = @model) = @official && Models.compaction?(model)
+
+      # The API removes the reasoning of a turn that follows a summary the
+      # caller wrote, so such a summary is placed after the turns it leaves.
+      def summary_after_kept? = true
+
       def stream(messages:, system: nil, tools: [], signal: nil, **overrides, &emit)
         delivery = EventDelivery.wrap(emit)
         model = overrides.fetch(:model, @model)
@@ -108,7 +117,7 @@ module Mistri
         body[:service_tier] = service_tier if service_tier
         reasoning = overrides.fetch(:reasoning, @reasoning)
         body[:reasoning] = reasoning if reasoning
-        body[:max_output_tokens] = overrides[:max_tokens] if overrides[:max_tokens]
+        compact(body, overrides)
         body[:prompt_cache_options] = { mode: "explicit" } if writes_no_cache?(model, overrides)
         if (schema = overrides[:output_schema])
           body[:text] = { format: { type: "json_schema", name: "output", strict: true,
@@ -126,6 +135,15 @@ module Mistri
         else
           body[:instructions] = system
         end
+      end
+
+      # A trigger as the last input item asks for a compaction in place of an
+      # answer. The API takes no instructions for it, and refuses an output
+      # limit under 20,000 tokens, so none is sent.
+      def compact(body, overrides)
+        return body[:input] << { type: "compaction_trigger" } if overrides[:compaction]
+
+        body[:max_output_tokens] = overrides[:max_tokens] if overrides[:max_tokens]
       end
 
       # A request of one kind, such as a summary, would pay to write a cache

@@ -172,13 +172,13 @@ module Mistri
         cut = cut_index(replay, session, keep_for(session, provider, settings, level))
         return nil unless cut
 
-        previous = session.last_compaction&.fetch("summary", nil)
-        sent, head = before_cut(replay, cut, previous)
+        earlier = session.last_compaction
+        sent, head = before_cut(replay, cut)
         return nil if head.empty?
 
-        run = { session:, trigger:, tokens_before: level, started: clock }
+        run = { session:, trigger:, tokens_before: level, started: clock, provider: }
         emit&.call(Event.new(type: :compacting, reason: trigger, tokens_before: level))
-        asks = asks_for(provider, settings, request, [sent, head, previous],
+        asks = asks_for(provider, settings, request, [sent, head, earlier],
                         instructions || settings.instructions)
         reply, usage, failures = attempt(summarizers(provider, settings), settings, budget, asks)
         reject(run, failures.join("; "), usage, &emit) unless reply
@@ -209,11 +209,13 @@ module Mistri
       end
 
       # The messages before the cut as the turns sent them, and as the text
-      # holds them: there the synthetic summary rides in <previous-summary>,
-      # and a reminder is left out, because it is not the user's words.
-      def before_cut(replay, cut, previous)
-        sent = replay.take_while { |(_, index)| index.nil? || index < cut }.map(&:first)
-        [sent, sent.drop(previous ? 1 : 0).reject(&:reminder)]
+      # holds them: there the summary of an earlier compaction, which replay
+      # made up, rides in <previous-summary>, and a reminder is left out,
+      # because it is not the user's words.
+      def before_cut(replay, cut)
+        pairs = replay.take_while { |(_, index)| index.nil? || index < cut }
+        stored = pairs.reject { |message, index| index.nil? && !message.tool? }
+        [pairs.map(&:first), stored.map(&:first).reject(&:reminder)]
       end
 
       def cut_index(replay, session, (tails, keep))
@@ -259,12 +261,12 @@ module Mistri
       # the session's own provider: its own compaction, the conversation with
       # the prompt after it, and the text. The first two need the request of
       # a turn.
-      def asks_for(provider, settings, request, (sent, head, previous), focus)
-        asks = { text: prompt_for(head, previous, focus) }
+      def asks_for(provider, settings, request, (sent, head, earlier), focus)
+        asks = { text: prompt_for(head, earlier&.fetch("summary", nil), focus) }
         return asks unless request
 
         arguments = request.call(sent)
-        prompt = previous ? CLOSING_UPDATE_PROMPT : CLOSING_CHECKPOINT_PROMPT
+        prompt = earlier ? CLOSING_UPDATE_PROMPT : CLOSING_CHECKPOINT_PROMPT
         prompt += "\nAdditional focus: #{focus}\n" if focus
         native = settings.native && provider.respond_to?(:compacts?) && provider.compacts?
         asks[:native] = arguments.merge(compaction: { instructions: prompt }) if native
@@ -370,12 +372,14 @@ module Mistri
         end
         return "unexpected tool calls" if reply.tool_calls?
 
-        "empty summary" if summary_of(reply).empty?
+        "empty summary" if summary_of(reply).nil? && reply.content.none?(Content::Compaction)
       end
 
-      # A provider's own compaction answers with its block and no text.
+      # A provider's own compaction answers with its block and no text of
+      # its own, and a block may be sealed. Nil when no summary can be read.
       def summary_of(reply)
-        (reply.content.grep(Content::Compaction).first&.text || reply.text).to_s.strip
+        text = (reply.content.grep(Content::Compaction).first&.text || reply.text).to_s.strip
+        text unless text.empty?
       end
 
       # A failed summary is part of the session's story: the entry keeps the
@@ -399,9 +403,14 @@ module Mistri
         block = reply.content.grep(Content::Compaction).first
         details = run.slice(:tokens_before, :trigger, :fallback_reason)
                      .merge(model: reply.model, duration: elapsed(run),
-                            block: block&.data, provider: block&.provider)
+                            block: block&.data, provider: block&.provider,
+                            after: (true if block.nil? && after_kept?(run[:provider])))
         run[:session].checkpoint(summary:, kept_from: cut, **details) { |left| count&.call(left) }
         summary
+      end
+
+      def after_kept?(provider)
+        provider.respond_to?(:summary_after_kept?) && provider.summary_after_kept?
       end
 
       def finish(run, reply, summary, usage, &emit)

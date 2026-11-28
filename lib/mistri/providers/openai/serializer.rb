@@ -118,6 +118,7 @@ module Mistri
         def assistant_item(block, own: true, declared: {})
           case block
           when Content::Thinking then reasoning_item(block, own:)
+          when Content::Compaction then block.data
           when Content::Text then message_item(block, own:)
           when ToolCall then function_call_item(block, own:, declared:)
           end

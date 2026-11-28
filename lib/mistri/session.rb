@@ -111,15 +111,16 @@ module Mistri
     # what started the compaction and the seconds it took, when given. A
     # summary that a provider wrote in its own compaction comes with the
     # provider's block: the entry keeps it as it came, replay sends it back
-    # first, and summary is its text where it can be read.
+    # first, and summary is its text where it can be read. after: true puts a
+    # summary the gem wrote behind the turns it leaves.
     def checkpoint(summary:, kept_from:, **details)
       held = window
       validate_cut!(held, kept_from)
       carried = carried_before(held, kept_from)
       entry = { "summary" => summary, "kept_from" => kept_from, "carried" => carried,
                 "trigger" => details[:trigger]&.to_s, "provider" => details[:provider]&.to_s }
-              .merge(details.slice(:model, :tokens_before, :duration, :block, :fallback_reason)
-                            .transform_keys(&:to_s))
+              .merge(details.slice(:model, :tokens_before, :duration, :block, :fallback_reason,
+                                   :after).transform_keys(&:to_s))
       entry["tokens_after"] = yield(compacted(held, entry)) if block_given?
       append("compaction", entry.compact)
       note_loaded(carried.fetch("loaded", [])) if details[:block]
@@ -819,18 +820,29 @@ module Mistri
       compacted_at = log.rindex { |entry| entry["type"] == "compaction" }
       compaction = log[compacted_at] if compacted_at
       from = compaction ? compaction["kept_from"] - held.offset : 0
-      # A summary the gem wrote invalidates prefix-bound thinking in the kept
-      # tail. One the provider wrote in its own compaction keeps it valid.
-      stale = compaction && !compaction["block"]
+      stale = stale_before(compaction, compacted_at)
       pairs = log.each_with_index.filter_map do |entry, index|
         next unless index >= from && entry["type"] == "message"
 
-        message = replay_message(entry, before_compaction: stale && index < compacted_at)
+        message = replay_message(entry, before_compaction: stale && index < stale)
         [message, index] if message
       end
       pairs = heal(pairs, replay_call_states(log, from:, held:))
       pairs = pairs.map { |message, index| [message, index && held.position(index)] }
-      compaction ? [[summary_message(compaction), nil], *pairs] : pairs
+      compaction ? with_summary(pairs, compaction, held.position(compacted_at)) : pairs
+    end
+
+    # A summary the gem wrote invalidates prefix-bound thinking in the kept
+    # tail. One the provider wrote in its own compaction keeps it valid.
+    def stale_before(compaction, compacted_at)
+      compacted_at unless compaction.nil? || compaction["block"]
+    end
+
+    # The summary stands first. One marked after stands behind the kept
+    # turns, before the first message stored after the compaction.
+    def with_summary(pairs, compaction, position)
+      first_after = pairs.index { |(_, index)| index && index > position } || pairs.length
+      pairs.insert(compaction["after"] ? first_after : 0, [summary_message(compaction), nil])
     end
 
     # Only replay drops stale thinking: the transcript and thoughts from the
@@ -943,7 +955,8 @@ module Mistri
     def summary_message(compaction)
       return provider_summary(compaction) if compaction["block"]
 
-      text = "#{Compaction::SUMMARY_PREFACE}\n\n#{compaction["summary"]}"
+      preface = compaction["after"] ? Compaction::SUMMARY_PREFACE_AFTER : Compaction::SUMMARY_PREFACE
+      text = "#{preface}\n\n#{compaction["summary"]}"
       loaded = compaction.dig("carried", "loaded").to_a
       loaded.empty? ? Message.user(text) : Message.user("#{text}\n\n#{loaded_note(loaded)}")
     end
