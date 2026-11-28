@@ -163,8 +163,9 @@ Loop-level events are:
   summary in `content` and the summarizing reply in `message`, or
   `:compaction_failed` with the reason in `error_message`;
 - `:retry` before provider backoff;
-- `:thinking_dropped` after `:start`, when the provider discarded earlier
-  thinking it could no longer verify;
+- `:thinking_dropped` when the provider discarded earlier thinking it could
+  no longer verify: after `:start` on Anthropic, with the finished response on
+  OpenAI;
 - `:subagent_report` when a running background child reaches a terminal state;
   an inactive `Child#stop` persists the report without this callback because it
   has no event sink.
@@ -395,6 +396,73 @@ loop rather than mirroring every provider option as a top-level keyword. One
 override is common to every built-in provider: `max_tokens:` bounds that
 request's output (OpenAI `max_output_tokens`, Gemini `maxOutputTokens`); the
 compactor uses it for its summary request.
+
+### GPT-6.2
+
+Select `gpt-6.2-sol` or `gpt-6.2-astra` explicitly. `gpt-6.1-sol` stays the
+default OpenAI model. Both reject the reasoning effort `none`.
+
+[GPT-6.2](https://developers.openai.com/api/docs/guides/latest-model/gpt-6.2-astra)
+appends top-level `instructions` after the input and never caches them. On
+OpenAI's own origin Mistri therefore sends the system prompt as a developer
+message at the start of the input, for every model. Earlier models cache both
+forms as one prefix. Another `origin:` still receives `instructions`, so
+through a gateway GPT-6.2 does not cache the system prompt.
+
+GPT-6.2 also removes replayed reasoning when the history before it has
+changed, and still answers 200. The stream then emits `:thinking_dropped` with
+the reason in `event.content`, such as `prefix_mismatch`, and the run log
+prints a warning. What keeps a Claude prefix stable keeps this one stable too;
+see [Thinking is signed against the prefix](#thinking-is-signed-against-the-prefix).
+
+### Gemini 4
+
+Select `gemini-4-carbon`, `gemini-4-argon`, `gemini-4-neon`, or
+`gemini-4-hydrogen` explicitly. `gemini-3.8-flash` stays the default Gemini
+model.
+
+Input, thinking, and output
+[share one window](https://aistudio.google.com/docs/whats-new-gemini-4-argon)
+of 1,048,576 tokens. Automatic compaction therefore starts at 978,944 tokens
+on these models, earlier than on Gemini 3.
+
+One request returns at most 65,536 tokens of thinking and output together,
+and that is what a turn gets by default. To let an answer go on, pass
+`max_tokens:`:
+
+```ruby
+Mistri.agent(
+  "gemini-4-argon",
+  provider_options: { max_tokens: 262_144 },
+  compaction: Mistri::Compaction.new(reserve: 262_144 + 4_096),
+)
+```
+
+When the API says the answer continues, Mistri sends the same request again
+with the API's token and goes on in the same message, up to 32 requests. Each
+request is billed, so the usage counts all of them. The message's
+`usage.context` is what sits in the context afterwards, and
+`agent.context_usage` reads it. The output shares the window, so a host that
+raises `max_tokens:` raises the compaction `reserve:` with it.
+
+A continued answer can hold more than one text block. They join with nothing
+between them, as `message.text` does. A request that fails inside a continued
+answer fails the turn. A retry then sends the answer again from its first
+request, so the requests before the failure are billed a second time. An
+answer that reaches the 32 requests is not retried.
+
+Mistri sends no thinking level, so the model's own applies: `medium` on Carbon
+and Argon, `high` on Neon and Hydrogen. Pass one through `thinking:`, with
+`includeThoughts: true` beside it to keep the summaries. `minimal` is refused,
+and only Neon and Hydrogen take `xhigh`.
+
+With thought summaries on, which is the default, the model writes while it
+thinks. With them off it sends nothing until it has finished thinking, which
+can take longer than the 300 seconds of `read_timeout:`. A host that turns
+them off raises `read_timeout:`; Google asks for 20 minutes.
+
+Google answers a request for `gemini-3.5-flash` with `gemini-3.6-flash`. The
+catalog holds the newer id, and the older one resolves to it.
 
 ### GPT-6 Astra and Fable 5.1
 

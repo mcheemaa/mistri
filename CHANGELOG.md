@@ -5,6 +5,44 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+- A Gemini turn that calls a tool no longer ends with an empty text block.
+  The API closes such a turn with a text part of no text. Mistri stored it,
+  and sent `:text_start` and `:text_end` for it.
+- A Gemini 4 answer that needs more than the 65,536 tokens of one request is
+  continued. When the API ends a request with `CONTINUATION`, Mistri sends the
+  same request again with the API's token and goes on in the same message, up
+  to 32 requests. Such an answer was stored as finished where its first
+  request ended. Its usage counts every request. An answer that reaches the
+  32 requests fails and is not retried.
+- The Gemini provider takes `max_tokens:`, as the Anthropic provider does.
+  Without it a Gemini turn gets the API's default, which is one request.
+- `Usage#context` is what sits in the model's context after a turn that took
+  more than one request, where the counts are the sum of every request.
+  `Usage#context_tokens` is that figure for any turn, and the context level
+  reads it. A `Usage` dumped with Marshal by this release is not read by an
+  earlier one.
+- `gemini-4-carbon`, `gemini-4-argon`, `gemini-4-neon` and `gemini-4-hydrogen`
+  are in the model catalog. Input, thinking and output share their window, so
+  automatic compaction starts at 978,944 tokens on them, where a Gemini 3
+  model starts at 1,032,192. Carbon and Argon hold their introductory price
+  through November 30, 2026, and their list price from then on.
+- `gemini-3.6-flash` and `gemini-3.5-flash-lite` are in the catalog. Google
+  answers a request for `gemini-3.5-flash` with `gemini-3.6-flash`, so the
+  older id resolves to that row and is priced as it.
+- An OpenAI stream emits `:thinking_dropped` when the API removed replayed
+  reasoning, with its reasons, as an Anthropic stream does. GPT-6.2 removes
+  reasoning after a change to the history before it and still answers 200.
+- On OpenAI's own origin the system prompt is sent as a developer message at
+  the start of the input, and no longer as `instructions`. GPT-6.2 appends
+  `instructions` after the input and never caches them, so each request paid
+  for the whole system prompt. Earlier models cache both forms as one prefix.
+  Another origin still receives `instructions`.
+- `gpt-6.2-sol`, `gpt-6.2-astra` and `gpt-6-sol` are in the model catalog,
+  with their windows and prices.
+- The catalog's prices for `gpt-5.6-terra` and `gpt-5.6-luna` are OpenAI's
+  current ones, which are lower. `gpt-5.6-sol` holds its promotional price
+  until the end of November 30, 2026, Pacific time, and its list price from
+  then on. The cost that Mistri reports for these models changes with them.
 - A key of `gates:` that names no tool of the server raises
   `Mistri::ConfigurationError`, as a key of a `parallel:` hash does. A name
   spelled another way, or a symbol, matched no tool and said nothing, so the

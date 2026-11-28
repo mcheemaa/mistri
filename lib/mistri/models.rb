@@ -33,8 +33,8 @@ module Mistri
     # a provider from sending an unsupported thinking shape that 400s.
     #
     # context_window is the provider's published context or input limit.
-    # Anthropic and OpenAI share it with the next output; Gemini publishes a
-    # separate inputTokenLimit and outputTokenLimit.
+    # Anthropic, OpenAI and Gemini 4 share it with the next output. Gemini
+    # before 4 publishes a separate inputTokenLimit and outputTokenLimit.
     #
     # Pricing is selected per request from its prompt size. Rates are paid
     # standard direct-API list prices. cache_write is the provider's baseline
@@ -126,6 +126,15 @@ module Mistri
        [price(input: 3.0, output: 15.0, cache_read: 0.3, cache_write: 3.75)]],
       ["claude-haiku-4-5", :anthropic, 64_000, 200_000, :budget,
        [price(input: 1.0, output: 5.0, cache_read: 0.1, cache_write: 1.25)]],
+      ["gpt-6.2-astra", :openai, 128_000, 1_050_000, :effort,
+       [price({ input: 8.0, output: 40.0, cache_read: 0.4, cache_write: 10.0 },
+              above: 272_000,
+              higher: { input: 16.0, output: 60.0, cache_read: 0.8,
+                        cache_write: 20.0 })]],
+      ["gpt-6.2-sol", :openai, 128_000, 1_050_000, :effort,
+       [price({ input: 2.0, output: 10.0, cache_read: 0.1, cache_write: 2.5 },
+              above: 272_000,
+              higher: { input: 4.0, output: 15.0, cache_read: 0.2, cache_write: 5.0 })]],
       ["gpt-6-astra", :openai, 128_000, 1_050_000, :effort,
        [price({ input: 10.0, output: 50.0, cache_read: 1.0, cache_write: 12.5 },
               above: 272_000,
@@ -143,21 +152,27 @@ module Mistri
        [price({ input: 0.1, output: 0.5, cache_read: 0.01, cache_write: 0.125 },
               above: 272_000,
               higher: { input: 0.2, output: 0.75, cache_read: 0.02, cache_write: 0.25 })]],
-      ["gpt-5.6-sol", :openai, 128_000, 1_050_000, :effort,
-       [price({ input: 5.0, output: 30.0, cache_read: 0.5, cache_write: 6.25 },
+      ["gpt-6-sol", :openai, 128_000, 1_050_000, :effort,
+       [price({ input: 2.0, output: 10.0, cache_read: 0.2, cache_write: 2.5 },
               above: 272_000,
+              higher: { input: 4.0, output: 15.0, cache_read: 0.4, cache_write: 5.0 })]],
+      # OpenAI's promotional price ends with November 30, 2026, Pacific time.
+      ["gpt-5.6-sol", :openai, 128_000, 1_050_000, :effort,
+       [price({ input: 4.0, output: 20.0, cache_read: 0.4, cache_write: 5.0 },
+              above: 272_000,
+              higher: { input: 8.0, output: 30.0, cache_read: 0.8, cache_write: 10.0 }),
+        price({ input: 5.0, output: 30.0, cache_read: 0.5, cache_write: 6.25 },
+              from: Time.utc(2026, 12, 1, 8), above: 272_000,
               higher: { input: 10.0, output: 45.0, cache_read: 1.0,
                         cache_write: 12.5 })]],
       ["gpt-5.6-terra", :openai, 128_000, 1_050_000, :effort,
-       [price({ input: 2.5, output: 15.0, cache_read: 0.25, cache_write: 3.125 },
+       [price({ input: 2.0, output: 12.0, cache_read: 0.2, cache_write: 2.5 },
               above: 272_000,
-              higher: { input: 5.0, output: 22.5, cache_read: 0.5,
-                        cache_write: 6.25 })]],
+              higher: { input: 4.0, output: 18.0, cache_read: 0.4, cache_write: 5.0 })]],
       ["gpt-5.6-luna", :openai, 128_000, 1_050_000, :effort,
-       [price({ input: 1.0, output: 6.0, cache_read: 0.1, cache_write: 1.25 },
+       [price({ input: 0.2, output: 1.2, cache_read: 0.02, cache_write: 0.25 },
               above: 272_000,
-              higher: { input: 2.0, output: 9.0, cache_read: 0.2,
-                        cache_write: 2.5 })]],
+              higher: { input: 0.4, output: 1.8, cache_read: 0.04, cache_write: 0.5 })]],
       ["gpt-5.5", :openai, 128_000, 1_050_000, :effort,
        [price({ input: 5.0, output: 30.0, cache_read: 0.5 },
               above: 272_000, higher: { input: 10.0, output: 45.0, cache_read: 1.0 })]],
@@ -166,21 +181,41 @@ module Mistri
               above: 272_000, higher: { input: 5.0, output: 22.5, cache_read: 0.5 })]],
       ["gpt-5-nano", :openai, 128_000, 400_000, :effort,
        [price(input: 0.05, output: 0.4, cache_read: 0.005)]],
-      ["gemini-3.5-flash", :gemini, 65_536, 1_048_576, :level,
-       [price(input: 1.5, output: 9.0, cache_read: 0.15)]],
-      ["gemini-3.1-pro-preview", :gemini, 65_536, 1_048_576, :level,
-       [price({ input: 2.0, output: 12.0, cache_read: 0.2 },
-              above: 200_000, higher: { input: 4.0, output: 18.0, cache_read: 0.4 })]],
+      # max_output is what one streamed request of a Gemini 4 model returns.
+      ["gemini-4-carbon", :gemini, 65_536, 1_048_576, :level,
+       [price(input: 2.0, output: 10.0, cache_read: 0.1),
+        price({ input: 4.0, output: 20.0, cache_read: 0.2 },
+              from: Time.utc(2026, 12, 1))]],
+      ["gemini-4-argon", :gemini, 65_536, 1_048_576, :level,
+       [price(input: 2.0, output: 10.0, cache_read: 0.1),
+        price({ input: 4.0, output: 20.0, cache_read: 0.2 },
+              from: Time.utc(2026, 12, 1))]],
+      ["gemini-4-neon", :gemini, 65_536, 1_048_576, :level,
+       [price(input: 3.0, output: 15.0, cache_read: 0.15)]],
+      ["gemini-4-hydrogen", :gemini, 65_536, 1_048_576, :level,
+       [price(input: 1.5, output: 7.5, cache_read: 0.075)]],
       ["gemini-3.8-flash", :gemini, 65_536, 1_048_576, :level,
        [price(input: 0.75, output: 3.75, cache_read: 0.075),
         price({ input: 1.5, output: 7.5, cache_read: 0.15 },
-              from: Time.utc(2027, 1, 1))]]
+              from: Time.utc(2027, 1, 1))]],
+      ["gemini-3.6-flash", :gemini, 65_536, 1_048_576, :level,
+       [price(input: 0.75, output: 3.75, cache_read: 0.075),
+        price({ input: 1.5, output: 7.5, cache_read: 0.15 },
+              from: Time.utc(2027, 1, 1))]],
+      ["gemini-3.5-flash-lite", :gemini, 65_536, 1_048_576, :level,
+       [price(input: 0.3, output: 2.5, cache_read: 0.03)]],
+      ["gemini-3.1-pro-preview", :gemini, 65_536, 1_048_576, :level,
+       [price({ input: 2.0, output: 12.0, cache_read: 0.2 },
+              above: 200_000, higher: { input: 4.0, output: 18.0, cache_read: 0.4 })]]
     ].to_h do |row|
       id, provider, max_output, context_window, thinking, pricing = row
       [id, Model.new(id:, provider:, max_output:, context_window:, thinking:, pricing:)]
     end.freeze
 
-    ALIASES = { "gpt-5.6" => "gpt-5.6-sol" }.freeze
+    # The API answers a request for gemini-3.5-flash with gemini-3.6-flash.
+    ALIASES = { "gpt-5.6" => "gpt-5.6-sol", "gemini-3.5-flash" => "gemini-3.6-flash" }.freeze
+    SEPARATE_OUTPUT = %w[gemini-3.8-flash gemini-3.6-flash gemini-3.5-flash-lite
+                         gemini-3.1-pro-preview].freeze
     TURN_BOUND_THINKING = %w[claude-fable-5 claude-opus-5 claude-opus-4-8 claude-opus-4-7
                              claude-opus-4-6 claude-sonnet-5 claude-sonnet-4-6
                              claude-haiku-4-5].freeze
@@ -199,11 +234,12 @@ module Mistri
 
     def self.max_output(id) = find(id)&.max_output
 
-    # Output capacity that occupies the published context limit. Gemini's
-    # output limit is independent, so its compaction headroom is input-only.
+    # Output capacity that occupies the published context limit. A Gemini
+    # model before 4 has an independent output limit, so its compaction
+    # headroom is input-only.
     def self.shared_output(id)
       model = find(id)
-      model&.max_output unless model&.provider == :gemini
+      model&.max_output unless SEPARATE_OUTPUT.include?(model&.id)
     end
 
     def self.thinking(id) = find(id)&.thinking

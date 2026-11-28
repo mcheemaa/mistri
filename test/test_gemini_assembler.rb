@@ -51,6 +51,33 @@ class TestGeminiAssembler < Minitest::Test
                  events.select { |e| e.type.start_with?("toolcall") }.map(&:type)
   end
 
+  def test_the_empty_text_part_that_ends_a_tool_calling_turn_is_not_stored
+    events = []
+    message = drive(events, [
+                      { "candidates" => [{ "content" => { "parts" => [{ "text" => "Read." }] } }] },
+                      { "candidates" => [{ "content" => { "parts" => [
+                        { "functionCall" => { "name" => "search", "args" => {} },
+                          "thoughtSignature" => "tsig" }
+                      ] } }] },
+                      { "candidates" => [{ "content" => { "parts" => [{ "text" => "" }] },
+                                           "finishReason" => "STOP" }] }
+                    ])
+
+    assert_equal %i[text tool_call], message.content.map(&:type)
+    assert_equal :tool_use, message.stop_reason
+    assert_equal(1, events.count { |event| event.type == :text_start })
+  end
+
+  def test_an_empty_text_part_that_carries_a_signature_is_kept_for_replay
+    message = drive([], [
+                      { "candidates" => [{ "content" => { "parts" => [
+                        { "text" => "", "thoughtSignature" => "sig-end" }
+                      ] }, "finishReason" => "STOP" }] }
+                    ])
+
+    assert_equal ["sig-end"], message.content.map(&:signature)
+  end
+
   def test_signed_parts_keep_their_wire_boundaries
     message = drive([], [
                       { "candidates" => [{ "content" => { "parts" => [

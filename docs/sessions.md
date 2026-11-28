@@ -345,8 +345,10 @@ agent = Mistri.agent("claude-opus-5-5", compaction: settings)
 
 An explicit `window:` enables compaction for an uncatalogued deployment. An
 explicit `reserve:` is host policy; the automatic default otherwise protects a
-catalogued model's shared output capacity plus framing slack. Gemini publishes
-an independent input limit, so its automatic reserve remains input-oriented.
+catalogued model's shared output capacity plus framing slack. A Gemini model
+before 4 publishes an independent input limit, so its automatic reserve remains
+input-oriented. Gemini 4 shares its window with the output, as Anthropic and
+OpenAI do.
 
 The summary is the compactor's own request. `max_tokens:` bounds its output
 on every built-in provider (16,384 by default, never more than the model's

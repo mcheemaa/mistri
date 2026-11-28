@@ -99,4 +99,29 @@ class TestUsage < Minitest::Test
 
     refute_predicate usage.cost, :known?
   end
+
+  def test_the_context_of_a_turn_is_its_prompt_and_its_output_unless_the_turn_says_otherwise
+    one_request = Mistri::Usage.new(input: 100, cache_read: 900, cache_write: 50, output: 40)
+    two_requests = Mistri::Usage.new(input: 200, cache_read: 1_900, output: 80, context: 1_120)
+
+    assert_equal 1_090, one_request.context_tokens
+    assert_nil one_request.context
+    assert_equal 1_120, two_requests.context_tokens
+    assert_equal 2_180, two_requests.total_tokens
+  end
+
+  def test_a_stated_context_survives_a_copy_a_store_and_a_dump_and_no_sum
+    usage = Mistri::Usage.new(input: 200, output: 80, context: 150)
+    priced = usage.with_cost({ input: 1.0, output: 2.0 })
+
+    assert_equal 150, priced.context
+    assert_equal 150, usage.with(output: 90).context
+    assert_equal usage, Mistri::Usage.from_h(JSON.parse(JSON.generate(usage.to_h)))
+    assert_equal priced, Marshal.load(Marshal.dump(priced))
+    assert_equal Mistri::Usage.zero, Marshal.load(Marshal.dump(Mistri::Usage.zero))
+    refute_equal usage, Mistri::Usage.new(input: 200, output: 80)
+    refute_equal usage.hash, Mistri::Usage.new(input: 200, output: 80).hash
+    refute Mistri::Usage.new(input: 200, output: 80).to_h.key?(:context)
+    assert_nil (usage + usage).context
+  end
 end

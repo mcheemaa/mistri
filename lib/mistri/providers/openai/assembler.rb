@@ -337,6 +337,22 @@ module Mistri
           @service_tier = response["service_tier"]
           usage = response["usage"]
           @usage = priced(parse_usage(usage)) if usage
+          report_dropped_thinking(response["input_transformations"], &)
+        end
+
+        # The API removes a replayed reasoning item it will not take again and
+        # still answers 200. Only the finished response says so. A model
+        # before GPT-5.6 leaves out the reasoning of earlier turns by design,
+        # which is not a removal to report.
+        def report_dropped_thinking(transformations, &)
+          reasons = Array(transformations).filter_map do |entry|
+            next unless entry.is_a?(Hash) && entry["type"] == "reasoning"
+
+            entry["reason"] if entry["action"] == "removed" && entry["reason"] != "turn_boundary"
+          end
+          return if reasons.empty?
+
+          emit_event(:thinking_dropped, content: reasons.uniq.join(", "), &)
         end
 
         # A failed response is the provider's verdict on this input, not a
