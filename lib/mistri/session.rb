@@ -108,15 +108,21 @@ module Mistri
     # A block is given the messages replay will hold and returns the
     # provider's count of them, which the entry keeps as tokens_after. The
     # entry also keeps the model that wrote the summary, the level before,
-    # what started the compaction and the seconds it took, when given.
+    # what started the compaction and the seconds it took, when given. A
+    # summary that a provider wrote in its own compaction comes with the
+    # provider's block: the entry keeps it as it came, replay sends it back
+    # first, and summary is its text where it can be read.
     def checkpoint(summary:, kept_from:, **details)
       held = window
       validate_cut!(held, kept_from)
-      entry = { "summary" => summary, "model" => details[:model], "kept_from" => kept_from,
-                "tokens_before" => details[:tokens_before], "trigger" => details[:trigger]&.to_s,
-                "duration" => details[:duration], "carried" => carried_before(held, kept_from) }
+      carried = carried_before(held, kept_from)
+      entry = { "summary" => summary, "kept_from" => kept_from, "carried" => carried,
+                "trigger" => details[:trigger]&.to_s, "provider" => details[:provider]&.to_s }
+              .merge(details.slice(:model, :tokens_before, :duration, :block, :fallback_reason)
+                            .transform_keys(&:to_s))
       entry["tokens_after"] = yield(compacted(held, entry)) if block_given?
       append("compaction", entry.compact)
+      note_loaded(carried.fetch("loaded", [])) if details[:block]
     end
 
     # False when the newest entry is a compaction: nothing has been stored
@@ -813,10 +819,13 @@ module Mistri
       compacted_at = log.rindex { |entry| entry["type"] == "compaction" }
       compaction = log[compacted_at] if compacted_at
       from = compaction ? compaction["kept_from"] - held.offset : 0
+      # A summary the gem wrote invalidates prefix-bound thinking in the kept
+      # tail. One the provider wrote in its own compaction keeps it valid.
+      stale = compaction && !compaction["block"]
       pairs = log.each_with_index.filter_map do |entry, index|
         next unless index >= from && entry["type"] == "message"
 
-        message = replay_message(entry, before_compaction: compacted_at && index < compacted_at)
+        message = replay_message(entry, before_compaction: stale && index < compacted_at)
         [message, index] if message
       end
       pairs = heal(pairs, replay_call_states(log, from:, held:))
@@ -824,8 +833,8 @@ module Mistri
       compaction ? [[summary_message(compaction), nil], *pairs] : pairs
     end
 
-    # A new summary invalidates prefix-bound thinking in the kept tail. Only
-    # replay drops it: the transcript and thoughts from the new prefix survive.
+    # Only replay drops stale thinking: the transcript and thoughts from the
+    # new prefix survive.
     def replay_message(entry, before_compaction:)
       message = Message.from_h(Log.owned(entry["message"]))
       return message unless before_compaction && message.assistant? &&
@@ -929,16 +938,34 @@ module Mistri
     end
 
     # The summary, and after it the tools the summarized part had loaded. It
-    # is built from the compaction entry alone, so it never changes.
+    # is built from the compaction entry alone, so it never changes. A
+    # provider's own block stands alone and first, as that provider asks.
     def summary_message(compaction)
+      return provider_summary(compaction) if compaction["block"]
+
       text = "#{Compaction::SUMMARY_PREFACE}\n\n#{compaction["summary"]}"
       loaded = compaction.dig("carried", "loaded").to_a
-      return Message.user(text) if loaded.empty?
+      loaded.empty? ? Message.user(text) : Message.user("#{text}\n\n#{loaded_note(loaded)}")
+    end
 
-      Message.user("#{text}\n\nThese tools were loaded before this summary: " \
-                   "#{loaded.join(", ")}. Their definitions are no longer in your context. " \
-                   "Before you call one, load it again with #{ToolSearch::NAME}: use select: " \
-                   "followed by the names as the query. Load only the ones you need.")
+    def provider_summary(compaction)
+      provider = compaction.fetch("provider").to_sym
+      block = Content::Compaction.new(provider:, data: Log.owned(compaction["block"]),
+                                      text: compaction["summary"])
+      Message.assistant(content: [block], provider:, model: compaction["model"])
+    end
+
+    def loaded_note(loaded)
+      "These tools were loaded before this summary: #{loaded.join(", ")}. Their definitions " \
+        "are no longer in your context. Before you call one, load it again with " \
+        "#{ToolSearch::NAME}: use select: followed by the names as the query. Load only the " \
+        "ones you need."
+    end
+
+    # Nothing may stand between a provider's block and the turns kept after
+    # it, so the note follows them as a reminder.
+    def note_loaded(loaded)
+      append_message(Message.reminder("loaded_tools", loaded_note(loaded))) if loaded.any?
     end
 
     # Each link entry opens its child's log in place, depth first, the way

@@ -365,7 +365,25 @@ before 4 publishes an independent input limit, so its automatic reserve remains
 input-oriented. Gemini 4 shares its window with the output, as Anthropic and
 OpenAI do.
 
-An agent asks for the summary with the conversation itself. The request
+On a Claude model that offers it, Anthropic writes the summary in its own
+[compaction on demand](https://platform.claude.com/docs/en/build-with-claude/compaction-on-demand).
+Mistri decides where to cut, sends the turns before the cut with the agent's
+system prompt and tools, and gives its own summary prompt as the
+instructions. The reply is one block, stored as it came and sent back first
+on every later request, with the turns Mistri kept directly after it. Those
+turns keep their thinking, which a summary Mistri wrote would cost them.
+`event.content` and the entry's `"summary"` hold the block's text. A host can
+show it and cannot change it. The request, and each request that carries the
+block, sends the beta header `compact-2026-09-04`.
+
+`Compaction.new(native: false)` asks for Mistri's own summary instead. Mistri
+also writes its own when the provider cannot: a model or an `origin:` without
+the feature, a failed request, or a reply with no summary. The `:compaction`
+event says which in `event.status`, `:native` or `:own`, and why the
+provider's was not used in `event.error_message`. A session whose compaction
+a provider wrote stays on that provider: another one refuses it.
+
+For its own summary, an agent asks with the conversation itself. The request
 repeats the system prompt, the tools and the messages up to the cut as the
 turns sent them, and ends with the summary prompt. The prompt is a system
 message where the provider takes one in a conversation, and a user message

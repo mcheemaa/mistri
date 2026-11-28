@@ -19,6 +19,7 @@ module Mistri
       # API instead of failing the request and every request after it.
       DROP_STALE_THINKING = { block_binding: { prefix_mismatch_behavior: "drop_block" } }.freeze
       BINDING_BETA = "thinking-binding-controls-2026-08-01"
+      COMPACTION_BETA = "compact-2026-09-04"
 
       # Messages API parameters passed through verbatim from a stream override.
       PASSTHROUGH = %i[temperature top_p top_k stop_sequences metadata tool_choice].freeze
@@ -70,6 +71,11 @@ module Mistri
       # text of a user turn.
       def system_messages?(model = @model) = @official && Models.system_messages?(model)
 
+      # The API writes a compaction's summary itself for these models. The
+      # compactor then calls stream with compaction: { instructions: }, and
+      # the reply holds one Content::Compaction and no answer.
+      def compacts?(model = @model) = @official && Models.compaction?(model)
+
       def stream(messages:, system: nil, tools: [], signal: nil, **overrides, &emit)
         delivery = EventDelivery.wrap(emit)
         model = overrides.fetch(:model, @model)
@@ -108,6 +114,7 @@ module Mistri
       def official_origin?(origin) = origin.to_s.delete_suffix("/") == DEFAULT_ORIGIN
 
       def build_body(model, messages, system, tools, overrides)
+        Content.refuse_foreign_compaction!(messages, :anthropic)
         definitions = Serializer.tools(tools, overrides[:deferred_tools])
         deferred = Serializer.referable(definitions)
         cache = overrides.fetch(:cache, @cache)
@@ -128,6 +135,9 @@ module Mistri
         if (schema = overrides[:output_schema])
           body[:output_config] = { format: { type: "json_schema",
                                              schema: Schema.strict(schema) } }
+        end
+        if (compaction = overrides[:compaction])
+          body[:compaction] = { type: "summarize", **compaction.compact }
         end
         body.merge(PASSTHROUGH.each_with_object({}) do |key, params|
           params[key] = overrides[key] if overrides.key?(key)
@@ -157,9 +167,14 @@ module Mistri
         end
       end
 
+      # The API asks for the compaction header on the request that writes a
+      # block and on every later one that carries it.
       def headers(body)
+        betas = []
+        betas << BINDING_BETA if body.dig(:thinking, :block_binding)
+        betas << COMPACTION_BETA if body[:compaction] || Serializer.compacted?(body[:messages])
         headers = { "x-api-key" => @api_key, "anthropic-version" => VERSION_HEADER }
-        headers["anthropic-beta"] = BINDING_BETA if body.dig(:thinking, :block_binding)
+        headers["anthropic-beta"] = betas.join(",") if betas.any?
         headers
       end
     end

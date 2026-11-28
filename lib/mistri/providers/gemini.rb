@@ -101,6 +101,7 @@ module Mistri
       def official_origin?(origin) = origin.to_s.delete_suffix("/") == DEFAULT_ORIGIN
 
       def build_body(messages, system, tools, overrides)
+        Content.refuse_foreign_compaction!(messages, :gemini)
         body = { contents: Serializer.contents(messages) }
         instruction = Serializer.system_instruction(system, messages)
         body[:systemInstruction] = instruction if instruction

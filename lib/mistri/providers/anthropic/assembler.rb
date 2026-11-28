@@ -164,8 +164,11 @@ module Mistri
 
           @open_wire_index = index
           @next_wire_index += 1
+          open_block(record["content_block"] || {}, &)
+        end
 
-          block = record["content_block"] || {}
+        def open_block(block, &)
+          return @blocks << compaction(block) if block["type"] == "compaction"
           if block["type"] == "tool_use" && block.key?("input") &&
              (!block["input"].is_a?(Hash) || !block["input"].empty?)
             return protocol_error("tool_use started with nonempty input before its deltas", &)
@@ -296,6 +299,8 @@ module Mistri
             @refused = true
             @refusal = record.dig("delta", "stop_details")
           end
+          return count_compaction(record["usage"]) if reason == "compaction"
+
           # message_delta usage is cumulative; merge output counts over the
           # opening snapshot rather than summing.
           output = record.dig("usage", "output_tokens")
@@ -303,6 +308,20 @@ module Mistri
 
           @usage = priced(@usage.with(output: output.to_i))
           @usage_authoritative = true
+        end
+
+        # The block arrives whole, and is kept as it came: the API takes it
+        # back only unchanged.
+        def compaction(block)
+          Content::Compaction.new(provider: :anthropic, data: block, text: block["content"])
+        end
+
+        # A compaction is billed in usage.iterations, and the top-level
+        # counts of its response are zero.
+        def count_compaction(usage)
+          spent = Array(usage&.fetch("iterations", nil)).map { |entry| parse_usage(entry) }
+          @usage = priced(spent.reduce(Usage.new, :+)) if spent.any?
+          @usage_authoritative = spent.any?
         end
 
         def stop_message(&)
@@ -390,6 +409,7 @@ module Mistri
         # window is a truncation, per the API's own guidance.
         def map_stop_reason(reason)
           { "end_turn" => StopReason::STOP, "stop_sequence" => StopReason::STOP,
+            "compaction" => StopReason::STOP,
             "max_tokens" => StopReason::LENGTH, "tool_use" => StopReason::TOOL_USE,
             "model_context_window_exceeded" => StopReason::LENGTH,
             "pause_turn" => StopReason::TOOL_USE }.fetch(reason, StopReason::STOP)

@@ -5,6 +5,21 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+- On Claude, Anthropic writes a compaction's summary in its own compaction on
+  demand, on its own origin and on the models its page lists. Mistri still
+  decides the cut and gives its summary prompt as the instructions. The block
+  is stored as it came on the compaction entry, replay sends it back first,
+  and the kept turns keep their thinking. `Compaction.new(native: false)`
+  asks for Mistri's own summary, which is also written when the provider's
+  cannot be had. `event.status` on `:compaction` is `:native` or `:own`, and
+  `event.error_message` says why the provider's was not used.
+- `Content::Compaction` is a new content block: a provider's own summary, with
+  the provider's name, the block as it came and its text. A provider that
+  compacts answers `compacts?` with true and takes `compaction:` among the
+  options of `stream`. Another provider refuses a session that holds such a
+  block with `Mistri::ConfigurationError`.
+- A request to Anthropic sends the beta header `compact-2026-09-04` when it
+  asks for a compaction or carries a block.
 - `Compaction.new(threshold:)` sets the level where a compaction starts: an
   Integer of tokens, or a Float for that share of the window. The rule near
   the window stays under it as the net. A threshold in tokens works for a

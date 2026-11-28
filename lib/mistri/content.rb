@@ -113,6 +113,32 @@ module Mistri
       def to_h = { type: :image, data:, mime_type: }
     end
 
+    # A summary of earlier messages that a provider wrote in its own
+    # compaction. `data` is the block as it came, which that provider takes
+    # back unchanged and no other provider can read. `text` is the summary
+    # where a person can read it, and nil where the provider keeps it sealed.
+    Compaction = Data.define(:provider, :data, :text) do
+      def initialize(provider:, data:, text: nil)
+        text = Content.freeze_string(text) if text
+        super(provider: provider.to_sym, data:, text:)
+      end
+
+      def type = :compaction
+
+      def to_h = { type: :compaction, provider:, data:, text: }.compact
+    end
+
+    # A session stays on one provider: a compaction that one wrote is refused
+    # before it reaches another.
+    def self.refuse_foreign_compaction!(messages, provider)
+      first = messages.first
+      block = first && first.content.grep(Compaction).first
+      return if block.nil? || block.provider == provider
+
+      raise ConfigurationError, "this session holds a compaction that #{block.provider} wrote, " \
+                                "and only #{block.provider} can read it"
+    end
+
     # Coerce a value into a list of blocks: nil becomes none, a String becomes
     # one Text block, blocks pass through, arrays may mix all of these.
     def self.wrap(content)
@@ -131,6 +157,8 @@ module Mistri
         Thinking.new(thinking: h["thinking"], signature: h["signature"],
                      redacted: h.fetch("redacted", false))
       when "image" then Image.new(data: h["data"], mime_type: h["mime_type"])
+      when "compaction"
+        Compaction.new(provider: h["provider"], data: h["data"], text: h["text"])
       when "tool_call"
         arguments = h.key?("arguments") ? h["arguments"] : {}
         ToolCall.new(id: h["id"], name: h["name"], arguments:,

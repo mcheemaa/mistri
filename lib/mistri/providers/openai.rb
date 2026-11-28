@@ -96,6 +96,7 @@ module Mistri
       def official_origin?(origin) = origin.to_s.delete_suffix("/") == DEFAULT_ORIGIN
 
       def build_body(model, messages, system, tools, overrides)
+        Content.refuse_foreign_compaction!(messages, :openai)
         input = Serializer.input_items(messages,
                                        deferred: overrides.fetch(:deferred_tools, []),
                                        system_messages: system_messages?)

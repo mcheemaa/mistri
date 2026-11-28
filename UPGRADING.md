@@ -13,6 +13,26 @@ test.
 
 Most hosts need no code change. Read the points that apply to you.
 
+### On Claude, Anthropic writes the summary of a compaction
+
+On Anthropic's own origin, for a model its page lists, a compaction now asks
+the API for the summary. Mistri sends its own cut and its own summary prompt.
+
+- Most hosts do nothing. The kept turns keep their thinking, and the request
+  reads the session's prompt cache.
+- The request sends the beta header `compact-2026-09-04`, and so does every
+  later request of that session. A gateway that filters beta headers has to
+  let it through, or the host sets `Compaction.new(native: false)`.
+- A host that shows the summary reads it as before, from `event.content` or
+  the entry's `"summary"`. It cannot be edited: the API refuses a changed
+  block. The entry also holds `"block"` and `"provider"`.
+- The first message of a compacted conversation is then an assistant message
+  with one `Content::Compaction` block, where it was a user message with the
+  summary. A host that reads `session.messages.first.text` reads nil there.
+- A session whose latest compaction Anthropic wrote does not run on another
+  provider. Such a run ends with an error that says so.
+- For the summary Mistri writes itself, set `Compaction.new(native: false)`.
+
 ### An agent's summary request repeats the conversation
 
 The request that writes a compaction's summary now holds the agent's system

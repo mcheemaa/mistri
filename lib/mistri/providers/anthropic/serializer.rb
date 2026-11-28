@@ -169,11 +169,20 @@ module Mistri
           when Content::Text then text_block(block)
           when Content::Thinking then thinking_block(block, own:)
           when Content::Image then image_block(block)
+          when Content::Compaction then block.data
           when ToolCall
             { type: "tool_use", id: block.id, name: block.name,
               input: ToolArguments.replay_object(block) }
           else
             raise SchemaError, "cannot serialize #{block.class} for Anthropic"
+          end
+        end
+
+        # True when the first message of a request holds a compaction block,
+        # which the API returned with string keys and takes back as it came.
+        def compacted?(wire)
+          Array(wire.first&.fetch(:content, nil)).any? do |block|
+            block.is_a?(Hash) && block["type"] == "compaction"
           end
         end
 

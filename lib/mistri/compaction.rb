@@ -43,7 +43,8 @@ module Mistri
                       "work already done, do not repeat it, and treat the user's most recent " \
                       "request as the current instruction."
 
-    attr_reader :reserve, :keep_recent, :window, :instructions, :max_tokens, :fallback, :threshold
+    attr_reader :reserve, :keep_recent, :window, :instructions, :max_tokens, :fallback, :threshold,
+                :native
 
     # window overrides the model catalog's context window (required for
     # models the catalog does not know). A nil reserve selects automatic
@@ -56,8 +57,10 @@ module Mistri
     # chooses it, so a refusal never changes models silently. threshold is
     # the level where a compaction starts: an Integer of tokens, or a Float
     # for that share of the window. The reserve stays under it as the net.
+    # native lets the provider write the summary where it can, which keeps
+    # the thinking of the kept turns; false asks for the gem's own summary.
     def initialize(reserve: nil, keep_recent: DEFAULT_KEEP_RECENT, window: nil, instructions: nil,
-                   max_tokens: DEFAULT_MAX_TOKENS, fallback: nil, threshold: nil)
+                   max_tokens: DEFAULT_MAX_TOKENS, fallback: nil, threshold: nil, native: true)
       unless max_tokens.is_a?(Integer) && max_tokens.positive?
         raise ArgumentError, "max_tokens must be a positive Integer"
       end
@@ -74,6 +77,7 @@ module Mistri
       @max_tokens = max_tokens
       @fallback = summarizer(fallback)
       @threshold = threshold
+      @native = native
     end
 
     def automatic_reserve? = @automatic_reserve
@@ -203,6 +207,7 @@ module Mistri
         when Content::Image then IMAGE_TOKENS
         when Content::Text then tokens_in(block.text, rule)
         when Content::Thinking then tokens_in(block.thinking, rule)
+        when Content::Compaction then tokens_in(block.text.to_s, rule)
         else tokens_in("#{block.name}#{JSON.generate(block.arguments)}", rule)
         end
       end

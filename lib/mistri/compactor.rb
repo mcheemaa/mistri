@@ -178,11 +178,11 @@ module Mistri
 
         run = { session:, trigger:, tokens_before: level, started: clock }
         emit&.call(Event.new(type: :compacting, reason: trigger, tokens_before: level))
-        focus = instructions || settings.instructions
-        asks = { text: prompt_for(head, previous, focus),
-                 closing: closing_request(provider, request, sent, previous, focus) }
+        asks = asks_for(provider, settings, request, [sent, head, previous],
+                        instructions || settings.instructions)
         reply, usage, failures = attempt(summarizers(provider, settings), settings, budget, asks)
         reject(run, failures.join("; "), usage, &emit) unless reply
+        run[:fallback_reason] = asks[:refused]
 
         summary = commit(run, reply, cut, counter(provider, request))
         finish(run, reply, summary, usage, &emit)
@@ -255,17 +255,27 @@ module Mistri
         nil
       end
 
-      # The conversation up to the cut as its turns sent it, with the summary
-      # prompt after it. Nil without the request of a turn. The prompt is a
-      # system message where the provider takes one in a conversation: as a
-      # user message, a model in the middle of a tool loop went on with the
-      # loop in two of four tries.
-      def closing_request(provider, request, sent, previous, focus)
-        return nil unless request
+      # The three ways a summary is asked for, in the order they are tried on
+      # the session's own provider: its own compaction, the conversation with
+      # the prompt after it, and the text. The first two need the request of
+      # a turn.
+      def asks_for(provider, settings, request, (sent, head, previous), focus)
+        asks = { text: prompt_for(head, previous, focus) }
+        return asks unless request
 
         arguments = request.call(sent)
         prompt = previous ? CLOSING_UPDATE_PROMPT : CLOSING_CHECKPOINT_PROMPT
         prompt += "\nAdditional focus: #{focus}\n" if focus
+        native = settings.native && provider.respond_to?(:compacts?) && provider.compacts?
+        asks[:native] = arguments.merge(compaction: { instructions: prompt }) if native
+        asks.merge(closing: closing_request(provider, arguments, prompt))
+      end
+
+      # The conversation up to the cut as its turns sent it, with the summary
+      # prompt after it. The prompt is a system message where the provider
+      # takes one in a conversation: as a user message, a model in the middle
+      # of a tool loop went on with the loop in two of four tries.
+      def closing_request(provider, arguments, prompt)
         system = provider.respond_to?(:system_messages?) && provider.system_messages?
         closing = system ? Message.reminder("compaction", prompt) : Message.user(prompt)
         arguments.merge(messages: arguments.fetch(:messages) + [closing])
@@ -300,7 +310,7 @@ module Mistri
         usage = nil
         failures = []
         summarizers.each_with_index do |summarizer, position|
-          replies = summarize(summarizer, settings, asks[:text], (asks[:closing] if position.zero?))
+          replies = summarize(summarizer, settings, position.zero? ? asks : asks.slice(:text))
           reply = replies.last
           reply = reply.with(model: summarizer.model) unless reply.model
           measured = replies.map { |given| given.usage || Usage.new }.reduce(:+)
@@ -314,22 +324,29 @@ module Mistri
         [nil, usage, failures]
       end
 
-      # The session's own provider is given the conversation again with the
-      # summary prompt after it, so the request reads the session's prompt
-      # cache and the summarizer reads every tool result whole. It runs with
-      # the host's thinking and tools, because the cached messages depend on
-      # both. A fallback cannot read that cache, and a compaction outside an
-      # agent has no request to repeat: each is given the text. So is a
-      # provider whose reply went on with the conversation, which is the
-      # request failing and not the model. Returns each reply that was given.
-      def summarize(provider, settings, text, closing)
+      # The session's own provider writes the summary in its own compaction
+      # where it can, which keeps the thinking of the kept turns. When it
+      # cannot, or returns none, it is given the conversation again with the
+      # summary prompt after it. Both requests read the session's prompt
+      # cache, read every tool result whole, and run with the host's thinking
+      # and tools, because the cached messages depend on both. A fallback
+      # cannot read that cache, and a compaction outside an agent has no
+      # request to repeat: each is given the text. So is a provider whose
+      # reply went on with the conversation, which is the request failing and
+      # not the model. Returns each reply that was given.
+      def summarize(provider, settings, asks)
         overrides = request_overrides(provider, settings)
         replies = []
-        replies << provider.stream(**closing, max_tokens: overrides[:max_tokens]) if closing
-        return replies unless replies.empty? || went_on?(replies.last)
-
-        replies << provider.stream(messages: [Message.user(text)], system: SUMMARIZER_SYSTEM,
-                                   **overrides)
+        if asks[:native]
+          replies << provider.stream(**asks[:native], max_tokens: overrides[:max_tokens])
+          return replies unless (asks[:refused] = summary_failure(replies.last))
+        end
+        if asks[:closing]
+          replies << provider.stream(**asks[:closing], max_tokens: overrides[:max_tokens])
+          return replies unless went_on?(replies.last)
+        end
+        replies << provider.stream(messages: [Message.user(asks[:text])],
+                                   system: SUMMARIZER_SYSTEM, **overrides)
       end
 
       def went_on?(reply) = reply.stop_reason == StopReason::TOOL_USE || reply.tool_calls?
@@ -353,7 +370,12 @@ module Mistri
         end
         return "unexpected tool calls" if reply.tool_calls?
 
-        "empty summary" if reply.text.to_s.strip.empty?
+        "empty summary" if summary_of(reply).empty?
+      end
+
+      # A provider's own compaction answers with its block and no text.
+      def summary_of(reply)
+        (reply.content.grep(Content::Compaction).first&.text || reply.text).to_s.strip
       end
 
       # A failed summary is part of the session's story: the entry keeps the
@@ -373,9 +395,11 @@ module Mistri
       # The entry keeps the provider's count of what the compaction leaves, so
       # the level is the provider's own until the next turn reports.
       def commit(run, reply, cut, count)
-        summary = reply.text.strip
-        details = run.slice(:tokens_before, :trigger).merge(model: reply.model,
-                                                            duration: elapsed(run))
+        summary = summary_of(reply)
+        block = reply.content.grep(Content::Compaction).first
+        details = run.slice(:tokens_before, :trigger, :fallback_reason)
+                     .merge(model: reply.model, duration: elapsed(run),
+                            block: block&.data, provider: block&.provider)
         run[:session].checkpoint(summary:, kept_from: cut, **details) { |left| count&.call(left) }
         summary
       end
@@ -383,8 +407,10 @@ module Mistri
       def finish(run, reply, summary, usage, &emit)
         sizes = { tokens_before: run[:tokens_before], tokens_after: run[:session].context_tokens }
         duration = elapsed(run)
-        emit&.call(Event.new(type: :compaction, content: summary, message: reply,
-                             reason: run[:trigger], duration:, **sizes))
+        status = reply.content.any?(Content::Compaction) ? :native : :own
+        emit&.call(Event.new(type: :compaction, content: summary, message: reply, status:,
+                             reason: run[:trigger], error_message: run[:fallback_reason],
+                             duration:, **sizes))
         { summary:, usage:, duration:, **sizes }
       end
 
