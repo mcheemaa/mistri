@@ -163,8 +163,9 @@ Loop-level events are:
   summary in `content` and the summarizing reply in `message`, or
   `:compaction_failed` with the reason in `error_message`;
 - `:retry` before provider backoff;
-- `:thinking_dropped` after `:start`, when the provider discarded earlier
-  thinking it could no longer verify;
+- `:thinking_dropped` when the provider discarded earlier thinking it could
+  no longer verify: after `:start` on Anthropic, with the finished response on
+  OpenAI;
 - `:subagent_report` when a running background child reaches a terminal state;
   an inactive `Child#stop` persists the report without this callback because it
   has no event sink.
@@ -405,7 +406,8 @@ default OpenAI model. Both reject the reasoning effort `none`.
 appends top-level `instructions` after the input and never caches them. On
 OpenAI's own origin Mistri therefore sends the system prompt as a developer
 message at the start of the input, for every model. Earlier models cache both
-forms as one prefix. Another `origin:` still receives `instructions`.
+forms as one prefix. Another `origin:` still receives `instructions`, so
+through a gateway GPT-6.2 does not cache the system prompt.
 
 GPT-6.2 also removes replayed reasoning when the history before it has
 changed, and still answers 200. The stream then emits `:thinking_dropped` with
@@ -442,6 +444,12 @@ request is billed, so the usage counts all of them. The message's
 `usage.context` is what sits in the context afterwards, and
 `agent.context_usage` reads it. The output shares the window, so a host that
 raises `max_tokens:` raises the compaction `reserve:` with it.
+
+A continued answer can hold more than one text block. They join with nothing
+between them, as `message.text` does. A request that fails inside a continued
+answer fails the turn. A retry then sends the answer again from its first
+request, so the requests before the failure are billed a second time. An
+answer that reaches the 32 requests is not retried.
 
 Mistri sends no thinking level, so the model's own applies: `medium` on Carbon
 and Argon, `high` on Neon and Hydrogen. Pass one through `thinking:`, with

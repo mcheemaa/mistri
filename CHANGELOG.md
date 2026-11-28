@@ -19,7 +19,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - `Usage#context` is what sits in the model's context after a turn that took
   more than one request, where the counts are the sum of every request.
   `Usage#context_tokens` is that figure for any turn, and the context level
-  reads it.
+  reads it. A `Usage` dumped with Marshal by this release is not read by an
+  earlier one.
 - `gemini-4-carbon`, `gemini-4-argon`, `gemini-4-neon` and `gemini-4-hydrogen`
   are in the model catalog. Input, thinking and output share their window, so
   automatic compaction starts at 978,944 tokens on them, where a Gemini 3

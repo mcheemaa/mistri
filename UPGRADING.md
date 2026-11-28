@@ -41,7 +41,20 @@ message with the role `developer`. The request holds no `instructions`.
 - A session on GPT-6.2 that began on an earlier release loses the reasoning of
   its earlier turns once, on its first request after the upgrade. The stream
   says so with `:thinking_dropped`.
-- Another origin still receives `instructions`.
+- Another origin still receives `instructions`. Through a gateway GPT-6.2
+  therefore does not cache the system prompt.
+
+### A usage dumped with Marshal is not read by an earlier release
+
+`Mistri::Usage` now dumps itself in its own form, so that it can carry the
+context of a turn that took several requests. This release reads a dump of an
+earlier one. An earlier release raises `TypeError` on a dump of this one, and
+a `Mistri::Message` holds its usage.
+
+- A host that stores sessions through a store does nothing. Stores write JSON.
+- A host that keeps a message, a usage or a run result in a Marshal cache
+  clears that cache before it rolls back, and does not run two releases on one
+  cache.
 
 ### A bridged MCP tool has a limit of 300 seconds
 
